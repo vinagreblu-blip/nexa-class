@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Validação de Documento — NEXA CLASS</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(135deg,#1f4e5f,#071d25);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{background:#fff;border-radius:16px;padding:32px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.icon{width:72px;height:72px;border-radius:50%;margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:36px;color:#fff}
+.icon-ok{background:#16a34a}.icon-err{background:#dc2626}
+h1{text-align:center;color:#1f4e5f;font-size:22px;margin:0 0 6px}
+.sub{text-align:center;color:#666;font-size:13px;margin:0 0 20px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:10px;background:#f8fafc;font-size:11px;color:#64748b;text-transform:uppercase;border-bottom:2px solid #e2e8f0}
+td{padding:10px;border-bottom:1px solid #e2e8f0;font-weight:500;font-size:14px}
+.hash{font-size:10px;color:#999;font-family:monospace;word-break:break-all;margin-top:12px;text-align:center}
+.footer{text-align:center;margin-top:16px;padding-top:14px;border-top:1px solid #e2e8f0;font-size:11px;color:#999}
+.loading{text-align:center;color:#666;padding:40px}
+</style>
+</head>
+<body>
+<div class="card">
+<div id="content"><div class="loading">Verificando documento…</div></div>
+</div>
+<script>
+async function sha256(text){const b=new TextEncoder().encode(text);const h=await crypto.subtle.digest('SHA-256',b);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('')}
+async function init(){
+const p=new URLSearchParams(location.search);
+const d=p.get('d');
+if(!d){showError('Dados de validação ausentes.');return}
+let data;
+try{data=JSON.parse(atob(d))}catch{showError('Dados inválidos.');return}
+const hashEsperado=data.h;delete data.h;
+const dadosStr=JSON.stringify(data);
+const hashCalculado=await sha256(dadosStr);
+if(hashCalculado!==hashEsperado){showError('Documento adulterado! Os dados não conferem.');return}
+showOk(data)}
+function showOk(d){
+const dt=d.e?new Date(d.e).toLocaleString('pt-BR',{timeZone:'UTC'}):'—';
+document.getElementById('content').innerHTML=`
+<div class="icon icon-ok">✓</div>
+<h1>Documento Autêntico</h1>
+<p class="sub">A autenticidade foi confirmada pelo sistema NEXA CLASS.</p>
+<table>
+<tr><th>Aluno</th><td>${esc(d.n)}</td></tr>
+<tr><th>Matrícula</th><td>${esc(d.m)}</td></tr>
+${d.c?`<tr><th>Curso</th><td>${esc(d.c)}</td></tr>`:''}
+${d.f?`<tr><th>Faculdade</th><td>${esc(d.f)}</td></tr>`:''}
+${d.t?`<tr><th>Tipo</th><td>${esc(d.t)}</td></tr>`:''}
+<tr><th>Emitido em</th><td>${esc(dt)}</td></tr>
+</table>
+<div class="hash">${esc(d.k||'')}</div>
+<div class="footer">✅ Validado por NEXA CLASS • Sistema Acadêmico</div>`}
+function showError(msg){
+document.getElementById('content').innerHTML=`
+<div class="icon icon-err">✕</div>
+<h1 style="color:#dc2626">Erro de Validação</h1>
+<p class="sub">${esc(msg)}</p>
+<div class="footer">Sistema NEXA CLASS</div>`}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+init();
+</script>
+</body>
+</html>

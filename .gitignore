@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+out/
+release/
+*.log
+.DS_Store
+.env
+.env.local
+desktop/dist/
+desktop/release/
+desktop/db/*.sqlite
+desktop/db/*.db
+!desktop/db/.gitkeep
+verificacao-web/dist/
+verificacao-web/data/*.sqlite
+!verificacao-web/data/.gitkeep

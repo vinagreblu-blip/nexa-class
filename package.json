@@ -1,0 +1,22 @@
+{
+  "name": "nexa",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NEXA CLASS - Network for Education and Academic Excellence Class. Sistema desktop para cadastro de alunos, usuarios e emissao de declaracoes de autenticidade com QR Code",
+  "license": "MIT",
+  "workspaces": [
+    "desktop",
+    "verificacao-web"
+  ],
+  "scripts": {
+    "desktop:dev": "npm -w desktop run dev",
+    "desktop:build": "npm -w desktop run build",
+    "desktop:typecheck": "npm -w desktop run typecheck",
+    "web:dev": "npm -w verificacao-web run dev",
+    "web:build": "npm -w verificacao-web run build",
+    "web:typecheck": "npm -w verificacao-web run typecheck"
+  },
+  "dependencies": {
+    "canvas": "^3.2.3"
+  }
+}

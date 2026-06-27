@@ -1,0 +1,216 @@
+export type Role = 'admin' | 'operador';
+
+export interface Usuario {
+  id: number;
+  codigo: string;
+  username: string;
+  nome: string;
+  email: string | null;
+  role: Role;
+  foto_path: string | null;
+  ativo: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type UsuarioPublico = Omit<Usuario, 'created_at' | 'updated_at'>;
+
+export interface UsuarioInput {
+  username: string;
+  password: string;
+  nome: string;
+  email?: string;
+  role: Role;
+}
+
+export interface Aluno {
+  id: number;
+  matricula: string;
+  nome: string;
+  cpf: string | null;
+  rg: string | null;
+  nacionalidade: string | null;
+  naturalidade: string | null;
+  cidade: string | null;
+  sexo: string | null;
+  orgao_emissor: string | null;
+  turno: string | null;
+  forma_ingresso: string | null;
+  data_vestibular: string | null;
+  data_colacao: string | null;
+  email: string | null;
+  telefone: string | null;
+  curso: string | null;
+  faculdade: string | null;
+  ano_ingresso: string | null;
+  ano_conclusao: string | null;
+  data_nascimento: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlunoInput {
+  matricula: string;
+  nome: string;
+  cpf?: string;
+  rg?: string;
+  nacionalidade?: string;
+  naturalidade?: string;
+  cidade?: string;
+  sexo?: string;
+  orgao_emissor?: string;
+  turno?: string;
+  forma_ingresso?: string;
+  data_vestibular?: string;
+  data_colacao?: string;
+  email?: string;
+  telefone?: string;
+  curso?: string;
+  faculdade?: string;
+  ano_ingresso?: string;
+  ano_conclusao?: string;
+  data_nascimento?: string;
+}
+
+export interface HistoricoDisciplina {
+  id: number;
+  aluno_id: number;
+  periodo: string;
+  disciplina: string;
+  docente: string;
+  titulacao: string;
+  ch: string;
+  nota: string;
+  status: string;
+  ordem: number;
+}
+
+export interface HistoricoDisciplinaInput {
+  periodo: string;
+  disciplina: string;
+  docente: string;
+  titulacao: string;
+  ch: string;
+  nota: string;
+  status: string;
+}
+
+export interface Docente {
+  id: number;
+  nome: string;
+  titulacao: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocenteInput {
+  nome: string;
+  titulacao: string;
+}
+
+export interface Disciplina {
+  id: number;
+  nome: string;
+  docente_id: number | null;
+  docente_nome: string | null;
+  ch: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DisciplinaInput {
+  nome: string;
+  docente_id: number | null;
+  ch: string;
+}
+
+export interface AlunoDocumento {
+  id: number;
+  aluno_id: number;
+  nome: string;
+  caminho: string;
+  xml_path: string | null;
+  convertido: number;
+  created_at: string;
+}
+
+export interface Declaracao {
+  id: number;
+  aluno_id: number;
+  codigo_verificacao: string;
+  hash_conteudo: string;
+  emitido_por: number;
+  emitido_em: string;
+  enviado_web: number;
+}
+
+export interface Sessao {
+  usuario: UsuarioPublico;
+}
+
+export interface ApiResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
+export interface DeclaracaoEmitida {
+  declaracao: Declaracao;
+  pdfPath: string;
+  enviadoWeb: boolean;
+}
+
+export const IPC_CHANNELS = {
+  AUTH_LOGIN: 'auth:login',
+  AUTH_LOGOUT: 'auth:logout',
+  AUTH_SESSAO: 'auth:sessao',
+  AUTH_ALTERAR_SENHA: 'auth:alterar-senha',
+  AUTH_SOLICITAR_RECUPERACAO: 'auth:solicitar-recuperacao',
+  SMTP_OBTER: 'smtp:obter',
+  SMTP_SALVAR: 'smtp:salvar',
+  ALUNO_LISTAR: 'aluno:listar',
+  ALUNO_BUSCAR: 'aluno:buscar',
+  ALUNO_CRIAR: 'aluno:criar',
+  ALUNO_ATUALIZAR: 'aluno:atualizar',
+  ALUNO_EXCLUIR: 'aluno:excluir',
+  USUARIO_LISTAR: 'usuario:listar',
+  USUARIO_CRIAR: 'usuario:criar',
+  USUARIO_ATUALIZAR: 'usuario:atualizar',
+  USUARIO_EXCLUIR: 'usuario:excluir',
+  USUARIO_TROCAR_FOTO: 'usuario:trocar-foto',
+  USUARIO_FOTO: 'usuario:foto',
+  USUARIO_RESETAR_SENHA: 'usuario:resetar-senha',
+  DECLARACAO_EMITIR: 'declaracao:emitir',
+  DECLARACAO_LISTAR: 'declaracao:listar',
+  DECLARACAO_EXCLUIR: 'declaracao:excluir',
+  DECLARACAO_BAIXAR: 'declaracao:baixar',
+  HISTORICO_LISTAR: 'historico:listar',
+  HISTORICO_CRIAR: 'historico:criar',
+  HISTORICO_ATUALIZAR: 'historico:atualizar',
+  HISTORICO_EXCLUIR: 'historico:excluir',
+  HISTORICO_GERAR_PDF: 'historico:gerar-pdf',
+  HISTORICO_GERAR_XML: 'historico:gerar-xml',
+  HISTORICO_MOVER: 'historico:mover',
+  DOCENTE_LISTAR: 'docente:listar',
+  DOCENTE_CRIAR: 'docente:criar',
+  DOCENTE_ATUALIZAR: 'docente:atualizar',
+  DOCENTE_EXCLUIR: 'docente:excluir',
+  DISCIPLINA_LISTAR: 'disciplina:listar',
+  DISCIPLINA_CRIAR: 'disciplina:criar',
+  DISCIPLINA_ATUALIZAR: 'disciplina:atualizar',
+  DISCIPLINA_EXCLUIR: 'disciplina:excluir',
+  DOCUMENTO_LISTAR: 'documento:listar',
+  DOCUMENTO_ADICIONAR: 'documento:adicionar',
+  DOCUMENTO_EXCLUIR: 'documento:excluir',
+  DOCUMENTO_CONVERTER_XML: 'documento:converter-xml',
+  DOCUMENTO_VISUALIZAR_XML: 'documento:visualizar-xml',
+  DOCUMENTO_BAIXAR: 'documento:baixar',
+  EXTRAIR_DADOS_DOC: 'extrair:dados-doc',
+  CONVERSAO_PDF_XML: 'conversao:pdf-xml',
+  CONVERSAO_IMG_XML: 'conversao:img-xml',
+  CONVERSAO_XML_PDF: 'conversao:xml-pdf',
+  ASSINATURA_OBTER: 'assinatura:obter',
+  ASSINATURA_SALVAR: 'assinatura:salvar',
+  ASSINATURA_UPLOAD_CERT: 'assinatura:upload-cert',
+  ASSINATURA_ASSINAR_XML: 'assinatura:assinar-xml',
+} as const;
