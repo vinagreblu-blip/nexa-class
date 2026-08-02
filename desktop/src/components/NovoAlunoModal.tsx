@@ -2,14 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '../api';
 import type { AlunoInput } from '../types';
 import { Modal } from './Modal';
-
-function mascararCPF(valor: string): string {
-  const d = valor.replace(/\D/g, '').substring(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `${d.substring(0, 3)}.${d.substring(3)}`;
-  if (d.length <= 9) return `${d.substring(0, 3)}.${d.substring(3, 6)}.${d.substring(6)}`;
-  return `${d.substring(0, 3)}.${d.substring(3, 6)}.${d.substring(6, 9)}-${d.substring(9)}`;
-}
+import { mascararCPF } from '../utils';
 
 const CURSOS_LIVRES_CURSOS = [
   'Seitai Cranial e Craniopuntura',

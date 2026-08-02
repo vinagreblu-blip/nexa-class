@@ -2,11 +2,11 @@ import type { IpcMainInvokeEvent} from 'electron';
 import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
 import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
+import { extrairJPEGsDoPDF } from '../utils';
 
 interface DadosExtraidos {
   nome: string | null;
@@ -231,32 +231,6 @@ function parseTexto(textoOriginal: string): DadosExtraidos {
   return r;
 }
 
-// Extrai imagens JPEG de um PDF procurando pelos marcadores JPEG nos bytes
-function extrairJPEGsDoPDF(buf: Buffer): Buffer[] {
-  const imagens: Buffer[] = [];
-  const SOI = Buffer.from([0xFF, 0xD8]); // JPEG Start of Image
-  const EOI = Buffer.from([0xFF, 0xD9]); // JPEG End of Image
-
-  let pos = 0;
-  while (pos < buf.length - 1) {
-    // Procura SOI
-    const soiIdx = buf.indexOf(SOI, pos);
-    if (soiIdx === -1) break;
-
-    // Procura EOI a partir do SOI
-    const eoiIdx = buf.indexOf(EOI, soiIdx + 2);
-    if (eoiIdx === -1) break;
-
-    // Extrai o JPEG completo
-    const jpeg = buf.subarray(soiIdx, eoiIdx + 2);
-    // Só guarda se for razoavelmente grande (> 5KB = provavelmente a foto, não ícone)
-    if (jpeg.length > 5000) {
-      imagens.push(Buffer.from(jpeg));
-    }
-    pos = eoiIdx + 2;
-  }
-  return imagens;
-}
 
 async function extrairDadosDocumento(
   event: IpcMainInvokeEvent

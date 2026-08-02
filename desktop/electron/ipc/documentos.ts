@@ -7,6 +7,7 @@ import { IPC_CHANNELS } from '../types';
 import type { Aluno, AlunoDocumento, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
+import { escapeXml } from '../utils';
 
 // (pdfjs carregado sob demanda via pdfjs-loader — v5+ ESM-only)
 
@@ -143,15 +144,6 @@ function excluir(_event: IpcMainInvokeEvent, documentoId: number): ApiResult<tru
   }
   db.prepare('DELETE FROM aluno_documentos WHERE id = ?').run(documentoId);
   return { ok: true, data: true };
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
 }
 
 function buildXml(opts: {

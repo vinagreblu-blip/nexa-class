@@ -3,14 +3,15 @@ import { api } from '../api';
 import type { Usuario } from '../types';
 import { Modal, ConfirmDialog } from '../components/Modal';
 import { Avatar } from '../components/Avatar';
+import { useToast } from '../context/ToastContext';
 
 export function Usuarios() {
+  const toast = useToast();
   const [lista, setLista] = useState<Usuario[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState<Usuario | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [excluirId, setExcluirId] = useState<number | null>(null);
   const [fotoRefresh, setFotoRefresh] = useState(0);
@@ -93,9 +94,8 @@ export function Usuarios() {
 
     if (res.ok) {
       setModalAberto(false);
-      setSucesso(editando ? 'Usuário atualizado.' : 'Usuário criado.');
+      toast.success(editando ? 'Usuário atualizado.' : 'Usuário criado.');
       await carregar();
-      setTimeout(() => setSucesso(null), 3000);
     } else {
       setErro(res.error ?? 'Erro ao salvar');
     }
@@ -106,26 +106,22 @@ export function Usuarios() {
     const res = await api.usuarios.excluir(excluirId);
     setExcluirId(null);
     if (res.ok) {
-      setSucesso('Usuário excluído.');
+      toast.success('Usuário excluído.');
       await carregar();
       setFotoRefresh((n) => n + 1);
-      setTimeout(() => setSucesso(null), 3000);
     } else {
-      setErro(res.error ?? 'Erro ao excluir usuário');
-      setTimeout(() => setErro(null), 5000);
+      toast.error(res.error ?? 'Erro ao excluir usuário');
     }
   }
 
   async function trocarFoto(id: number) {
     setErro(null);
-    setSucesso(null);
     setTrocandoFotoId(id);
     const res = await api.usuarios.trocarFoto(id);
     setTrocandoFotoId(null);
     if (res.ok) {
-      setSucesso('Foto de perfil atualizada.');
+      toast.success('Foto de perfil atualizada.');
       setFotoRefresh((n) => n + 1);
-      setTimeout(() => setSucesso(null), 3000);
     } else if (res.error && res.error !== 'Nenhum arquivo selecionado') {
       setErro(res.error);
       setTimeout(() => setErro(null), 5000);
@@ -170,7 +166,6 @@ export function Usuarios() {
         </button>
       </div>
 
-      {sucesso && <div className="alert alert-success">{sucesso}</div>}
       {erro && !modalAberto && <div className="alert alert-error">{erro}</div>}
 
       <div className="card" style={{ overflow: 'hidden' }}>

@@ -3,11 +3,11 @@ import { ipcMain, dialog, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import PDFDocument from 'pdfkit';
-import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
 import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
+import { escapeXml, extrairJPEGsDoPDF } from '../utils';
 
 // === PDF → XML ===
 async function pdfParaXml(_event: IpcMainInvokeEvent): Promise<ApiResult<{ caminho: string }>> {
@@ -51,7 +51,7 @@ async function pdfParaXml(_event: IpcMainInvokeEvent): Promise<ApiResult<{ camin
   if (textoCompleto.trim().length < 20) {
     textoCompleto = '';
     const buf = fs.readFileSync(pdfPath);
-    const jpegImages = extrairJPEGs(buf);
+    const jpegImages = extrairJPEGsDoPDF(buf);
     if (jpegImages.length > 0) {
       const Tesseract = require('tesseract.js');
       jpegImages.sort((a, b) => b.length - a.length);
@@ -147,9 +147,6 @@ async function xmlParaPdf(_event: IpcMainInvokeEvent): Promise<ApiResult<{ camin
 }
 
 // === Helpers ===
-function escapeXml(s: string): string {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
 
 function gerarXmlDeTexto(texto: string, origem: string): string {
   const linhas = texto.split('\n').filter((l) => l.trim());
@@ -170,23 +167,6 @@ function gerarXmlDeTexto(texto: string, origem: string): string {
 ${conteudoLinhas}  </conteudo>
 </documento>
 `;
-}
-
-function extrairJPEGs(buf: Buffer): Buffer[] {
-  const imagens: Buffer[] = [];
-  const SOI = Buffer.from([0xFF, 0xD8]);
-  const EOI = Buffer.from([0xFF, 0xD9]);
-  let pos = 0;
-  while (pos < buf.length - 1) {
-    const soi = buf.indexOf(SOI, pos);
-    if (soi === -1) break;
-    const eoi = buf.indexOf(EOI, soi + 2);
-    if (eoi === -1) break;
-    const jpeg = buf.subarray(soi, eoi + 2);
-    if (jpeg.length > 5000) imagens.push(Buffer.from(jpeg));
-    pos = eoi + 2;
-  }
-  return imagens;
 }
 
 function gerarPdfDeXml(xmlContent: string, destinoPath: string): void {

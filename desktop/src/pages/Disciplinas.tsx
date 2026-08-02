@@ -3,10 +3,12 @@ import { api } from '../api';
 import type { Disciplina, DisciplinaInput, Docente } from '../types';
 import { Modal } from '../components/Modal';
 import { formatarDisciplina } from '../utils/formatar';
+import { useToast } from '../context/ToastContext';
 
 const VAZIO: DisciplinaInput = { nome: '', docente_id: null, ch: '' };
 
 export function Disciplinas() {
+  const toast = useToast();
   const [lista, setLista] = useState<Disciplina[]>([]);
   const [docentes, setDocentes] = useState<Docente[]>([]);
   const [busca, setBusca] = useState('');
@@ -15,7 +17,6 @@ export function Disciplinas() {
   const [editando, setEditando] = useState<Disciplina | null>(null);
   const [form, setForm] = useState<DisciplinaInput>(VAZIO);
   const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [excluirId, setExcluirId] = useState<number | null>(null);
   const [excluirSenha, setExcluirSenha] = useState('');
@@ -74,9 +75,8 @@ export function Disciplinas() {
     if (res.ok) {
       setModalAberto(false);
       setMasterSenha('');
-      setSucesso(editando ? 'Disciplina atualizada.' : 'Disciplina cadastrada.');
+      toast.success(editando ? 'Disciplina atualizada.' : 'Disciplina cadastrada.');
       await carregar(busca);
-      setTimeout(() => setSucesso(null), 3000);
     } else {
       setErro(res.error ?? 'Erro ao salvar');
     }
@@ -89,9 +89,8 @@ export function Disciplinas() {
       setExcluirId(null);
       setExcluirSenha('');
       setExcluirErro(null);
-      setSucesso('Disciplina excluída.');
+      toast.success('Disciplina excluída.');
       await carregar(busca);
-      setTimeout(() => setSucesso(null), 3000);
     } else {
       setExcluirErro(res.error ?? 'Erro ao excluir');
     }
@@ -110,8 +109,6 @@ export function Disciplinas() {
           + Adicionar Disciplina
         </button>
       </div>
-
-      {sucesso && <div className="alert alert-success">{sucesso}</div>}
 
       <div style={{ marginBottom: 14 }}>
         <input

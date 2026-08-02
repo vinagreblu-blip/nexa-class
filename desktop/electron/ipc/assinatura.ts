@@ -200,7 +200,7 @@ export function assinarXml(xmlContent: string, senhaPfx: string): { ok: boolean;
 }
 
 async function assinarXmlHandler(
-  event: IpcMainInvokeEvent,
+  _event: IpcMainInvokeEvent,
   xmlContent: string,
   senhaPfx: string
 ): Promise<ApiResult<{ xml: string }>> {

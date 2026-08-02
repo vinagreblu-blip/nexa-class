@@ -357,3 +357,13 @@ tbody tr:hover {
   color: var(--alert-warning-fg);
   border: 1px solid var(--alert-warning-bd);
 }
+
+/* ===== Toast animation ===== */
+@keyframes nexa-toast-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

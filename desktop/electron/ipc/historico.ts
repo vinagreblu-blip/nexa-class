@@ -315,7 +315,7 @@ const COLUNAS = [
 ];
 
 function renderHistoricoPdf(opts: RenderOpts): void {
-  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, urlVerificacao, semAssinatura } = opts;
+  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: MARGEM, layout: 'portrait' });
   const stream = fs.createWriteStream(destinoPath);
@@ -563,8 +563,6 @@ function desenharCaixaDados(
   novaPagina: () => number,
   bottomLimit: number
 ): number {
-  const colunas = 4;
-  const colW = largura / colunas;
   const PAD = 4;
   let y = yIn;
 

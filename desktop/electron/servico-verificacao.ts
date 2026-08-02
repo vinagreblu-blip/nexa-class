@@ -1,7 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { app } from 'electron';
 import { getDb } from './database';
 import { CONFIG } from './config';
 import { getLocalIP } from './network';
@@ -248,7 +247,7 @@ function paginaValido(row: DeclaracaoRow): string {
     </div></body></html>`;
 }
 
-function paginaInvalido(codigo: string): string {
+function paginaInvalido(_codigo: string): string {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Documento não encontrado — NEXA CLASS</title>

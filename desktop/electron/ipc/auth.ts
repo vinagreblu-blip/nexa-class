@@ -3,7 +3,7 @@ import { ipcMain } from 'electron';
 import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
-import type { ApiResult, Sessao, Usuario, UsuarioPublico, UsuarioInput } from '../types';
+import type { ApiResult, Sessao, Usuario, UsuarioPublico } from '../types';
 
 let sessaoAtual: Sessao | null = null;
 

@@ -3,12 +3,14 @@ import { api } from '../api';
 import type { Docente, DocenteInput } from '../types';
 import { Modal } from '../components/Modal';
 import { formatarDisciplina } from '../utils/formatar';
+import { useToast } from '../context/ToastContext';
 
 const TITULACOES = ['DOUTOR', 'DOUTORA', 'MESTRADO', 'MESTRADO/DOUTORADO', 'ESPECIALISTA', 'GRADUADO'] as const;
 
 const VAZIO: DocenteInput = { nome: '', titulacao: '' };
 
 export function Docentes() {
+  const toast = useToast();
   const [lista, setLista] = useState<Docente[]>([]);
   const [busca, setBusca] = useState('');
   const [carregando, setCarregando] = useState(true);
@@ -16,7 +18,6 @@ export function Docentes() {
   const [editando, setEditando] = useState<Docente | null>(null);
   const [form, setForm] = useState<DocenteInput>(VAZIO);
   const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [excluirId, setExcluirId] = useState<number | null>(null);
   const [excluirSenha, setExcluirSenha] = useState('');
@@ -65,11 +66,10 @@ export function Docentes() {
     if (res.ok) {
       setModalAberto(false);
       setMasterSenha('');
-      setSucesso(editando ? 'Docente atualizado.' : 'Docente cadastrado.');
+      toast.success(editando ? 'Docente atualizado.' : 'Docente cadastrado.');
       await carregar(busca);
-      setTimeout(() => setSucesso(null), 3000);
     } else {
-      setErro(res.error ?? 'Erro ao salvar');
+      toast.error(res.error ?? 'Erro ao salvar');
     }
   }
 
@@ -80,9 +80,8 @@ export function Docentes() {
       setExcluirId(null);
       setExcluirSenha('');
       setExcluirErro(null);
-      setSucesso('Docente excluído.');
+      toast.success('Docente excluído.');
       await carregar(busca);
-      setTimeout(() => setSucesso(null), 3000);
     } else {
       setExcluirErro(res.error ?? 'Erro ao excluir');
     }
@@ -101,8 +100,6 @@ export function Docentes() {
           + Adicionar Docente
         </button>
       </div>
-
-      {sucesso && <div className="alert alert-success">{sucesso}</div>}
 
       <div style={{ marginBottom: 14 }}>
         <input

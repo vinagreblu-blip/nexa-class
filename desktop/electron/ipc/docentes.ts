@@ -5,7 +5,7 @@ import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult, Docente, DocenteInput } from '../types';
-import { getSessao, requerAuth } from './auth';
+import { requerAuth } from './auth';
 
 function validarMaster(senha: string): boolean {
   return bcrypt.compareSync(senha ?? '', CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH);

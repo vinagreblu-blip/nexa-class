@@ -1,5 +1,4 @@
 import http from 'node:http';
-import fs from 'node:fs';
 import bcrypt from 'bcryptjs';
 import { getDb } from './database';
 import { CONFIG } from './config';

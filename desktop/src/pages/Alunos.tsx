@@ -3,14 +3,7 @@ import { api } from '../api';
 import type { Aluno, AlunoInput } from '../types';
 import { Modal, ConfirmDialog } from '../components/Modal';
 import { DocumentosAluno } from '../components/DocumentosAluno';
-
-function mascararCPF(valor: string): string {
-  const d = valor.replace(/\D/g, '').substring(0, 11);
-  if (d.length <= 3) return d;
-  if (d.length <= 6) return `${d.substring(0, 3)}.${d.substring(3)}`;
-  if (d.length <= 9) return `${d.substring(0, 3)}.${d.substring(3, 6)}.${d.substring(6)}`;
-  return `${d.substring(0, 3)}.${d.substring(3, 6)}.${d.substring(6, 9)}-${d.substring(9)}`;
-}
+import { mascararCPF } from '../utils';
 
 export const FACULDADES = ['Hélio Rocha', 'FACIIP', 'FATECE', 'FACEI', '2 de Julho'] as const;
 export const ESTADOS_BR = [

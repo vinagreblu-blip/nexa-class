@@ -1,6 +1,5 @@
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import fs from 'node:fs';
-import path from 'node:path';
 
 export interface StatementResult {
   run: (...params: any[]) => { changes: number; lastInsertRowid: number | bigint };

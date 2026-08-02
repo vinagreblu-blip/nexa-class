@@ -1,9 +1,8 @@
 import type { IpcMainInvokeEvent} from 'electron';
 import { ipcMain, dialog, BrowserWindow, app } from 'electron';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
-import QRCode from 'qrcode';
 import PDFDocument from 'pdfkit';
 import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
@@ -15,18 +14,7 @@ import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
-
-function gerarHashConteudo(aluno: Aluno, emitidoEm: string): string {
-  const payload = [
-    aluno.id,
-    aluno.matricula,
-    aluno.nome,
-    aluno.cpf ?? '',
-    aluno.curso ?? '',
-    emitidoEm,
-  ].join('|');
-  return createHash('sha256').update(payload, 'utf8').digest('hex');
-}
+import { gerarHashConteudo, gerarQrPng } from '../utils';
 
 async function registrarNoWeb(
   codigo: string,
@@ -69,15 +57,6 @@ async function registrarNoWeb(
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Falha ao contatar o serviço de verificação' };
   }
-}
-
-async function gerarQrPng(url: string): Promise<Buffer> {
-  return QRCode.toBuffer(url, {
-    type: 'png',
-    margin: 1,
-    width: 240,
-    color: { dark: '#000000', light: '#ffffff' },
-  });
 }
 
 function gerarPdf(opts: {
