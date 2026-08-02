@@ -14,6 +14,7 @@ export function Declaracoes() {
   const [seletorAberto, setSeletorAberto] = useState(false);
   const [alunoSelecionado, setAlunoSelecionado] = useState<Aluno | null>(null);
   const [emitindo, setEmitindo] = useState(false);
+  const [semAssinatura, setSemAssinatura] = useState(false);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [excluirAlvo, setExcluirAlvo] = useState<DeclaracaoRow | null>(null);
@@ -56,7 +57,7 @@ export function Declaracoes() {
     setEmitindo(true);
     setErro(null);
     setSucesso(null);
-    const res = await api.declaracoes.emitir(alunoSelecionado.id);
+    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura);
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);
@@ -106,9 +107,14 @@ export function Declaracoes() {
             Emita declarações em PDF com QR Code e código de verificação.
           </p>
         </div>
-        <button className="btn-primary" onClick={abrirSeletor}>
-          + Emitir Nova Declaração
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-primary" onClick={() => { setSemAssinatura(false); abrirSeletor(); }}>
+            + Emitir Nova Declaração
+          </button>
+          <button className="btn-ghost" onClick={() => { setSemAssinatura(true); abrirSeletor(); }}>
+            + Emitir Nova Declaração (SA)
+          </button>
+        </div>
       </div>
 
       {sucesso && <div className="alert alert-success">{sucesso}</div>}
@@ -189,16 +195,16 @@ export function Declaracoes() {
 
       {seletorAberto && (
         <Modal
-          title="Emitir Declaração"
+          title={semAssinatura ? 'Emitir Declaração (Sem Assinatura)' : 'Emitir Declaração'}
           width={620}
-          onClose={() => (emitindo ? undefined : setSeletorAberto(false))}
+          onClose={() => (emitindo ? undefined : (setSeletorAberto(false), setSemAssinatura(false)))}
           footer={
             <>
-              <button className="btn-ghost" onClick={() => setSeletorAberto(false)} disabled={emitindo}>
+              <button className="btn-ghost" onClick={() => { setSeletorAberto(false); setSemAssinatura(false); }} disabled={emitindo}>
                 Cancelar
               </button>
               <button className="btn-primary" onClick={emitir} disabled={emitindo || !alunoSelecionado}>
-                {emitindo ? 'Emitindo…' : 'Emitir PDF'}
+                {emitindo ? 'Emitindo…' : semAssinatura ? 'Emitir PDF (SA)' : 'Emitir PDF'}
               </button>
             </>
           }

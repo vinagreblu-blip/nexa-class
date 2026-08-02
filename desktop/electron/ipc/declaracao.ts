@@ -13,6 +13,7 @@ import type { Aluno, ApiResult, Declaracao, DeclaracaoEmitida } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
+import { getImageSize, getPngContentBounds } from '../image-size';
 
 function gerarHashConteudo(aluno: Aluno, emitidoEm: string): string {
   const payload = [
@@ -90,8 +91,9 @@ function gerarPdf(opts: {
   faculdadeNome: string;
   diretor: string;
   faculdade: ReturnType<typeof getFaculdadeInfo>;
+  semAssinatura?: boolean;
 }): void {
-  const { aluno, codigo, hash, qrBuffer, emitidoEm, destinoPath, cursoTexto, cargaHorariaTotal, faculdadeNome, diretor, faculdade } = opts;
+  const { aluno, codigo, hash, qrBuffer, emitidoEm, destinoPath, cursoTexto, cargaHorariaTotal, faculdadeNome, diretor, faculdade, semAssinatura } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: 60 });
   const stream = fs.createWriteStream(destinoPath);
@@ -226,19 +228,39 @@ function gerarPdf(opts: {
   const assinatura = getAssinaturaAtiva();
   const nomeAss = assinatura?.nome_signatario || diretor;
   const cargoAss = assinatura?.cargo || 'Diretor Geral';
-  const assImgExiste = assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path);
+  const temCertificado = !!(assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path));
+  const temImagem = !semAssinatura && !!(assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path));
 
   doc.moveDown(1);
   const centro = largura / 2;
-  if (assImgExiste) {
+
+  // Sempre coloca a imagem da assinatura se estiver cadastrada (mesmo sem certificado)
+  // A imagem fica EXATAMENTE em cima da linha (borda inferior = linha)
+  let assH = 0;
+  const assW = 238;
+  if (assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path)) {
     try {
-      doc.image(assinatura!.imagem_path!, centro - 90, doc.y, { width: 180 });
-      doc.moveDown(2.5);
+      const dim = getImageSize(assinatura.imagem_path);
+      assH = (dim.height / dim.width) * assW;
     } catch { /* ignora */ }
   }
+  const linhaAss = doc.y + assH;
+  if (temImagem) {
+    try {
+      const dim = getImageSize(assinatura!.imagem_path!);
+      const bounds = getPngContentBounds(assinatura!.imagem_path!);
+      const baselineFrac = bounds ? bounds.baseline / dim.height : 1;
+      const imageTop = linhaAss - baselineFrac * assH + 2.835; // 3mm - 2mm = 1mm
+      doc.image(assinatura!.imagem_path!, centro - assW / 2, imageTop, { width: assW });
+    } catch { /* ignora */ }
+  }
+  doc.y = linhaAss;
   doc.moveTo(centro - 130, doc.y).lineTo(centro + 130, doc.y).lineWidth(0.7).strokeColor('#000000').stroke();
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000').text(nomeAss, centro - 130, doc.y + 3, { width: 260, align: 'center' });
   doc.font('Helvetica').fontSize(9).fillColor('#444444').text(cargoAss, centro - 130, doc.y, { width: 260, align: 'center' });
+  if (temCertificado) {
+    doc.font('Helvetica').fontSize(7).fillColor('#666666').text('Documento assinado digitalmente com certificado ICP-Brasil', centro - 130, doc.y, { width: 260, align: 'center' });
+  }
 
   doc.moveDown(2);
 
@@ -249,14 +271,15 @@ function gerarPdf(opts: {
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#666666').text('CÓDIGO DE VERIFICAÇÃO', 60);
   doc.font('Courier').fillColor('#000000').fontSize(11).text(codigo, 60, doc.y + 4);
 
-  const qrX = largura - 60 - 110;
-  const qrY = doc.y - 30;
-  doc.image(qrBuffer, qrX, qrY, { width: 110, height: 110 });
+  const qrSize = 99; // 110 - 10%
+  const qrX = largura - 60 - qrSize;
+  const qrY = doc.y - 30 - 14.175; // -5mm
+  doc.image(qrBuffer, qrX, qrY, { width: qrSize, height: qrSize });
   doc
     .font('Helvetica')
     .fontSize(8)
     .fillColor('#666666')
-    .text('Escaneie para verificar', qrX, qrY + 114, { width: 110, align: 'center' });
+    .text('Escaneie para verificar', qrX, qrY + qrSize + 4, { width: qrSize, align: 'center' });
 
   doc.moveDown(4);
   doc
@@ -280,7 +303,8 @@ function gerarPdf(opts: {
 
 async function emitir(
   event: IpcMainInvokeEvent,
-  alunoId: number
+  alunoId: number,
+  semAssinatura = false
 ): Promise<ApiResult<DeclaracaoEmitida>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -376,6 +400,7 @@ async function emitir(
     faculdadeNome,
     diretor,
     faculdade: fac,
+    semAssinatura,
   });
 
   // Salva cópia interna para re-download

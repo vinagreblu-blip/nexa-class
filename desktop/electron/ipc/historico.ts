@@ -12,6 +12,7 @@ import { getFaculdadeInfo } from '../faculdades';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
+import { getImageSize, getPngContentBounds } from '../image-size';
 
 // Normaliza nomes de disciplinas/docentes para formato título
 function formatarNome(s: string): string {
@@ -191,7 +192,8 @@ function fmtNum(n: number): string {
 
 async function gerarPdf(
   event: IpcMainInvokeEvent,
-  alunoId: number
+  alunoId: number,
+  semAssinatura = false
 ): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -259,6 +261,7 @@ async function gerarPdf(
     codigoVerificacao: codigo,
     qrBuffer,
     urlVerificacao,
+    semAssinatura,
   });
 
   return { ok: true, data: { pdfPath: destino.filePath, enviadoWeb } };
@@ -273,6 +276,7 @@ interface RenderOpts {
   codigoVerificacao: string;
   qrBuffer: Buffer | null;
   urlVerificacao: string;
+  semAssinatura?: boolean;
 }
 
 // ===== Fontes (Calibri do Windows, fallback Helvetica) =====
@@ -310,7 +314,7 @@ const COLUNAS = [
 ];
 
 function renderHistoricoPdf(opts: RenderOpts): void {
-  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, urlVerificacao } = opts;
+  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, urlVerificacao, semAssinatura } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: MARGEM, layout: 'portrait' });
   const stream = fs.createWriteStream(destinoPath);
@@ -469,29 +473,48 @@ function renderHistoricoPdf(opts: RenderOpts): void {
   estado.y = doc.y + 6;
 
   // ===== ASSINATURA =====
-  garantirEspaco(90);
+  garantirEspaco(100);
   estado.y += 30;
   const centro = larguraPagina / 2;
 
-  // Verifica se há assinatura digital cadastrada
+  // Verifica assinatura ativa (imagem) — aparece independente de certificado
   const assinatura = getAssinaturaAtiva();
-  const assImgExiste = assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path);
+  const temCertificado = !!(assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path));
+  const temImagem = !semAssinatura && !!(assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path));
   const nomeAss = assinatura?.nome_signatario || faculdade.diretor || '';
   const cargoAss = assinatura?.cargo || faculdade.cargoDiretor || 'Diretor Geral';
 
-  if (assImgExiste) {
-    // Imagem da assinatura acima da linha
+  // Sempre coloca a imagem da assinatura se estiver cadastrada (mesmo sem certificado)
+  // A baseline do texto (onde a letra "o" toca) fica EXATAMENTE em cima da linha
+  let assH = 0;
+  const assW = 238;
+  if (assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path)) {
     try {
-      const assW = 180;
-      doc.image(assinatura!.imagem_path!, centro - assW / 2, estado.y - 5, { width: assW });
-      estado.y += 30;
+      const dim = getImageSize(assinatura.imagem_path);
+      assH = (dim.height / dim.width) * assW;
     } catch { /* ignora */ }
   }
+  const linhaY = estado.y + assH;
+  if (temImagem) {
+    try {
+      const dim = getImageSize(assinatura!.imagem_path!);
+      const bounds = getPngContentBounds(assinatura!.imagem_path!);
+      const baselineFrac = bounds ? bounds.baseline / dim.height : 1;
+      const imageTop = linhaY - baselineFrac * assH + 2.835; // 3mm - 2mm = 1mm
+      doc.image(assinatura!.imagem_path!, centro - assW / 2, imageTop, { width: assW });
+    } catch { /* ignora erro de imagem */ }
+  }
+  estado.y = linhaY;
   doc.moveTo(centro - 130, estado.y).lineTo(centro + 130, estado.y).lineWidth(0.7).strokeColor('#000000').stroke();
   doc.font(F_BOLD()).fontSize(10).fillColor('#000000');
   doc.text(nomeAss, centro - 130, estado.y + 3, { width: 260, align: 'center' });
   doc.font(F_REG()).fontSize(9);
   doc.text(cargoAss, centro - 130, doc.y, { width: 260, align: 'center' });
+  // Indica se tem certificado digital
+  if (temCertificado) {
+    doc.font(F_REG()).fontSize(7).fillColor('#666666');
+    doc.text('Documento assinado digitalmente com certificado ICP-Brasil', centro - 130, doc.y, { width: 260, align: 'center' });
+  }
   estado.y = doc.y + 8;
 
   // ===== QR + VERIFICAÇÃO =====

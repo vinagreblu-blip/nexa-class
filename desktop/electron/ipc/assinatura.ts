@@ -5,6 +5,9 @@ import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
+// uploadFileToCloud removido: NÃO subir .pfx (chave privada ICP-Brasil) nem assinaturas
+// para a nuvem — expõe material criptográfico sensível em storage compartilhado.
+// Cada máquina cadastra seu próprio certificado localmente.
 
 export interface Assinatura {
   id: number;
@@ -62,6 +65,9 @@ async function salvar(
   fs.copyFileSync(origem, destino);
   db.prepare('UPDATE assinaturas SET imagem_path = ? WHERE id = ?').run(destino, novoId);
 
+  // NÃO envia mais a imagem para a nuvem — fica apenas local.
+  // Se houver sync entre máquinas, cada uma cadastra sua própria assinatura/certificado.
+
   const row = db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(novoId) as Assinatura;
   return { ok: true, data: row };
 }
@@ -99,8 +105,29 @@ async function uploadCert(
   fs.copyFileSync(origem, destino);
   db.prepare('UPDATE assinaturas SET certificado_path = ? WHERE id = ?').run(destino, ass.id);
 
+  // NÃO envia o .pfx (chave privada ICP-Brasil) para a nuvem — viola MP 2.200-2/2001.
+  // O certificado fica APENAS no disco local desta máquina.
+
   const row = db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(ass.id) as Assinatura;
   return { ok: true, data: row };
+}
+
+/** Pré-visualização da imagem da assinatura como dataURL (evita require('fs') no renderer). */
+function previewImagem(_event: IpcMainInvokeEvent): ApiResult<{ dataUrl: string | null }> {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT imagem_path FROM assinaturas WHERE ativo = 1 ORDER BY id DESC LIMIT 1')
+    .get() as { imagem_path: string | null } | undefined;
+  const p = row?.imagem_path;
+  if (!p || !fs.existsSync(p)) return { ok: true, data: { dataUrl: null } };
+  try {
+    const buf = fs.readFileSync(p);
+    const ext = path.extname(p).toLowerCase();
+    const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
+    return { ok: true, data: { dataUrl: `data:${mime};base64,${buf.toString('base64')}` } };
+  } catch {
+    return { ok: true, data: { dataUrl: null } };
+  }
 }
 
 /** Assina um XML usando o certificado .pfx com xml-crypto (XMLDSig) */
@@ -200,4 +227,5 @@ export function registrarAssinaturaHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_SALVAR, requerAuth(salvar));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT, requerAuth(uploadCert));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_ASSINAR_XML, requerAuth(assinarXmlHandler));
+  ipcMain.handle(IPC_CHANNELS.ASSINATURA_PREVIEW_IMAGEM, requerAuth(previewImagem));
 }

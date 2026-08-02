@@ -1,5 +1,6 @@
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import fs from 'node:fs';
+import path from 'node:path';
 
 export interface StatementResult {
   run: (...params: any[]) => { changes: number; lastInsertRowid: number | bigint };
@@ -14,7 +15,62 @@ export interface DbAdapter {
 }
 
 let instance: SqlJsDatabase | null = null;
-let persistFn: (() => void) | null = null;
+let dbPathActive: string | null = null;
+let persistTimer: NodeJS.Timeout | null = null;
+let persistDirty = false;
+let persistSync = false; // flag que força persist síncrono (ex: shutdown)
+
+const PERSIST_DEBOUNCE_MS = 100;
+
+/**
+ * Persiste o DB em disco de forma ATÔMICA:
+ *   1. Escreve o conteúdo em arquivo temporário <path>.tmp
+ *   2. Renomeia <path>.tmp -> <path> (rename é atômico no mesmo filesystem)
+ * Isso evita corrupção em queda de energia / kill do processo mid-write.
+ * Não usa mais writeFileSync direto sobre o arquivo de dados.
+ */
+function persistAtomicSync(): void {
+  if (!instance || !dbPathActive) return;
+  const tmp = `${dbPathActive}.tmp`;
+  const data = Buffer.from(instance.export());
+  try {
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, dbPathActive);
+  } catch (e: any) {
+    // Tenta limpar o tmp em caso de falha
+    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* ignora */ }
+    console.error('[sqlite-adapter] Falha ao persistir banco:', e?.message);
+    throw e;
+  }
+}
+
+/**
+ * Marca o DB como "sujo" e agenda persistência debounced.
+ * Múltiplas escritas dentro de PERSIST_DEBOUNCE_MS viram um único write no disco.
+ * Reduz I/O em ciclos de seed/sync que fazem centenas de INSERTs.
+ */
+function schedulePersist(): void {
+  persistDirty = true;
+  if (persistSync) {
+    // Modo shutdown: escreve imediatamente
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+    persistAtomicSync();
+    persistDirty = false;
+    return;
+  }
+  if (persistTimer) return; // já agendado
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    if (persistDirty) {
+      persistDirty = false;
+      try {
+        persistAtomicSync();
+      } catch (e: any) {
+        console.error('[sqlite-adapter] persist debounced falhou:', e?.message);
+      }
+    }
+  }, PERSIST_DEBOUNCE_MS);
+}
 
 function lastInsertRowid(): number {
   if (!instance) return 0;
@@ -40,7 +96,7 @@ function makeStatement(sql: string): StatementResult {
       }
       const changes = instance.getRowsModified();
       const id = lastInsertRowid();
-      persistFn?.();
+      schedulePersist();
       return { changes, lastInsertRowid: id };
     },
     get(...params: any[]) {
@@ -70,24 +126,31 @@ function makeStatement(sql: string): StatementResult {
 
 export async function openDatabase(dbPath: string): Promise<DbAdapter> {
   const SQL = await initSqlJs();
+  dbPathActive = dbPath;
   if (fs.existsSync(dbPath)) {
     instance = new SQL.Database(fs.readFileSync(dbPath));
   } else {
     instance = new SQL.Database();
   }
-  persistFn = () => {
-    if (!instance) return;
-    fs.writeFileSync(dbPath, Buffer.from(instance.export()));
-  };
 
   instance.run('PRAGMA foreign_keys = ON');
+
+  // No encerramento do processo, garante flush síncrono
+  const flushShutdown = () => {
+    persistSync = true;
+    if (persistDirty) {
+      try { persistAtomicSync(); persistDirty = false; } catch { /* ignora */ }
+    }
+  };
+  process.on('beforeExit', flushShutdown);
+  process.on('exit', flushShutdown);
 
   const adapter: DbAdapter = {
     prepare: (sql: string) => makeStatement(sql),
     exec: (sql: string) => {
       if (!instance) throw new Error('DB não inicializado');
       instance.exec(sql);
-      persistFn?.();
+      schedulePersist();
     },
     pragma: (_s: string) => {
       /* no-op: sql.js roda em memória (WASM) */
@@ -98,5 +161,24 @@ export async function openDatabase(dbPath: string): Promise<DbAdapter> {
 }
 
 export function saveNow(): void {
-  persistFn?.();
+  // Força persistência imediata (ignora debounce)
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  if (persistDirty) {
+    persistDirty = false;
+    persistAtomicSync();
+  } else {
+    // mesmo sem flag dirty, garante snapshot atual
+    persistAtomicSync();
+  }
 }
+
+// Cleanup no encerramento do app Electron
+export function shutdown(): void {
+  persistSync = true;
+  if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+  if (persistDirty) {
+    try { persistAtomicSync(); } catch { /* ignora */ }
+    persistDirty = false;
+  }
+}
+

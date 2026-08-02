@@ -14,10 +14,14 @@ export const CONFIG = {
     password: process.env.ADMIN_PASSWORD ?? 'admin123',
     nome: process.env.ADMIN_NOME ?? 'Administrador',
   },
-  // Hash bcrypt da senha master exigida para excluir declarações.
-  // Independente da senha de login do admin. Atual: V9#qL7@tX2!mR8$zK4&nP1*Yw6^cH3
+  // Hash bcrypt da senha master exigida para excluir declarações, resetar usuários,
+  // editar docentes/disciplinas e acessar cursos livres.
+  // Independente da senha de login do admin.
+  // Para rotacionar: gere um novo hash com `bcrypt.hashSync('<nova>', 10)` e sete
+  // SENHA_EXCLUSAO_DECLARACAO_HASH no ambiente. Nunca commitar o plaintext.
   SENHA_EXCLUSAO_DECLARACAO_HASH:
-    '$2a$10$t7w3VQ.yI2IiWpp9zrMhkeTCpCqX1lGvVbrH1JB814N7Bhdgyj2zK',
+    process.env.SENHA_EXCLUSAO_DECLARACAO_HASH ??
+    '$2a$10$nhrugU7YCD/.p3x7HgNTEeRKpIRZAAX0OVW0Qz0Bg1BPGxyxrYZpq',
   APP_NAME: 'NEXA CLASS',
   INSTITUICAO: 'NEXA CLASS - Network for Education and Academic Excellence Class',
   // Configuração SMTP para envio de e-mails (recuperação de senha)

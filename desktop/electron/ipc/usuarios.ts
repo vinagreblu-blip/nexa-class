@@ -1,6 +1,7 @@
 import { ipcMain, IpcMainInvokeEvent, dialog, BrowserWindow, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { getDb, gerarCodigoUsuarioUnico } from '../database';
 import { CONFIG } from '../config';
@@ -237,7 +238,9 @@ function resetarSenha(
     return { ok: false, error: 'Senha master incorreta' };
   }
   const db = getDb();
-  const SENHA_TEMP = 'senha123';
+  // Gera senha temporária aleatória (16 chars) — nunca hardcoded.
+  // O admin deve comunicá-la ao usuário de forma segura e este deve trocá-la no primeiro login.
+  const SENHA_TEMP = crypto.randomBytes(12).toString('base64url').slice(0, 16);
   const hash = bcrypt.hashSync(SENHA_TEMP, 10);
   const result = db
     .prepare(`UPDATE usuarios SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`)

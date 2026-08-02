@@ -73,6 +73,7 @@ export interface AlunoInput {
   ano_ingresso?: string;
   ano_conclusao?: string;
   data_nascimento?: string;
+  origem?: string;
 }
 
 export interface HistoricoDisciplina {
@@ -166,4 +167,38 @@ export interface ApiResult<T> {
   ok: boolean;
   data?: T;
   error?: string;
+}
+
+export interface DiplomaRow {
+  id: number;
+  aluno_id: number;
+  codigo_verificacao: string;
+  hash_conteudo: string;
+  emitido_por: number;
+  emitido_em: string;
+  enviado_web: number;
+  aluno_nome: string;
+  aluno_matricula: string;
+  emitido_por_nome: string;
+  emitido_por_codigo?: string;
+}
+
+export interface CursoLivreRow {
+  id: number;
+  nome: string;
+  descricao: string | null;
+  carga_horaria: string | null;
+  data_inicio: string | null;
+  data_fim: string | null;
+  ativo: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CursoLivreInput {
+  nome: string;
+  descricao?: string;
+  carga_horaria?: string;
+  data_inicio?: string;
+  data_fim?: string;
 }

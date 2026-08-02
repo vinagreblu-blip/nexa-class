@@ -14,7 +14,15 @@ app.use(express.json({ limit: '64kb' }));
 
 function validarApiKey(req: express.Request, res: express.Response): boolean {
   const key = req.header('x-api-key');
-  if (!key || !crypto.timingSafeEqual(Buffer.from(key), Buffer.from(API_KEY))) {
+  if (!key) {
+    res.status(401).json({ ok: false, error: 'API key inválida ou ausente' });
+    return false;
+  }
+  // timingSafeEqual exige buffers de mesmo tamanho — sem este guard, lança RangeError
+  // (vira 500 + vaza o comprimento esperado da key) quando o header tem tamanho diferente.
+  const keyBuf = Buffer.from(key);
+  const expectedBuf = Buffer.from(API_KEY);
+  if (keyBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(keyBuf, expectedBuf)) {
     res.status(401).json({ ok: false, error: 'API key inválida ou ausente' });
     return false;
   }

@@ -204,11 +204,11 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
     if (res.ok) await carregarDisc();
   }
 
-  async function gerarPdf() {
+  async function gerarPdf(semAssinatura = false) {
     setErro(null);
     setSucesso(null);
     setGerando(true);
-    const res = await api.historico.gerarPdf(aluno.id);
+    const res = await api.historico.gerarPdf(aluno.id, semAssinatura);
     setGerando(false);
     if (res.ok && res.data) {
       setSucesso(
@@ -253,8 +253,11 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
           >
             {gerandoXml ? 'Gerando…' : 'Gerar Histórico (XML)'}
           </button>
-          <button className="btn-primary" onClick={gerarPdf} disabled={gerando || gerandoXml || disciplinas.length === 0}>
+          <button className="btn-primary" onClick={() => gerarPdf(false)} disabled={gerando || gerandoXml || disciplinas.length === 0}>
             {gerando ? 'Gerando…' : 'Gerar Histórico (PDF)'}
+          </button>
+          <button className="btn-ghost" onClick={() => gerarPdf(true)} disabled={gerando || gerandoXml || disciplinas.length === 0}>
+            {gerando ? 'Gerando…' : 'Gerar Histórico (SA)'}
           </button>
         </>
       }

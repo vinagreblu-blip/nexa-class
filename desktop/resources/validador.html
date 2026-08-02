@@ -25,41 +25,73 @@ td{padding:10px;border-bottom:1px solid #e2e8f0;font-weight:500;font-size:14px}
 <div id="content"><div class="loading">Verificando documento…</div></div>
 </div>
 <script>
-async function sha256(text){const b=new TextEncoder().encode(text);const h=await crypto.subtle.digest('SHA-256',b);return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join('')}
-async function init(){
-const p=new URLSearchParams(location.search);
-const d=p.get('d');
-if(!d){showError('Dados de validação ausentes.');return}
-let data;
-try{data=JSON.parse(atob(d))}catch{showError('Dados inválidos.');return}
-const hashEsperado=data.h;delete data.h;
-const dadosStr=JSON.stringify(data);
-const hashCalculado=await sha256(dadosStr);
-if(hashCalculado!==hashEsperado){showError('Documento adulterado! Os dados não conferem.');return}
-showOk(data)}
-function showOk(d){
-const dt=d.e?new Date(d.e).toLocaleString('pt-BR',{timeZone:'UTC'}):'—';
-document.getElementById('content').innerHTML=`
-<div class="icon icon-ok">✓</div>
-<h1>Documento Autêntico</h1>
-<p class="sub">A autenticidade foi confirmada pelo sistema NEXA CLASS.</p>
-<table>
-<tr><th>Aluno</th><td>${esc(d.n)}</td></tr>
-<tr><th>Matrícula</th><td>${esc(d.m)}</td></tr>
-${d.c?`<tr><th>Curso</th><td>${esc(d.c)}</td></tr>`:''}
-${d.f?`<tr><th>Faculdade</th><td>${esc(d.f)}</td></tr>`:''}
-${d.t?`<tr><th>Tipo</th><td>${esc(d.t)}</td></tr>`:''}
-<tr><th>Emitido em</th><td>${esc(dt)}</td></tr>
-</table>
-<div class="hash">${esc(d.k||'')}</div>
-<div class="footer">✅ Validado por NEXA CLASS • Sistema Acadêmico</div>`}
-function showError(msg){
-document.getElementById('content').innerHTML=`
-<div class="icon icon-err">✕</div>
-<h1 style="color:#dc2626">Erro de Validação</h1>
-<p class="sub">${esc(msg)}</p>
-<div class="footer">Sistema NEXA CLASS</div>`}
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+// Decodifica base64 com suporte correto a UTF-8
+function decodeBase64(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+async function sha256(text) {
+  const b = new TextEncoder().encode(text);
+  const h = await crypto.subtle.digest('SHA-256', b);
+  return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function init() {
+  const p = new URLSearchParams(location.search);
+  const d = p.get('d');
+  if (!d) { showError('Dados de validação ausentes.'); return; }
+
+  let data;
+  try {
+    const json = decodeBase64(d);
+    data = JSON.parse(json);
+  } catch { showError('Dados inválidos.'); return; }
+
+  const hashEsperado = data.h;
+  delete data.h;
+  const dadosStr = JSON.stringify(data);
+  const hashCalculado = await sha256(dadosStr);
+
+  if (hashCalculado !== hashEsperado) {
+    showError('Documento adulterado! Os dados não conferem.');
+    return;
+  }
+  showOk(data);
+}
+
+function showOk(d) {
+  const dt = d.e ? new Date(d.e).toLocaleString('pt-BR', {timeZone:'UTC'}) : '—';
+  document.getElementById('content').innerHTML =
+    '<div class="icon icon-ok">&#10003;</div>' +
+    '<h1>Documento Autêntico</h1>' +
+    '<p class="sub">A autenticidade foi confirmada pelo sistema NEXA CLASS.</p>' +
+    '<table>' +
+    '<tr><th>Aluno</th><td>' + esc(d.n) + '</td></tr>' +
+    '<tr><th>Matrícula</th><td>' + esc(d.m) + '</td></tr>' +
+    (d.c ? '<tr><th>Curso</th><td>' + esc(d.c) + '</td></tr>' : '') +
+    (d.f ? '<tr><th>Faculdade</th><td>' + esc(d.f) + '</td></tr>' : '') +
+    (d.t ? '<tr><th>Tipo</th><td>' + esc(d.t) + '</td></tr>' : '') +
+    '<tr><th>Emitido em</th><td>' + esc(dt) + '</td></tr>' +
+    '</table>' +
+    '<div class="hash">' + esc(d.k || '') + '</div>' +
+    '<div class="footer">Validado por NEXA CLASS - Sistema Acadêmico</div>';
+}
+
+function showError(msg) {
+  document.getElementById('content').innerHTML =
+    '<div class="icon icon-err">&#10005;</div>' +
+    '<h1 style="color:#dc2626">Erro de Validação</h1>' +
+    '<p class="sub">' + esc(msg) + '</p>' +
+    '<div class="footer">Sistema NEXA CLASS</div>';
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 init();
 </script>
 </body>

@@ -83,6 +83,9 @@ export function iniciarResetServer(): http.Server {
 }
 
 function paginaForm(token: string): string {
+  // Token é serializado como JSON para evitar escape de string quebrado (XSS).
+  // Antes: `token:'${token}'` permitia injetar JS craftando `?token=',evil:'...`.
+  const tokenJson = JSON.stringify(token);
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Redefinir Senha — NEXA CLASS</title>
@@ -109,21 +112,24 @@ function paginaForm(token: string): string {
     </form>
     <div class="msg" id="msg"></div></div>
     <script>
-      document.getElementById('f').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const s = document.getElementById('senha').value;
-        const c = document.getElementById('confirma').value;
-        const msg = document.getElementById('msg');
-        if (s !== c) { msg.className='msg err'; msg.textContent='As senhas não conferem.'; msg.style.display='block'; return; }
-        try {
-          const r = await fetch('/api/redefinir', {method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({token:'${token}',novaSenha:s})});
-          const d = await r.json();
-          if (d.ok) { msg.className='msg ok'; msg.innerHTML='✅ Senha redefinida com sucesso! Você já pode fechar esta página e fazer login no sistema.'; msg.style.display='block';
-            document.getElementById('f').style.display='none'; }
-          else { msg.className='msg err'; msg.textContent=d.error||'Erro'; msg.style.display='block'; }
-        } catch(ex) { msg.className='msg err'; msg.textContent='Erro de conexão'; msg.style.display='block'; }
-      });
+      (function () {
+        var TOKEN = ${tokenJson};
+        document.getElementById('f').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          var s = document.getElementById('senha').value;
+          var c = document.getElementById('confirma').value;
+          var msg = document.getElementById('msg');
+          if (s !== c) { msg.className='msg err'; msg.textContent='As senhas não conferem.'; msg.style.display='block'; return; }
+          try {
+            var r = await fetch('/api/redefinir', {method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({token:TOKEN, novaSenha:s})});
+            var d = await r.json();
+            if (d.ok) { msg.className='msg ok'; msg.textContent='✅ Senha redefinida com sucesso! Você já pode fechar esta página e fazer login no sistema.'; msg.style.display='block';
+              document.getElementById('f').style.display='none'; }
+            else { msg.className='msg err'; msg.textContent=d.error||'Erro'; msg.style.display='block'; }
+          } catch(ex) { msg.className='msg err'; msg.textContent='Erro de conexão'; msg.style.display='block'; }
+        });
+      })();
     </script></body></html>`;
 }
 

@@ -3,8 +3,11 @@ import type {
   AlunoInput,
   AlunoDocumento,
   ApiResult,
+  CursoLivreInput,
+  CursoLivreRow,
   DeclaracaoEmitida,
   DeclaracaoRow,
+  DiplomaRow,
   Disciplina,
   DisciplinaInput,
   Docente,
@@ -28,7 +31,7 @@ export interface DesktopApi {
     salvar: (config: { provedor: string; email: string; senha: string }) => Promise<ApiResult<{ provedor: string; email: string; senha: string }>>;
   };
   alunos: {
-    listar: (busca?: string) => Promise<ApiResult<Aluno[]>>;
+    listar: (busca?: string, origem?: string) => Promise<ApiResult<Aluno[]>>;
     buscar: (id: number) => Promise<ApiResult<Aluno>>;
     criar: (input: AlunoInput) => Promise<ApiResult<Aluno>>;
     atualizar: (id: number, input: AlunoInput) => Promise<ApiResult<Aluno>>;
@@ -47,17 +50,33 @@ export interface DesktopApi {
     resetarSenha: (id: number, masterPassword: string) => Promise<ApiResult<{ senhaTemporaria: string }>>;
   };
   declaracoes: {
-    emitir: (alunoId: number) => Promise<ApiResult<DeclaracaoEmitida>>;
+    emitir: (alunoId: number, semAssinatura?: boolean) => Promise<ApiResult<DeclaracaoEmitida>>;
     listar: (alunoId?: number) => Promise<ApiResult<DeclaracaoRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<{ webOk: boolean }>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+  };
+  diplomas: {
+    emitir: (alunoId: number, semAssinatura?: boolean) => Promise<ApiResult<DiplomaRow>>;
+    listar: (alunoId?: number) => Promise<ApiResult<DiplomaRow[]>>;
+    excluir: (id: number, senha: string) => Promise<ApiResult<true>>;
+    baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+  };
+  cursosLivres: {
+    verificar: (senha: string) => Promise<ApiResult<true>>;
+    listar: (busca?: string) => Promise<ApiResult<CursoLivreRow[]>>;
+    criar: (input: CursoLivreInput) => Promise<ApiResult<CursoLivreRow>>;
+    atualizar: (id: number, input: CursoLivreInput) => Promise<ApiResult<CursoLivreRow>>;
+    excluir: (id: number) => Promise<ApiResult<true>>;
+    listarAlunos: (cursoLivreId: number) => Promise<ApiResult<any[]>>;
+    vincularAluno: (cursoLivreId: number, alunoId: number) => Promise<ApiResult<true>>;
+    desvincularAluno: (vinculoId: number) => Promise<ApiResult<true>>;
   };
   historico: {
     listar: (alunoId: number) => Promise<ApiResult<HistoricoDisciplina[]>>;
     criar: (alunoId: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;
     atualizar: (id: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;
     excluir: (id: number) => Promise<ApiResult<true>>;
-    gerarPdf: (alunoId: number) => Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>>;
+    gerarPdf: (alunoId: number, semAssinatura?: boolean) => Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>>;
     gerarXml: (alunoId: number) => Promise<ApiResult<{ xmlPath: string }>>;
     mover: (id: number, direcao: 'up' | 'down') => Promise<ApiResult<true>>;
   };
@@ -99,6 +118,12 @@ export interface DesktopApi {
     salvar: (input: { nome_signatario: string; cargo: string }) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>>;
     uploadCert: () => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>>;
     assinarXml: (xmlContent: string, senhaPfx: string) => Promise<ApiResult<{ xml: string }>>;
+    previewImagem: () => Promise<ApiResult<{ dataUrl: string | null }>>;
+  };
+  cloud: {
+    status: () => Promise<ApiResult<{ url: string; key: string; enabled: boolean }>>;
+    salvar: (input: { url: string; key: string; enabled: boolean }) => Promise<ApiResult<true>>;
+    sync: () => Promise<ApiResult<{ synced: number }>>;
   };
 }
 
@@ -116,6 +141,7 @@ export type {
   UsuarioInput,
   DeclaracaoEmitida,
   DeclaracaoRow,
+  DiplomaRow,
   HistoricoDisciplina,
   HistoricoDisciplinaInput,
   Docente,
@@ -123,4 +149,6 @@ export type {
   Disciplina,
   DisciplinaInput,
   AlunoDocumento,
+  CursoLivreRow,
+  CursoLivreInput,
 };

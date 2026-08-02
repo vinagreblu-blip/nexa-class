@@ -71,7 +71,7 @@ function gerarMatricula(rg: string, anoIngresso: string): string {
   return `${anoIngresso.split('.')[0]}${amostra}`;
 }
 
-function listar(_event: IpcMainInvokeEvent, busca?: string): ApiResult<Aluno[]> {
+function listar(_event: IpcMainInvokeEvent, busca?: string, origem?: string): ApiResult<Aluno[]> {
   const db = getDb();
   let rows: Aluno[];
 
@@ -79,17 +79,21 @@ function listar(_event: IpcMainInvokeEvent, busca?: string): ApiResult<Aluno[]> 
                       FROM alunos a
                       LEFT JOIN usuarios u ON u.id = a.created_by`;
 
+  const origemFilter = origem === 'cursos_livres'
+    ? " AND a.origem = 'cursos_livres'"
+    : " AND (a.origem IS NULL OR a.origem != 'cursos_livres')";
+
   if (busca && busca.trim()) {
     const termo = `%${busca.trim()}%`;
     rows = db
       .prepare(
         `${baseSelect}
-         WHERE a.nome LIKE ? OR a.matricula LIKE ? OR a.cpf LIKE ? OR a.rg LIKE ? OR a.curso LIKE ?
+         WHERE (a.nome LIKE ? OR a.matricula LIKE ? OR a.cpf LIKE ? OR a.rg LIKE ? OR a.curso LIKE ?)${origemFilter}
          ORDER BY a.nome ASC`
       )
       .all(termo, termo, termo, termo, termo) as Aluno[];
   } else {
-    rows = db.prepare(`${baseSelect} ORDER BY a.nome ASC`).all() as Aluno[];
+    rows = db.prepare(`${baseSelect} WHERE 1=1${origemFilter} ORDER BY a.nome ASC`).all() as Aluno[];
   }
 
   return { ok: true, data: rows };
@@ -114,7 +118,7 @@ function validarInput(input: AlunoInput): string | null {
 }
 
 const COLS_INSERT =
-  '(matricula, nome, cpf, rg, nacionalidade, naturalidade, cidade, sexo, orgao_emissor, turno, forma_ingresso, data_vestibular, data_colacao, email, telefone, curso, faculdade, ano_ingresso, ano_conclusao, data_nascimento, created_by)';
+  '(matricula, nome, cpf, rg, nacionalidade, naturalidade, cidade, sexo, orgao_emissor, turno, forma_ingresso, data_vestibular, data_colacao, email, telefone, curso, faculdade, ano_ingresso, ano_conclusao, data_nascimento, created_by, origem)';
 
 function valoresInsert(input: AlunoInput, matricula: string): any[] {
   return [
@@ -146,7 +150,8 @@ function criar(_event: IpcMainInvokeEvent, input: AlunoInput): ApiResult<Aluno> 
   if (erro) return { ok: false, error: erro };
 
   const db = getDb();
-  const placeholders = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  const placeholders = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+
 
   for (let tentativa = 0; tentativa < 12; tentativa++) {
     const matricula =
@@ -156,7 +161,7 @@ function criar(_event: IpcMainInvokeEvent, input: AlunoInput): ApiResult<Aluno> 
     try {
       const info = db
         .prepare(`INSERT INTO alunos ${COLS_INSERT} VALUES ${placeholders}`)
-        .run(...valoresInsert(input, matricula), getSessao()?.usuario.id ?? null);
+        .run(...valoresInsert(input, matricula), getSessao()?.usuario.id ?? null, input.origem || 'sistema');
       // Popula o histórico padrão automaticamente para Hélio Rocha
       const faculdade = input.faculdade?.trim();
       const curso = input.curso?.trim();

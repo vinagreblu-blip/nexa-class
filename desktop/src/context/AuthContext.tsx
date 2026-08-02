@@ -17,8 +17,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [carregando, setCarregando] = useState(true);
 
   const atualizarSessao = async () => {
-    const res = await api.auth.sessao();
-    setUsuario(res.ok ? res.data ?? null : null);
+    try {
+      const res = await api.auth.sessao();
+      setUsuario(res.ok ? res.data ?? null : null);
+    } catch (e) {
+      // IPC quebrado / preload ausente — não trava o app em "Carregando…" infinito.
+      console.error('[auth] Falha ao carregar sessão:', e);
+      setUsuario(null);
+    }
   };
 
   useEffect(() => {

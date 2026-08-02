@@ -35,8 +35,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.SMTP_SALVAR, config),
   },
   alunos: {
-    listar: (busca?: string): Promise<ApiResult<Aluno[]>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.ALUNO_LISTAR, busca),
+    listar: (busca?: string, origem?: string): Promise<ApiResult<Aluno[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ALUNO_LISTAR, busca, origem),
     buscar: (id: number): Promise<ApiResult<Aluno>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ALUNO_BUSCAR, id),
     criar: (input: AlunoInput): Promise<ApiResult<Aluno>> =>
@@ -64,14 +64,42 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.USUARIO_RESETAR_SENHA, id, masterPassword),
   },
   declaracoes: {
-    emitir: (alunoId: number): Promise<ApiResult<DeclaracaoEmitida>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId),
+    emitir: (alunoId: number, semAssinatura = false): Promise<ApiResult<DeclaracaoEmitida>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura),
     listar: (alunoId?: number): Promise<ApiResult<any[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_LISTAR, alunoId),
     excluir: (id: number, senha: string): Promise<ApiResult<{ webOk: boolean }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EXCLUIR, id, senha),
     baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_BAIXAR, id),
+  },
+  diplomas: {
+    emitir: (alunoId: number, semAssinatura = false): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EMITIR, alunoId, semAssinatura),
+    listar: (alunoId?: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_LISTAR, alunoId),
+    excluir: (id: number, senha: string): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EXCLUIR, id, senha),
+    baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_BAIXAR, id),
+  },
+  cursosLivres: {
+    verificar: (senha: string): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_VERIFICAR, senha),
+    listar: (busca?: string): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_LISTAR, busca),
+    criar: (input: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_CRIAR, input),
+    atualizar: (id: number, input: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_ATUALIZAR, id, input),
+    excluir: (id: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_EXCLUIR, id),
+    listarAlunos: (cursoLivreId: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_LISTAR_ALUNOS, cursoLivreId),
+    vincularAluno: (cursoLivreId: number, alunoId: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_VINCULAR_ALUNO, cursoLivreId, alunoId),
+    desvincularAluno: (vinculoId: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_DESVINCULAR_ALUNO, vinculoId),
   },
   historico: {
     listar: (alunoId: number): Promise<ApiResult<HistoricoDisciplina[]>> =>
@@ -82,8 +110,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_ATUALIZAR, id, input),
     excluir: (id: number): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_EXCLUIR, id),
-    gerarPdf: (alunoId: number): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_PDF, alunoId),
+    gerarPdf: (alunoId: number, semAssinatura = false): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_PDF, alunoId, semAssinatura),
     gerarXml: (alunoId: number): Promise<ApiResult<{ xmlPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_XML, alunoId),
     mover: (id: number, direcao: 'up' | 'down'): Promise<ApiResult<true>> =>
@@ -148,6 +176,16 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT),
     assinarXml: (xmlContent: string, senhaPfx: string): Promise<ApiResult<{ xml: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_ASSINAR_XML, xmlContent, senhaPfx),
+    previewImagem: (): Promise<ApiResult<{ dataUrl: string | null }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_PREVIEW_IMAGEM),
+  },
+  cloud: {
+    status: (): Promise<ApiResult<{ url: string; key: string; enabled: boolean }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLOUD_STATUS),
+    salvar: (input: { url: string; key: string; enabled: boolean }): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLOUD_SALVAR, input),
+    sync: (): Promise<ApiResult<{ synced: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLOUD_SYNC),
   },
 };
 

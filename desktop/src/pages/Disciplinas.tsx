@@ -34,13 +34,14 @@ export function Disciplinas() {
     if (res.ok && res.data) setDocentes(res.data);
   }
 
+  // Busca inicial + debounce (um único useEffect para evitar fetch duplicado no mount).
+  // Docentes são imutáveis na sessão — carrega uma única vez.
   useEffect(() => {
     const t = setTimeout(() => carregar(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
 
   useEffect(() => {
-    carregar();
     carregarDocentes();
   }, []);
 

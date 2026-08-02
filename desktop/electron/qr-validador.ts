@@ -1,24 +1,35 @@
-import { createHash } from 'node:crypto';
+import { getBaseUrl } from './tunnel';
+
+// Histórico deste módulo:
+//   Antes: o QR embutia os dados do documento (nome/matricula/etc.) em base64 + um hash
+//   SHA-256 puro (sem segredo). Como não havia HMAC, qualquer atacante podia forjar um
+//   QR "Documento Autêntico" com dados arbitrários — bastava recalcular o hash.
+//
+//   Agora: o QR aponta apenas para o endpoint público /v/:codigo no serviço de verificação
+//   embutido no app. O servidor faz lookup do codigo_verificacao no banco e só então
+//   renderiza a página de "Documento Autêntico". Não há como forjar sem acesso ao DB.
+//
+//   Para QRs funcionarem fora da rede local, habilite o túnel pinggy via env
+//   NEXA_ENABLE_TUNNEL=1 (ver tunnel.ts). Caso contrário, funcionam apenas na mesma rede.
 
 export interface DadosValidacao {
-  n: string;
-  m: string;
+  // Campos legados — aceitos por compatibilidade, mas ignorados na nova implementação.
+  n?: string;
+  m?: string;
   c?: string;
   f?: string;
   t?: string;
-  e: string;
+  e?: string;
+  // Código de verificação único do documento (UUID-like). Usado para formar a URL.
   k?: string;
+  codigo?: string;
 }
 
-// URL pública no GitHub Pages — funciona de qualquer rede
-const VALIDADOR_URL = 'https://vinagreblu-blip.github.io/nexa-validador/';
-
-/** Gera a URL do QR Code com dados de validação embutidos (base64 + hash SHA-256) */
+/** Gera a URL pública do QR Code — aponta ao endpoint server-side /v/:codigo. */
 export function gerarUrlValidacao(dados: DadosValidacao): string {
-  const dadosParaHash = { ...dados };
-  const dadosStr = JSON.stringify(dadosParaHash);
-  const hash = createHash('sha256').update(dadosStr, 'utf8').digest('hex');
-  const dadosComHash = { ...dados, h: hash };
-  const encoded = Buffer.from(JSON.stringify(dadosComHash)).toString('base64');
-  return `${VALIDADOR_URL}?d=${encoded}`;
+  const codigo = dados.codigo ?? dados.k ?? '';
+  if (!codigo) throw new Error('gerarUrlValidacao: código de vericação ausente');
+  const base = getBaseUrl().replace(/\/+$/, '');
+  return `${base}/v/${encodeURIComponent(codigo)}`;
 }
+

@@ -220,6 +220,44 @@ function createSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_alunos_nome ON alunos(nome);
     CREATE INDEX IF NOT EXISTS idx_declaracoes_aluno ON declaracoes(aluno_id);
     CREATE INDEX IF NOT EXISTS idx_declaracoes_codigo ON declaracoes(codigo_verificacao);
+
+    CREATE TABLE IF NOT EXISTS diplomas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aluno_id INTEGER NOT NULL,
+      codigo_verificacao TEXT UNIQUE NOT NULL,
+      hash_conteudo TEXT NOT NULL,
+      emitido_por INTEGER NOT NULL,
+      emitido_em TEXT NOT NULL DEFAULT (datetime('now')),
+      enviado_web INTEGER NOT NULL DEFAULT 0,
+      pdf_caminho TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
+      FOREIGN KEY (emitido_por) REFERENCES usuarios(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_diplomas_aluno ON diplomas(aluno_id);
+    CREATE INDEX IF NOT EXISTS idx_diplomas_codigo ON diplomas(codigo_verificacao);
+
+    CREATE TABLE IF NOT EXISTS cursos_livres (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      descricao TEXT,
+      carga_horaria TEXT,
+      data_inicio TEXT,
+      data_fim TEXT,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS curso_livre_alunos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      curso_livre_id INTEGER NOT NULL,
+      aluno_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (curso_livre_id) REFERENCES cursos_livres(id) ON DELETE CASCADE,
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
+      UNIQUE(curso_livre_id, aluno_id)
+    );
   `);
 }
 
@@ -250,6 +288,31 @@ function migrateAlunos(): void {
   const colsDecl = db.prepare('PRAGMA table_info(declaracoes)').all() as { name: string }[];
   if (colsDecl.map((c) => c.name).includes('pdf_caminho') === false) {
     db.exec('ALTER TABLE declaracoes ADD COLUMN pdf_caminho TEXT');
+  }
+
+  // assinaturas: certificado_path
+  const colsAss = db.prepare('PRAGMA table_info(assinaturas)').all() as { name: string }[];
+  if (colsAss.map((c) => c.name).includes('certificado_path') === false) {
+    db.exec('ALTER TABLE assinaturas ADD COLUMN certificado_path TEXT');
+  }
+
+  // historico_disciplinas: updated_at (necessário para sync entre máquinas)
+  const colsHist = db.prepare('PRAGMA table_info(historico_disciplinas)').all() as { name: string }[];
+  if (colsHist.map((c) => c.name).includes('updated_at') === false) {
+    db.exec('ALTER TABLE historico_disciplinas ADD COLUMN updated_at TEXT');
+    db.exec("UPDATE historico_disciplinas SET updated_at = datetime('now') WHERE updated_at IS NULL");
+  }
+
+  // declaracoes: updated_at (necessário para sync entre máquinas)
+  if (colsDecl.map((c) => c.name).includes('updated_at') === false) {
+    db.exec('ALTER TABLE declaracoes ADD COLUMN updated_at TEXT');
+    db.exec("UPDATE declaracoes SET updated_at = datetime('now') WHERE updated_at IS NULL");
+  }
+
+  // alunos: origem (separa alunos de cursos livres dos do sistema principal)
+  const colsAluno = db.prepare('PRAGMA table_info(alunos)').all() as { name: string }[];
+  if (colsAluno.map((c) => c.name).includes('origem') === false) {
+    db.exec("ALTER TABLE alunos ADD COLUMN origem TEXT DEFAULT 'sistema'");
   }
 }
 

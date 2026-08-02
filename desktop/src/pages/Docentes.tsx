@@ -30,14 +30,11 @@ export function Docentes() {
     setCarregando(false);
   }
 
+  // Busca inicial + debounce (um único useEffect para evitar fetch duplicado no mount).
   useEffect(() => {
     const t = setTimeout(() => carregar(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
-
-  useEffect(() => {
-    carregar();
-  }, []);
 
   function abrirNovo() {
     setEditando(null);

@@ -70,6 +70,7 @@ export interface AlunoInput {
   ano_ingresso?: string;
   ano_conclusao?: string;
   data_nascimento?: string;
+  origem?: string;
 }
 
 export interface HistoricoDisciplina {
@@ -213,4 +214,20 @@ export const IPC_CHANNELS = {
   ASSINATURA_SALVAR: 'assinatura:salvar',
   ASSINATURA_UPLOAD_CERT: 'assinatura:upload-cert',
   ASSINATURA_ASSINAR_XML: 'assinatura:assinar-xml',
+  ASSINATURA_PREVIEW_IMAGEM: 'assinatura:preview-imagem',
+  CLOUD_STATUS: 'cloud:status',
+  CLOUD_SALVAR: 'cloud:salvar',
+  CLOUD_SYNC: 'cloud:sync',
+  DIPLOMA_EMITIR: 'diploma:emitir',
+  DIPLOMA_LISTAR: 'diploma:listar',
+  DIPLOMA_EXCLUIR: 'diploma:excluir',
+  DIPLOMA_BAIXAR: 'diploma:baixar',
+  CURSO_LIVRE_LISTAR: 'curso-livre:listar',
+  CURSO_LIVRE_CRIAR: 'curso-livre:criar',
+  CURSO_LIVRE_ATUALIZAR: 'curso-livre:atualizar',
+  CURSO_LIVRE_EXCLUIR: 'curso-livre:excluir',
+  CURSO_LIVRE_VERIFICAR: 'curso-livre:verificar',
+  CURSO_LIVRE_LISTAR_ALUNOS: 'curso-livre:listar-alunos',
+  CURSO_LIVRE_VINCULAR_ALUNO: 'curso-livre:vincular-aluno',
+  CURSO_LIVRE_DESVINCULAR_ALUNO: 'curso-livre:desvincular-aluno',
 } as const;

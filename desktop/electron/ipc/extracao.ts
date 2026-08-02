@@ -5,6 +5,7 @@ import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
+import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
 
 interface DadosExtraidos {
   nome: string | null;
@@ -282,7 +283,7 @@ async function extrairDadosDocumento(
 
     // 1. Tenta texto com pdfjs
     try {
-      const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
+      const pdfjs = await loadPdfjs();
       const data = new Uint8Array(buf);
       const pdf = await pdfjs.getDocument({ data, disableFontFace: true, useSystemFonts: false }).promise;
       for (let i = 1; i <= pdf.numPages; i++) {

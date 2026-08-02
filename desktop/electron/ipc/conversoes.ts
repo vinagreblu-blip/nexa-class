@@ -6,6 +6,7 @@ import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
+import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
 
 // === PDF → XML ===
 async function pdfParaXml(_event: IpcMainInvokeEvent): Promise<ApiResult<{ caminho: string }>> {
@@ -20,7 +21,7 @@ async function pdfParaXml(_event: IpcMainInvokeEvent): Promise<ApiResult<{ camin
   if (openRes.canceled || !openRes.filePaths[0]) return { ok: false, error: 'Operação cancelada' };
 
   const pdfPath = openRes.filePaths[0];
-  const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
+  const pdfjs = await loadPdfjs();
   const data = new Uint8Array(fs.readFileSync(pdfPath));
   let textoCompleto = '';
 

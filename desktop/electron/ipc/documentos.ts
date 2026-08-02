@@ -5,15 +5,9 @@ import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, AlunoDocumento, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
+import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
 
-// Carrega pdfjs-dist (legacy build, compatível com Node) sob demanda
-let pdfjsLib: any;
-function getPdfjs(): any {
-  if (!pdfjsLib) {
-    pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
-  }
-  return pdfjsLib;
-}
+// (pdfjs carregado sob demanda via pdfjs-loader — v5+ ESM-only)
 
 function getDocumentosDir(alunoId: number): string {
   return path.join(app.getPath('userData'), 'documentos', String(alunoId));
@@ -94,7 +88,7 @@ async function converterXml(
     .get(doc.aluno_id) as Aluno | undefined;
 
   // extrai texto do PDF
-  const pdfjs = getPdfjs();
+  const pdfjs = await loadPdfjs();
   const data = new Uint8Array(fs.readFileSync(doc.caminho));
   const pdf = await pdfjs.getDocument({
     data,

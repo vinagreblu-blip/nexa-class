@@ -41,12 +41,11 @@ export function AssinaturaDigital() {
       setCargo(res.data.cargo);
       setTemCert(!!res.data.certificado_path);
       if (res.data.imagem_path) {
-        try {
-          const fs = require('fs');
-          const buf = fs.readFileSync(res.data.imagem_path);
-          const ext = res.data.imagem_path.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
-          setImgPreview(`data:image/${ext};base64,${buf.toString('base64')}`);
-        } catch { setImgPreview(null); }
+        // Busca preview via IPC — NÃO usar require('fs') no renderer.
+        const preview = await api.assinatura.previewImagem();
+        setImgPreview(preview.ok && preview.data ? preview.data.dataUrl : null);
+      } else {
+        setImgPreview(null);
       }
     }
     setCarregando(false);

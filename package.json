@@ -15,8 +15,5 @@
     "web:dev": "npm -w verificacao-web run dev",
     "web:build": "npm -w verificacao-web run build",
     "web:typecheck": "npm -w verificacao-web run typecheck"
-  },
-  "dependencies": {
-    "canvas": "^3.2.3"
   }
 }
