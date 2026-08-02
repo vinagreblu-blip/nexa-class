@@ -34,6 +34,10 @@ const PERSIST_DEBOUNCE_MS = 100;
  *   2. Renomeia <path>.tmp -> <path> (rename é atômico no mesmo filesystem)
  * Isso evita corrupção em queda de energia / kill do processo mid-write.
  * Não usa mais writeFileSync direto sobre o arquivo de dados.
+ *
+ * No Windows, rename pode falhar com EPERM/EBUSY/ENOTEMPTY se o destino estiver
+ * aberto por outro processo (antivírus, indexador, backup). Fazemos retry com
+ * backoff exponencial antes de desistir.
  */
 function persistAtomicSync(): void {
   if (!instance || !dbPathActive) return;
@@ -41,13 +45,45 @@ function persistAtomicSync(): void {
   const data = Buffer.from(instance.export());
   try {
     fs.writeFileSync(tmp, data);
-    fs.renameSync(tmp, dbPathActive);
+    renameWithRetry(tmp, dbPathActive);
   } catch (e: any) {
-    // Tenta limpar o tmp em caso de falha
-    try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch { /* ignora */ }
+    try {
+      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    } catch {
+      /* ignora */
+    }
     console.error('[sqlite-adapter] Falha ao persistir banco:', e?.message);
     throw e;
   }
+}
+
+const RENAME_ERRORS = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY', 'EACCES', 'EBUSY']);
+const RENAME_MAX_RETRIES = 5;
+const RENAME_BASE_DELAY_MS = 20;
+
+function renameWithRetry(src: string, dest: string): void {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < RENAME_MAX_RETRIES; attempt++) {
+    try {
+      fs.renameSync(src, dest);
+      return;
+    } catch (e: any) {
+      lastErr = e;
+      const code = e?.code as string | undefined;
+      if (!code || !RENAME_ERRORS.has(code)) {
+        // Erro não-transiente — não adianta tentar de novo
+        throw e;
+      }
+      // Backoff exponencial com jitter: 20ms, 40ms, 80ms, 160ms, 320ms
+      const delay = RENAME_BASE_DELAY_MS * Math.pow(2, attempt) + Math.floor(Math.random() * 10);
+      // Sleep síncrono (rotina rara — manter simples)
+      const end = Date.now() + delay;
+      while (Date.now() < end) {
+        /* busy-wait curto */
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**

@@ -31,30 +31,41 @@ let mainWindow: BrowserWindow | null = null;
 
 /**
  * Content Security Policy — bloqueia XSS, inline scripts não autorizados, conexões
- * a hosts arbitrários. Em dev, libera ws/eval para HMR do Vite.
+ * a hosts arbitrários. Em dev, libera ws/eval/blob para HMR do Vite.
+ *
+ * Notas:
+ *  - Em produção o app carrega de file://, então 'self' sozinho não cobre os assets
+ *    locais — adicionamos `file:` explicitamente.
+ *  - Em dev o Vite serve de http://localhost:5173 com HMR via ws:// e precisa de
+ *    unsafe-inline/eval para o React Refresh + source maps.
  */
 function aplicarCsp(): void {
   const csp = isDev
     ? [
-        "default-src 'self'",
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173",
-        "style-src 'self' 'unsafe-inline'",
-        // Vite HMR + Supabase + túnel
-        "connect-src 'self' http://localhost:5173 ws://localhost:5173 https://*.supabase.co wss://*.supabase.co https://*.pinggy.io",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
+        "default-src 'self' http://localhost:5173 blob: data:",
+        // unsafe-inline/eval para React Refresh; http://localhost:5173 para scripts servidos pelo Vite
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173 blob:",
+        "style-src 'self' 'unsafe-inline' blob:",
+        // HMR + Supabase + túnel; blob: para alguns assets do Vite
+        "connect-src 'self' http://localhost:5173 ws://localhost:5173 https://*.supabase.co wss://*.supabase.co https://*.pinggy.io blob:",
+        "img-src 'self' data: blob: http://localhost:5173",
+        "font-src 'self' data: blob:",
+        "worker-src 'self' blob:", // pdfjs e tesseract podem usar workers via blob
       ].join('; ')
     : [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        // Apenas Supabase + túnel (quando habilitado)
+        // Produção: file:// carrega os assets locais. 'self' + file: cobrem.
+        "default-src 'self' file: data:",
+        "script-src 'self' file:",
+        "style-src 'self' 'unsafe-inline' file:",
+        // Supabase (sync) + túnel pinggy (quando habilitado via NEXA_ENABLE_TUNNEL)
         "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.pinggy.io",
-        "img-src 'self' data: blob:",
-        "font-src 'self' data:",
+        "img-src 'self' data: file: blob:",
+        "font-src 'self' data: file:",
+        "worker-src 'self' blob:",
         "object-src 'none'",
         "base-uri 'self'",
         "frame-ancestors 'none'",
+        "form-action 'self'",
       ].join('; ');
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

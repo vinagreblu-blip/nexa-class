@@ -31,8 +31,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback((kind: ToastKind, message: string, durationMs = 4000) => {
+    // Defensivo: ignora mensagens vazias (evita toasts "fantasmas") e clamp de duração.
+    if (!message?.trim()) return;
+    const clampedDuration = Math.max(1000, Math.min(durationMs, 30000));
     const id = nextId++;
-    setToasts((cur) => [...cur, { id, kind, message, durationMs }]);
+    setToasts((cur) => [...cur.slice(-4), { id, kind, message, durationMs: clampedDuration }]); // máx 5 toasts na tela
   }, []);
 
   const api: ToastContextValue = {
