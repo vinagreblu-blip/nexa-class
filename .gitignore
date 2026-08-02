@@ -8,7 +8,8 @@ release/
 .env.local
 desktop/dist/
 desktop/release/
-desktop/dist-electron/*.map
+# dist-electron é saída de tsc -p tsconfig.node.json — nunca deve ser versionado
+desktop/dist-electron/
 verificacao-web/dist/
 verificacao-web/data/*.sqlite
 *.traineddata
