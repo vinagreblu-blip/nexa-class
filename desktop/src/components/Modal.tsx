@@ -1,4 +1,5 @@
-import { ReactNode, useState, useEffect, useRef } from 'react';
+import type { ReactNode} from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export interface ModalProps {
   title: string;

@@ -27,7 +27,8 @@ export const CONFIG = {
   // Configuração SMTP para envio de e-mails (recuperação de senha)
   SMTP: {
     host: process.env.SMTP_HOST ?? '',
-    port: Number(process.env.SMTP_PORT) ?? 587,
+    // Number('') == 0, Number('abc') == NaN. Usar || para tratar ambos como fallback.
+    port: Number(process.env.SMTP_PORT) || 587,
     user: process.env.SMTP_USER ?? '',
     pass: process.env.SMTP_PASS ?? '',
     from: process.env.SMTP_FROM ?? '',

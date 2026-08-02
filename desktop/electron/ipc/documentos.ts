@@ -1,4 +1,5 @@
-import { ipcMain, IpcMainInvokeEvent, dialog, BrowserWindow, app } from 'electron';
+import type { IpcMainInvokeEvent} from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb } from '../database';

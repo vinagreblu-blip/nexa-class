@@ -1,4 +1,5 @@
-import { ipcMain, IpcMainInvokeEvent } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
+import { ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import { getDb } from '../database';

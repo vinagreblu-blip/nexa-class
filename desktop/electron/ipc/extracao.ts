@@ -1,4 +1,5 @@
-import { ipcMain, IpcMainInvokeEvent, dialog, BrowserWindow, app } from 'electron';
+import type { IpcMainInvokeEvent} from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb } from '../database';
@@ -107,7 +108,8 @@ function parseTexto(textoOriginal: string): DadosExtraidos {
     }
   }
   if (dataM) {
-    let dia = dataM[1], mes = dataM[2], ano = dataM[3];
+    const dia = dataM[1], mes = dataM[2];
+    let ano = dataM[3];
     if (ano.length === 2) ano = parseInt(ano) > 30 ? '19' + ano : '20' + ano;
     if (+dia >= 1 && +dia <= 31 && +mes >= 1 && +mes <= 12) {
       r.dataNascimento = `${ano}-${mes.padStart(2,'0')}-${dia.padStart(2,'0')}`;
@@ -170,7 +172,7 @@ function parseTexto(textoOriginal: string): DadosExtraidos {
 
       // Estratégia 2: correção agressiva — extrai só os dígitos
       // Remove órgão emissor e UF conhecidos da linha primeiro
-      let linhaLimpa = linhaDados
+      const linhaLimpa = linhaDados
         .replace(/SSP|DIC|DETRAN|PC\b|IFP|SJSP/i, '')
         .replace(/\b[A-Z]{2}\s*$/, '');
       // Aplica correção agressiva de OCR numérico

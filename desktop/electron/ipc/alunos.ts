@@ -1,4 +1,5 @@
-import { ipcMain, IpcMainInvokeEvent } from 'electron';
+import type { IpcMainInvokeEvent } from 'electron';
+import { ipcMain } from 'electron';
 import { randomInt } from 'node:crypto';
 import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
@@ -159,55 +160,59 @@ function criar(_event: IpcMainInvokeEvent, input: AlunoInput): ApiResult<Aluno> 
         ? input.matricula.trim()
         : gerarMatricula(input.rg || '', input.ano_ingresso || '');
     try {
-      const info = db
-        .prepare(`INSERT INTO alunos ${COLS_INSERT} VALUES ${placeholders}`)
-        .run(...valoresInsert(input, matricula), getSessao()?.usuario.id ?? null, input.origem || 'sistema');
-      // Popula o histórico padrão automaticamente para Hélio Rocha
-      const faculdade = input.faculdade?.trim();
-      const curso = input.curso?.trim();
-      const vestibular = input.ano_ingresso?.trim() ?? '';
-      if (faculdade === 'Hélio Rocha' && curso === 'Administração') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ADM, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Comunicação Social (Publicidade e Propaganda)') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_COM_SOCIAL_PP, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Engenharia Civil') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ENG_CIVIL, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Engenharia de Produção') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ENG_PRODUCAO, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Engenharia Elétrica') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ENG_ELETRICA, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Fisioterapia') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_FISIOTERAPIA, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Serviço Social') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_SERVICO_SOCIAL, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Sistema de Informação') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_SISTEMA_INFORMACAO, vestibular);
-      } else if (faculdade === 'Hélio Rocha' && curso === 'Turismo') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_TURISMO, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Administração') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_ADM, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Administração Hospitalar') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_ADM_HOSPITALAR, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Comunicação Social (Relações Públicas)') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_COM_SOCIAL_RP, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Ciências Contábeis') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_CONTABEIS, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Engenharia de Produção Mecânica') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_ENG_PRODUCAO_MEC, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Jornalismo') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_JORNALISMO, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Pedagogia') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_PEDAGOGIA, vestibular);
-      } else if (faculdade === 'FACIIP' && curso === 'Turismo e Hotelaria') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_TURISMO_HOTELARIA, vestibular);
-      } else if (faculdade === 'FATECE' && curso === 'Administração') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ADM, vestibular);
-      } else if (faculdade === 'FATECE' && curso === 'Pedagogia') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FATECE_PEDAGOGIA, vestibular);
-      } else if (faculdade === 'FATECE' && curso === 'Teologia') {
-        popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FATECE_TEOLOGIA, vestibular);
-      }
-      const row = db.prepare('SELECT * FROM alunos WHERE id = ?').get(info.lastInsertRowid) as Aluno;
+      // Transação: INSERT do aluno + popular histórico atômicos.
+      // Antes, falha parcial deixava aluno sem histórico (ou histórico órfão se o aluno falhasse depois).
+      const row = db.transaction((): Aluno => {
+        const info = db
+          .prepare(`INSERT INTO alunos ${COLS_INSERT} VALUES ${placeholders}`)
+          .run(...valoresInsert(input, matricula), getSessao()?.usuario.id ?? null, input.origem || 'sistema');
+        // Popula o histórico padrão automaticamente para Hélio Rocha
+        const faculdade = input.faculdade?.trim();
+        const curso = input.curso?.trim();
+        const vestibular = input.ano_ingresso?.trim() ?? '';
+        if (faculdade === 'Hélio Rocha' && curso === 'Administração') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ADM, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Comunicação Social (Publicidade e Propaganda)') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_COM_SOCIAL_PP, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Engenharia Civil') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ENG_CIVIL, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Engenharia de Produção') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ENG_PRODUCAO, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Engenharia Elétrica') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ENG_ELETRICA, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Fisioterapia') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_FISIOTERAPIA, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Serviço Social') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_SERVICO_SOCIAL, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Sistema de Informação') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_SISTEMA_INFORMACAO, vestibular);
+        } else if (faculdade === 'Hélio Rocha' && curso === 'Turismo') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_TURISMO, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Administração') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_ADM, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Administração Hospitalar') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_ADM_HOSPITALAR, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Comunicação Social (Relações Públicas)') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_COM_SOCIAL_RP, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Ciências Contábeis') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_CONTABEIS, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Engenharia de Produção Mecânica') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_ENG_PRODUCAO_MEC, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Jornalismo') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_JORNALISMO, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Pedagogia') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_PEDAGOGIA, vestibular);
+        } else if (faculdade === 'FACIIP' && curso === 'Turismo e Hotelaria') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FACIIP_TURISMO_HOTELARIA, vestibular);
+        } else if (faculdade === 'FATECE' && curso === 'Administração') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_HELIOROCHA_ADM, vestibular);
+        } else if (faculdade === 'FATECE' && curso === 'Pedagogia') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FATECE_PEDAGOGIA, vestibular);
+        } else if (faculdade === 'FATECE' && curso === 'Teologia') {
+          popularHistoricoPadrao(info.lastInsertRowid, HISTORICO_PADRAO_FATECE_TEOLOGIA, vestibular);
+        }
+        return db.prepare('SELECT * FROM alunos WHERE id = ?').get(info.lastInsertRowid) as Aluno;
+      });
       return { ok: true, data: row };
     } catch (e: any) {
       if (e?.code === 'SQLITE_CONSTRAINT_UNIQUE') {

@@ -14,6 +14,10 @@
     "desktop:typecheck": "npm -w desktop run typecheck",
     "web:dev": "npm -w verificacao-web run dev",
     "web:build": "npm -w verificacao-web run build",
-    "web:typecheck": "npm -w verificacao-web run typecheck"
+    "web:typecheck": "npm -w verificacao-web run typecheck",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md,sql}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md,sql}\""
   }
 }

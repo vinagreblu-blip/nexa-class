@@ -12,6 +12,13 @@ export interface DbAdapter {
   prepare: (sql: string) => StatementResult;
   exec: (sql: string) => void;
   pragma: (s: string) => void;
+  /**
+   * Executa fn dentro de uma transação. Em caso de throw, faz ROLLBACK e relança.
+   * Em sql.js isso é crucial: cada `.run()` reescreve o arquivo inteiro, então
+   * um burst de INSERTs sem transação é lento E não-atômico (falha parcial deixa
+   * dados órfãos). Com BEGIN/COMMIT, sql.js persiste só uma vez no fim.
+   */
+  transaction: <T>(fn: () => T) => T;
 }
 
 let instance: SqlJsDatabase | null = null;
@@ -154,6 +161,20 @@ export async function openDatabase(dbPath: string): Promise<DbAdapter> {
     },
     pragma: (_s: string) => {
       /* no-op: sql.js roda em memória (WASM) */
+    },
+    transaction: <T>(fn: () => T): T => {
+      if (!instance) throw new Error('DB não inicializado');
+      instance.run('BEGIN');
+      try {
+        const result = fn();
+        instance.run('COMMIT');
+        // Persiste uma única vez ao final da transação (em vez de a cada statement).
+        schedulePersist();
+        return result;
+      } catch (e) {
+        try { instance.run('ROLLBACK'); } catch { /* ignora rollback falho */ }
+        throw e;
+      }
     },
   };
 
