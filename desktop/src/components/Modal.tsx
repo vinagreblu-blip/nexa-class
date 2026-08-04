@@ -12,15 +12,18 @@ export interface ModalProps {
 export function Modal({ title, children, onClose, footer, width }: ModalProps) {
   // Fecha com Escape + foca o modal ao abrir (a11y básica).
   const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
-    // Foca o container para que Escape funcione mesmo sem input autofocus.
-    dialogRef.current?.focus();
+    if (!dialogRef.current?.contains(document.activeElement)) {
+      dialogRef.current?.focus();
+    }
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

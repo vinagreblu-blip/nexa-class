@@ -565,6 +565,17 @@ export function Alunos() {
                 onChange={(e) => setForm({ ...form, data_colacao: e.target.value })}
               />
             </div>
+            <div className="form-row">
+              <label>Formas de Ingresso</label>
+              <select
+                value={form.forma_ingresso}
+                onChange={(e) => setForm({ ...form, forma_ingresso: e.target.value })}
+              >
+                <option value="">Selecione…</option>
+                <option value="ENEM">ENEM</option>
+                <option value="Vestibular">Vestibular</option>
+              </select>
+            </div>
           </div>
 
           {editando ? (

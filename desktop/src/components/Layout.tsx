@@ -9,12 +9,12 @@ import { Disciplinas } from '../pages/Disciplinas';
 import { Historicos } from '../pages/Historicos';
 import { Usuarios } from '../pages/Usuarios';
 import { Declaracoes } from '../pages/Declaracoes';
+import { AtaColacao } from '../pages/AtaColacao';
 import { Diploma } from '../pages/Diploma';
 import { CursosLivres } from '../pages/CursosLivres';
 import { AssinaturaDigital } from '../pages/AssinaturaDigital';
 import { Conversoes } from '../pages/Conversoes';
 import { CloudConfig } from '../pages/CloudConfig';
-import { Configuracoes } from '../pages/Configuracoes';
 import { Perfil } from '../pages/Perfil';
 import { Avatar } from './Avatar';
 import luaIcon from '../assets/lua.png';
@@ -27,12 +27,12 @@ type Aba =
   | 'disciplinas'
   | 'historicos'
   | 'declaracoes'
+  | 'ata-colacao'
   | 'diploma'
   | 'cursos-livres'
   | 'assinatura'
   | 'conversoes'
   | 'cloud'
-  | 'configuracoes'
   | 'usuarios'
   | 'perfil';
 
@@ -50,11 +50,11 @@ export function Layout() {
     { id: 'disciplinas', label: 'Disciplinas' },
     { id: 'historicos', label: 'Histórico Acadêmico' },
     { id: 'declaracoes', label: 'Declarações' },
+    { id: 'ata-colacao', label: 'Ata de Colação de Grau' },
     { id: 'diploma', label: 'Diploma', adminOnly: true },
     { id: 'cursos-livres', label: 'Cursos', adminOnly: true },
     { id: 'assinatura', label: 'Assinatura Digital' },
     { id: 'conversoes', label: 'Converter arquivos' },
-    { id: 'configuracoes', label: 'Configurações', adminOnly: true },
     { id: 'cloud', label: 'Nuvem (Supabase)', adminOnly: true },
     { id: 'usuarios', label: 'Usuários', adminOnly: true },
     { id: 'perfil', label: 'Perfil' },
@@ -218,12 +218,12 @@ export function Layout() {
         {aba === 'disciplinas' && <Disciplinas />}
         {aba === 'historicos' && <Historicos />}
         {aba === 'declaracoes' && <Declaracoes />}
+        {aba === 'ata-colacao' && <AtaColacao />}
         {aba === 'diploma' && <Diploma />}
         {aba === 'cursos-livres' && usuario?.role === 'admin' && <CursosLivres />}
         {aba === 'assinatura' && <AssinaturaDigital />}
         {aba === 'conversoes' && <Conversoes />}
         {aba === 'cloud' && usuario?.role === 'admin' && <CloudConfig />}
-        {aba === 'configuracoes' && usuario?.role === 'admin' && <Configuracoes />}
         {aba === 'usuarios' && usuario?.role === 'admin' && <Usuarios />}
         {aba === 'perfil' && <Perfil />}
       </main>
