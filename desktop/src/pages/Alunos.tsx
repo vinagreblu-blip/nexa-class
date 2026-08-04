@@ -95,18 +95,11 @@ const VAZIO: AlunoInput = {
 };
 
 function gerarMatriculaCliente(rg: string, anoIngresso: string): string {
-  const digitos = (rg || '').replace(/\D/g, '').split('');
-  let amostra = '';
-  for (let i = 0; i < 5; i++) {
-    if (digitos.length === 0) {
-      amostra += Math.floor(Math.random() * 10).toString();
-    } else {
-      const idx = Math.floor(Math.random() * digitos.length);
-      amostra += digitos[idx];
-      digitos.splice(idx, 1);
-    }
-  }
-  return `${anoIngresso.split('.')[0]}${amostra}`;
+  const todosDigitos = (rg || '').replace(/\D/g, '');
+  const numeroBase = todosDigitos.slice(0, -1);
+  const ultimos5 = numeroBase.slice(-5);
+  const ano = (anoIngresso || '').split('.')[0] || String(new Date().getFullYear());
+  return `${ano}${ultimos5}`;
 }
 
 export function Alunos() {
@@ -122,6 +115,7 @@ export function Alunos() {
   const [excluirId, setExcluirId] = useState<number | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [extraindoIA, setExtraindoIA] = useState(false);
+  const [matriculaEditada, setMatriculaEditada] = useState(false);
 
   async function carregar(termo?: string) {
     setCarregando(true);
@@ -182,6 +176,7 @@ export function Alunos() {
     setEditando(null);
     setForm(VAZIO);
     setErro(null);
+    setMatriculaEditada(false);
     setModalAberto(true);
   }
 
@@ -210,18 +205,19 @@ export function Alunos() {
       data_nascimento: a.data_nascimento ?? '',
     });
     setErro(null);
+    setMatriculaEditada(true);
     setModalAberto(true);
   }
 
   useEffect(() => {
-    if (editando) return;
+    if (editando || matriculaEditada) return;
     setForm((f) => {
-      if (f.rg && f.ano_ingresso) {
-        return { ...f, matricula: gerarMatriculaCliente(f.rg, f.ano_ingresso) };
-      }
+        if (f.rg) {
+          return { ...f, matricula: gerarMatriculaCliente(f.rg, f.ano_ingresso ?? '') };
+        }
       return f.matricula ? { ...f, matricula: '' } : f;
     });
-  }, [form.rg, form.ano_ingresso, editando]);
+  }, [form.rg, form.ano_ingresso, editando, matriculaEditada]);
 
   async function salvar() {
     setErro(null);
@@ -404,14 +400,15 @@ export function Alunos() {
               />
             </div>
             <div className="form-row">
-              <label>Matrícula {editando ? '' : '(automática)'}</label>
+              <label>Matrícula {editando ? '' : '(gerada automaticamente, editável)'}</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
-                  value={
-                    form.matricula ||
-                    (editando ? '' : 'Ano do vestibular + 5 dígitos do RG')
-                  }
-                  disabled
+                  value={form.matricula}
+                  onChange={(e) => {
+                    setMatriculaEditada(true);
+                    setForm({ ...form, matricula: e.target.value });
+                  }}
+                  placeholder={!editando ? 'Ano de ingresso + 5 dígitos do RG' : ''}
                   style={{
                     fontFamily: 'monospace',
                     color: form.matricula ? 'var(--text)' : 'var(--text-muted)',
@@ -421,13 +418,14 @@ export function Alunos() {
                   <button
                     type="button"
                     className="btn-ghost btn-sm"
-                    disabled={!form.rg || !form.ano_ingresso}
-                    onClick={() =>
+                    disabled={!form.rg}
+                    onClick={() => {
+                      setMatriculaEditada(false);
                       setForm((f) => ({
                         ...f,
                         matricula: gerarMatriculaCliente(f.rg || '', f.ano_ingresso || ''),
-                      }))
-                    }
+                      }));
+                    }}
                     title="Gerar nova matrícula"
                   >
                     Gerar

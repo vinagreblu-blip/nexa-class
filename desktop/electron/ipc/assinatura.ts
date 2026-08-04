@@ -74,13 +74,16 @@ async function salvar(
 }
 
 async function uploadCert(
-  event: IpcMainInvokeEvent
+  event: IpcMainInvokeEvent,
+  tipo?: string
 ): Promise<ApiResult<Assinatura>> {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return { ok: false, error: 'Janela não disponível' };
 
+  const tipoCert = (tipo === 'A3') ? 'A3' : 'A1';
+
   const res = await dialog.showOpenDialog(win, {
-    title: 'Selecionar Certificado Digital (.pfx/.p12)',
+    title: `Selecionar Certificado Digital ${tipoCert} (.pfx/.p12)`,
     properties: ['openFile'],
     filters: [{ name: 'Certificado', extensions: ['pfx', 'p12'] }],
   });
@@ -102,7 +105,7 @@ async function uploadCert(
     ass = db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(info.lastInsertRowid) as Assinatura;
   }
 
-  const destino = path.join(certsDir, `certificado_${ass.id}${ext}`);
+  const destino = path.join(certsDir, `certificado_${tipoCert}_${ass.id}${ext}`);
   fs.copyFileSync(origem, destino);
   db.prepare('UPDATE assinaturas SET certificado_path = ? WHERE id = ?').run(destino, ass.id);
 

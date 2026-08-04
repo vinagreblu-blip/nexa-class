@@ -14,6 +14,7 @@ import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
+import { formatarDataHoraBrasilia } from '../utils';
 
 // Normaliza nomes de disciplinas/docentes para formato título
 function formatarNome(s: string): string {
@@ -263,6 +264,7 @@ async function gerarPdf(
     qrBuffer,
     urlVerificacao,
     semAssinatura,
+    emitidoEm,
   });
 
   return { ok: true, data: { pdfPath: destino.filePath, enviadoWeb } };
@@ -278,6 +280,7 @@ interface RenderOpts {
   qrBuffer: Buffer | null;
   urlVerificacao: string;
   semAssinatura?: boolean;
+  emitidoEm: string;
 }
 
 // ===== Fontes (Calibri do Windows, fallback Helvetica) =====
@@ -315,7 +318,7 @@ const COLUNAS = [
 ];
 
 function renderHistoricoPdf(opts: RenderOpts): void {
-  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura } = opts;
+  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: MARGEM, layout: 'portrait' });
   const stream = fs.createWriteStream(destinoPath);
@@ -537,6 +540,18 @@ function renderHistoricoPdf(opts: RenderOpts): void {
     );
     doc.text(`Escaneie o QR Code para validar em qualquer dispositivo.`, MARGEM, doc.y, { width: utilizavel, align: 'center' });
   }
+
+  // ===== EMISSÃO (horário de Brasília) =====
+  garantirEspaco(20);
+  estado.y += 8;
+  doc.font(F_REG()).fontSize(8).fillColor('#000000');
+  doc.text(
+    `Emitido em ${formatarDataHoraBrasilia(emitidoEm)} (horário de Brasília)`,
+    MARGEM,
+    estado.y,
+    { width: utilizavel, align: 'center' }
+  );
+  estado.y = doc.y;
 
   // ===== RODAPÉ =====
   if (faculdade.rodape) {

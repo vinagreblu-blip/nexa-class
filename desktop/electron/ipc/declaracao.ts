@@ -14,7 +14,7 @@ import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
-import { gerarHashConteudo, gerarQrPng } from '../utils';
+import { gerarHashConteudo, gerarQrPng, formatarDataHoraBrasilia } from '../utils';
 
 async function registrarNoWeb(
   codigo: string,
@@ -80,7 +80,7 @@ function gerarPdf(opts: {
   doc.pipe(stream);
 
   const largura = doc.page.width;
-  const dateFmt = new Date(emitidoEm).toLocaleString('pt-BR', { timeZone: 'UTC' });
+  const dateFmt = formatarDataHoraBrasilia(emitidoEm);
 
   // ===== CABEÇALHO DA FACULDADE (com logo) =====
   const logoExiste = faculdade.logoPath && fs.existsSync(faculdade.logoPath);
@@ -244,7 +244,7 @@ function gerarPdf(opts: {
 
   doc.moveDown(2);
 
-  doc.font('Helvetica-Bold').fontSize(10).fillColor('#666666').text('DATA DE EMISSÃO', 60);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#666666').text('EMITIDO EM (HORÁRIO DE BRASÍLIA)', 60);
   doc.font('Helvetica').fillColor('#000000').fontSize(12).text(dateFmt, 60, doc.y + 4);
 
   doc.moveDown(1);

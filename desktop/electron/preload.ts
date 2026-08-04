@@ -172,8 +172,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_OBTER),
     salvar: (input: { nome_signatario: string; cargo: string }): Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_SALVAR, input),
-    uploadCert: (): Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT),
+    uploadCert: (tipo?: string): Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT, tipo),
     assinarXml: (xmlContent: string, senhaPfx: string): Promise<ApiResult<{ xml: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_ASSINAR_XML, xmlContent, senhaPfx),
     previewImagem: (): Promise<ApiResult<{ dataUrl: string | null }>> =>

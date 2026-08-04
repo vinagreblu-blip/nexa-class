@@ -85,6 +85,7 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
   if (!client || syncing) return;
   syncing = true;
 
+  try {
   const db = getDb();
 
   for (const tabela of TABELAS) {
@@ -110,6 +111,9 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
 
             // Verifica conflito: só sobrescreve se remoto for mais recente
             if (row.id != null && localCols.includes('updated_at')) {
+              // Nunca sobrescreve o usuário admin local
+              if (tabela === 'usuarios' && row.username === 'admin') continue;
+
               const local = db.prepare(`SELECT updated_at FROM ${tabela} WHERE id = ?`).get(row.id) as { updated_at?: string } | undefined;
               if (local?.updated_at) {
                 const cmp = compararTs(local.updated_at, isoToSqlite(row.updated_at));
@@ -160,8 +164,11 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
       console.warn(`[cloud] Erro ao sincronizar ${tabela}:`, e?.message);
     }
   }
-
-  syncing = false;
+  } catch (e: any) {
+    console.warn('[cloud] Erro no sync:', e?.message);
+  } finally {
+    syncing = false;
+  }
 }
 
 // ============================================================

@@ -22,8 +22,9 @@ export function AssinaturaDigital() {
   const [imgPreview, setImgPreview] = useState<string | null>(null);
 
   // Certificado
-  const [uploadCert, setUploadingCert] = useState(false);
+  const [uploadCert, setUploadingCert] = useState<string | false>(false);
   const [temCert, setTemCert] = useState(false);
+  const [tipoCert, setTipoCert] = useState<'A1' | 'A3' | null>(null);
 
   // Assinar XML
   const [modalAssinar, setModalAssinar] = useState(false);
@@ -40,6 +41,7 @@ export function AssinaturaDigital() {
       setNome(res.data.nome_signatario);
       setCargo(res.data.cargo);
       setTemCert(!!res.data.certificado_path);
+      setTipoCert(res.data.certificado_path?.includes('A3') ? 'A3' : 'A1');
       if (res.data.imagem_path) {
         // Busca preview via IPC — NÃO usar require('fs') no renderer.
         const preview = await api.assinatura.previewImagem();
@@ -70,15 +72,16 @@ export function AssinaturaDigital() {
     }
   }
 
-  async function enviarCertificado() {
+  async function enviarCertificado(tipo: 'A1' | 'A3') {
     setErro(null);
     setSucesso(null);
-    setUploadingCert(true);
-    const res = await api.assinatura.uploadCert();
+    setUploadingCert(tipo);
+    const res = await api.assinatura.uploadCert(tipo);
     setUploadingCert(false);
     if (res.ok && res.data) {
-      setSucesso('Certificado digital carregado com sucesso! Já pode assinar XMLs.');
       setTemCert(true);
+      setTipoCert(tipo);
+      setSucesso(`Certificado ${tipo} carregado com sucesso! Já pode assinar documentos.`);
       setTimeout(() => setSucesso(null), 4000);
     } else if (res.error !== 'Nenhum arquivo selecionado') {
       setErro(res.error ?? 'Erro ao carregar certificado');
@@ -131,12 +134,12 @@ export function AssinaturaDigital() {
             <div style={{ textAlign: 'center', minWidth: 200 }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Certificado Digital</div>
               {temCert ? (
-                <span className="badge badge-ok">✅ .pfx carregado</span>
+                <span className="badge badge-ok">✅ {tipoCert || 'A1'} carregado</span>
               ) : (
                 <span className="badge badge-pendente">❌ Não cadastrado</span>
               )}
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                Necessário para assinar XMLs (padrão XMLDSig)
+                {temCert ? `Tipo: ${tipoCert || 'A1'}` : 'Importe A1 ou A3 para assinar documentos'}
               </div>
             </div>
           </div>
@@ -161,14 +164,61 @@ export function AssinaturaDigital() {
 
       {/* Certificado Digital */}
       <div className="card" style={{ padding: 22, marginBottom: 18 }}>
-        <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Certificado Digital (.pfx / .p12)</h3>
+        <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Certificado Digital ICP-Brasil</h3>
         <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text-muted)' }}>
-          Faça upload do seu certificado A1 (ICP-Brasil) para assinar documentos XML com padrão XMLDSig (W3C).
+          Importe seu certificado para assinar documentos XML com padrão XMLDSig (W3C).
           A senha não é armazenada — é solicitada apenas no momento da assinatura.
         </p>
-        <button className="btn-primary" onClick={enviarCertificado} disabled={uploadCert} style={{ width: '100%' }}>
-          {uploadCert ? 'Selecione o arquivo…' : temCert ? 'Trocar Certificado' : 'Carregar Certificado'}
-        </button>
+
+        {/* Tipo do certificado atual */}
+        {temCert && (
+          <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--surface-tint)', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="badge badge-ok">✅ Certificado carregado</span>
+            <span style={{ color: 'var(--text-muted)' }}>
+              {assinatura?.certificado_path?.includes('A3') ? 'Tipo: A3 (Token)' : 'Tipo: A1 (Arquivo)'}
+            </span>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 12 }}>
+          {/* A1 */}
+          <div style={{ flex: 1, border: '2px solid var(--border)', borderRadius: 12, padding: 18, textAlign: 'center' }}>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#DBEAFE', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px', color: '#2563EB' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <h4 style={{ margin: '0 0 4px', fontSize: 14, color: '#0F172A' }}>Certificado A1</h4>
+            <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Baseado em software (.pfx/.p12). Válido por 1 ano.
+            </p>
+            <button
+              className="btn-primary"
+              onClick={() => enviarCertificado('A1')}
+              disabled={!!uploadCert}
+              style={{ width: '100%', fontSize: 13, padding: '8px 14px' }}
+            >
+              {uploadCert === 'A1' ? 'Selecione…' : temCert ? 'Trocar A1' : 'Importar A1'}
+            </button>
+          </div>
+
+          {/* A3 */}
+          <div style={{ flex: 1, border: '2px solid var(--border)', borderRadius: 12, padding: 18, textAlign: 'center' }}>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px', color: '#22C55E' }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L8 8h3v6h2V8h3l-4-6z"/><rect x="6" y="16" width="12" height="6" rx="1"/><path d="M10 19h4"/></svg>
+            </div>
+            <h4 style={{ margin: '0 0 4px', fontSize: 14, color: '#0F172A' }}>Certificado A3</h4>
+            <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Baseado em hardware (Token USB/SmartCard). Válido até 3 anos.
+            </p>
+            <button
+              className="btn-primary"
+              onClick={() => enviarCertificado('A3')}
+              disabled={!!uploadCert}
+              style={{ width: '100%', fontSize: 13, padding: '8px 14px', background: '#22C55E' }}
+            >
+              {uploadCert === 'A3' ? 'Selecione…' : temCert ? 'Trocar A3' : 'Importar A3'}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Assinar XML */}

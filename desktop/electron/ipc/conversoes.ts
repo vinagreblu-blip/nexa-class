@@ -194,7 +194,7 @@ function gerarPdfDeXml(xmlContent: string, destinoPath: string): void {
   // Cabeçalho
   doc.fontSize(16).font('Helvetica-Bold').fillColor('#000000').text('Documento Convertido', { align: 'center' });
   doc.moveDown(0.5);
-  doc.fontSize(10).font('Helvetica').fillColor('#666666').text(`Gerado em ${new Date().toLocaleString('pt-BR')} • NEXA CLASS`, { align: 'center' });
+  doc.fontSize(10).font('Helvetica').fillColor('#666666').text(`Gerado em ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })} (horário de Brasília) • NEXA CLASS`, { align: 'center' });
   doc.moveDown(1);
   doc.moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).lineWidth(0.5).strokeColor('#cccccc').stroke();
   doc.moveDown(1);

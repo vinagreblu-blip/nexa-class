@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import type { Aluno, DeclaracaoRow, HistoricoDisciplina, HistoricoDisciplinaInput } from '../types';
 import { FACULDADES, SEMESTRES } from './Alunos';
@@ -146,6 +146,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
   const [gerandoXml, setGerandoXml] = useState(false);
   const [excluirId, setExcluirId] = useState<number | null>(null);
   const [declaracoes, setDeclaracoes] = useState<DeclaracaoRow[]>([]);
+  const formRef = useRef<HTMLDivElement>(null);
 
   async function carregarDisc() {
     setCarregandoDisc(true);
@@ -195,6 +196,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
       status: d.status ?? 'AP',
     });
     setErro(null);
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function confirmarExcluir() {
@@ -297,7 +299,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
       </h3>
 
       {/* formulário inline */}
-      <div className="card" style={{ padding: 14, marginBottom: 12 }}>
+      <div ref={formRef} className="card" style={{ padding: 14, marginBottom: 12 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
           <div>
             <label>Período *</label>

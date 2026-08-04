@@ -43,6 +43,40 @@ export function escapeXml(s: string): string {
 }
 
 /**
+ * Fuso de Brasília (UTC−3, sem horário de verão desde 2019).
+ * Identificador IANA usado em todas as exibições de data/hora dos documentos.
+ */
+const TZ_BRASILIA = 'America/Sao_Paulo';
+
+/**
+ * Formata um ISO timestamp em "dd/mm/aaaa hh:mm" no horário de Brasília.
+ * Usado nos rodapés/campos de emissão dos PDFs.
+ */
+export function formatarDataHoraBrasilia(iso: string | Date): string {
+  return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: TZ_BRASILIA,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * Formata um ISO timestamp por extenso em Brasília (ex.: "04 de agosto de 2026").
+ * Usado no texto cerimonial do diploma.
+ */
+export function formatarDataExtensoBrasilia(iso: string | Date): string {
+  return new Date(iso).toLocaleDateString('pt-BR', {
+    timeZone: TZ_BRASILIA,
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/**
  * Extrai imagens JPEG embutidas em PDF (DCTDecode filter).
  * Usado para OCR quando pdfjs não encontra texto direto.
  * Threshold de 5KB filtra ícones pequenos (provável foto do documento).

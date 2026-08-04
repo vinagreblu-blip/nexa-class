@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "concurrently -k -n VITE,ELECTRON -c magenta,cyan \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && tsc -p tsconfig.node.json && cross-env NODE_ENV=development electron .",
+    "dev:electron": "wait-on tcp:5174 && tsc -p tsconfig.node.json && cross-env NODE_ENV=development electron .",
     "build": "tsc -p tsconfig.node.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "package": "npm run build && electron-builder"
@@ -43,7 +43,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^8.2.2",
     "cross-env": "^7.0.3",
-    "electron": "^43.2.0",
+    "electron": "43.2.0",
     "electron-builder": "^26.15.3",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^9.1.2",

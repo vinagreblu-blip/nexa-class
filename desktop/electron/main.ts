@@ -42,13 +42,13 @@ let mainWindow: BrowserWindow | null = null;
 function aplicarCsp(): void {
   const csp = isDev
     ? [
-        "default-src 'self' http://localhost:5173 blob: data:",
-        // unsafe-inline/eval para React Refresh; http://localhost:5173 para scripts servidos pelo Vite
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5173 blob:",
+        "default-src 'self' http://localhost:5174 blob: data:",
+        // unsafe-inline/eval para React Refresh; http://localhost:5174 para scripts servidos pelo Vite
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:5174 blob:",
         "style-src 'self' 'unsafe-inline' blob:",
         // HMR + Supabase + túnel; blob: para alguns assets do Vite
-        "connect-src 'self' http://localhost:5173 ws://localhost:5173 https://*.supabase.co wss://*.supabase.co https://*.pinggy.io blob:",
-        "img-src 'self' data: blob: http://localhost:5173",
+        "connect-src 'self' http://localhost:5174 ws://localhost:5174 https://*.supabase.co wss://*.supabase.co https://*.pinggy.io blob:",
+        "img-src 'self' data: blob: http://localhost:5174",
         "font-src 'self' data: blob:",
         "worker-src 'self' blob:", // pdfjs e tesseract podem usar workers via blob
       ].join('; ')
@@ -90,9 +90,11 @@ function criarJanela(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // sandbox:true limita o que o preload pode tocar no Node (recommended).
-      // O preload só usa ipcRenderer.invoke (compatível com sandbox).
-      sandbox: true,
+      // sandbox precisa ficar false: o preload requer o módulo local './types'
+      // (IPC_CHANNELS). Em sandbox o require de módulos locais é proibido e o
+      // preload quebra antes de expor window.api, deixando o login travado.
+      // contextIsolation + nodeIntegration:false já isolam a página do preload.
+      sandbox: false,
     },
   });
 
@@ -104,14 +106,14 @@ function criarJanela(): void {
 
   // Bloqueia navegação para fora do app (phishing via iframe interno etc.).
   mainWindow.webContents.on('will-navigate', (e, url) => {
-    const allowedOrigins = ['http://localhost:5173', 'file://'];
+    const allowedOrigins = ['http://localhost:5174', 'file://'];
     if (!allowedOrigins.some((o) => url.startsWith(o))) {
       e.preventDefault();
     }
   });
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5174');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
@@ -163,11 +165,14 @@ app.whenReady().then(async () => {
     // Inicializa banco de dados local
     await initDatabase();
 
-    // Sync bidirecional inicial (baixa dados mais recentes + envia locais)
-    await syncBidirecional(() => getDb());
-
-    // NÃO baixa arquivos da nuvem no boot — .pfx (chave privada ICP-Brasil) e assinaturas
-    // não devem circular entre máquinas. Cada máquina cadastra seus próprios localmente.
+  // Sync bidirecional após 5s (não bloqueia o login inicial)
+  setTimeout(() => {
+    syncBidirecional(() => getDb()).catch(() => {});
+    // Sync bidirecional automático a cada 30 segundos
+    setInterval(() => {
+      syncBidirecional(() => getDb()).catch(() => {});
+    }, 30000);
+  }, 5000);
   } catch (e: any) {
     // Antes: falha silenciosa deixava o app abrir em estado quebrado.
     // Agora: loga e segue — o app pode funcionar offline mesmo sem sync.

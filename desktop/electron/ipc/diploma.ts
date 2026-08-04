@@ -14,7 +14,7 @@ import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
-import { gerarHashConteudo, gerarQrPng } from '../utils';
+import { gerarHashConteudo, gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
 
 interface DiplomaOpts {
   aluno: Aluno;
@@ -39,7 +39,7 @@ function gerarPdf(opts: DiplomaOpts): void {
   doc.pipe(stream);
 
   const largura = doc.page.width;
-  const dateFmt = new Date(emitidoEm).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const dateFmt = formatarDataExtensoBrasilia(emitidoEm);
 
   // ===== CABEÇALHO =====
   const logoExiste = faculdade.logoPath && fs.existsSync(faculdade.logoPath);

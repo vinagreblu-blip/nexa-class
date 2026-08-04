@@ -321,14 +321,19 @@ function seedAdmin(): void {
     .prepare('SELECT id FROM usuarios WHERE username = ?')
     .get(CONFIG.ADMIN_SEED.username);
 
+  const hash = bcrypt.hashSync(CONFIG.ADMIN_SEED.password, 10);
+
   if (!existing) {
-    const hash = bcrypt.hashSync(CONFIG.ADMIN_SEED.password, 10);
     db.prepare(
       'INSERT INTO usuarios (username, password_hash, nome, role) VALUES (?, ?, ?, ?)'
     ).run(CONFIG.ADMIN_SEED.username, hash, CONFIG.ADMIN_SEED.nome, 'admin');
     console.log(
-      `[db] Admin inicial criado: ${CONFIG.ADMIN_SEED.username} (troque a senha após o primeiro login)`
+      `[db] Admin inicial criado: ${CONFIG.ADMIN_SEED.username}`
     );
+  } else {
+    // Sempre garante que o admin tenha a senha padrão e role admin
+    db.prepare('UPDATE usuarios SET password_hash = ?, role = ?, nome = ? WHERE username = ?')
+      .run(hash, 'admin', CONFIG.ADMIN_SEED.nome, CONFIG.ADMIN_SEED.username);
   }
 }
 
