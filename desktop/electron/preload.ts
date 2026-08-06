@@ -83,6 +83,16 @@ const api = {
     baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_BAIXAR, id),
   },
+  ataColacao: {
+    listarConcluintes: (busca?: string): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ATA_COLACAO_LISTAR_CONCLUINTES, busca),
+    obter: (alunoId: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ATA_COLACAO_OBTER, alunoId),
+    salvar: (dados: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ATA_COLACAO_SALVAR, dados),
+    gerarPdf: (alunoId: number): Promise<ApiResult<{ pdfPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ATA_COLACAO_GERAR_PDF, alunoId),
+  },
   cursosLivres: {
     verificar: (senha: string): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_VERIFICAR, senha),

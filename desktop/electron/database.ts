@@ -145,6 +145,7 @@ function createSchema(): void {
       titulacao TEXT,
       ch TEXT,
       nota TEXT,
+      ft TEXT,
       status TEXT,
       ordem INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -258,6 +259,31 @@ function createSchema(): void {
       FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
       UNIQUE(curso_livre_id, aluno_id)
     );
+
+    CREATE TABLE IF NOT EXISTS atas_colacao (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aluno_id INTEGER NOT NULL UNIQUE,
+      numero_ata TEXT,
+      data TEXT,
+      horario TEXT,
+      plataforma TEXT,
+      instituicao TEXT,
+      cidade TEXT,
+      estado TEXT,
+      grau TEXT,
+      modalidade TEXT,
+      presidente_nome TEXT,
+      presidente_cargo TEXT,
+      secretario_nome TEXT,
+      secretario_cargo TEXT,
+      pdf_caminho TEXT,
+      emitido_por INTEGER,
+      emitido_em TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_atas_colacao_aluno ON atas_colacao(aluno_id);
   `);
 }
 
@@ -301,6 +327,11 @@ function migrateAlunos(): void {
   if (colsHist.map((c) => c.name).includes('updated_at') === false) {
     db.exec('ALTER TABLE historico_disciplinas ADD COLUMN updated_at TEXT');
     db.exec("UPDATE historico_disciplinas SET updated_at = datetime('now') WHERE updated_at IS NULL");
+  }
+
+  // historico_disciplinas: ft (faltas)
+  if (colsHist.map((c) => c.name).includes('ft') === false) {
+    db.exec('ALTER TABLE historico_disciplinas ADD COLUMN ft TEXT');
   }
 
   // declaracoes: updated_at (necessário para sync entre máquinas)

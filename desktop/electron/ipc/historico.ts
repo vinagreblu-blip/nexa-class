@@ -10,6 +10,7 @@ import { CONFIG } from '../config';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult, HistoricoDisciplina, HistoricoDisciplinaInput } from '../types';
 import { getFaculdadeInfo } from '../faculdades';
+import { renderHtmlFaciipPdf } from '../faciip-historico-html';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
@@ -119,8 +120,8 @@ function criar(
   const ordem = proximaOrdem(alunoId, input.periodo.trim());
   const info = db
     .prepare(
-      `INSERT INTO historico_disciplinas (aluno_id, periodo, disciplina, docente, titulacao, ch, nota, status, ordem)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO historico_disciplinas (aluno_id, periodo, disciplina, docente, titulacao, ch, nota, ft, status, ordem)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       alunoId,
@@ -130,6 +131,7 @@ function criar(
       input.titulacao?.trim() || null,
       input.ch?.trim() || null,
       input.nota?.trim() || null,
+      input.ft?.trim() || null,
       input.status?.trim() || null,
       ordem
     );
@@ -150,7 +152,7 @@ function atualizar(
   const result = db
     .prepare(
       `UPDATE historico_disciplinas
-       SET periodo = ?, disciplina = ?, docente = ?, titulacao = ?, ch = ?, nota = ?, status = ?
+       SET periodo = ?, disciplina = ?, docente = ?, titulacao = ?, ch = ?, nota = ?, ft = ?, status = ?
        WHERE id = ?`
     )
     .run(
@@ -160,6 +162,7 @@ function atualizar(
       input.titulacao?.trim() || null,
       input.ch?.trim() || null,
       input.nota?.trim() || null,
+      input.ft?.trim() || null,
       input.status?.trim() || null,
       id
     );
@@ -254,7 +257,7 @@ async function gerarPdf(
     qrBuffer = null;
   }
 
-  renderHistoricoPdf({
+  const renderOpts: RenderOpts = {
     aluno,
     disciplinas,
     faculdade: info,
@@ -265,7 +268,24 @@ async function gerarPdf(
     urlVerificacao,
     semAssinatura,
     emitidoEm,
-  });
+  };
+  if (aluno.faculdade === 'FACIIP') {
+    await renderHtmlFaciipPdf({
+      aluno,
+      disciplinas,
+      faculdade: info,
+      cursoInfo,
+      destinoPath: destino.filePath,
+      codigoVerificacao: codigo,
+      qrBuffer,
+      semAssinatura,
+      emitidoEm,
+    });
+  } else if (aluno.curso === 'Engenharia de Produção Mecânica') {
+    renderHistoricoEngMecPdf(renderOpts);
+  } else {
+    renderHistoricoPdf(renderOpts);
+  }
 
   return { ok: true, data: { pdfPath: destino.filePath, enviadoWeb } };
 }
@@ -446,7 +466,7 @@ function renderHistoricoPdf(opts: RenderOpts): void {
       { label: 'SITUAÇÃO ATUAL', valor: situacao },
     ],
     [
-      { label: 'DATA DA CONCLUSÃO DO CURSO', valor: aluno.ano_conclusao && aluno.ano_conclusao !== 'Cursando' ? aluno.ano_conclusao : '—', span: 2 },
+      { label: 'DATA DA CONCLUSÃO DO CURSO', valor: aluno.ano_conclusao && aluno.ano_conclusao !== 'Cursando' ? formatarData(aluno.ano_conclusao) : '—', span: 2 },
       { label: 'DATA DA COLAÇÃO DE GRAU', valor: formatarData(aluno.data_colacao), span: 2 },
     ],
   ];
@@ -558,6 +578,358 @@ function renderHistoricoPdf(opts: RenderOpts): void {
     doc.y = doc.page.height - 26;
     doc.font(F_REG()).fontSize(6.5).fillColor('#000000');
     doc.text(faculdade.rodape, MARGEM, doc.y, { width: utilizavel, align: 'center' });
+  }
+
+  doc.end();
+}
+
+// ============================================================
+// HISTÓRICO — Layout específico Engenharia de Produção Mecânica
+// (modelo HTML FACIIP). Cabeçalho institucional + RTD, dados do
+// aluno em 3 linhas, informação do curso, tabela 8 colunas com
+// cabeçalho de semestre, resumo de carga horária e observações.
+// ============================================================
+
+const CH_TOTAL_EXIGIDA_ENG_MEC = 3920;
+const TITULO_OBTIDO_ENG_MEC = 'Bacharelado';
+const OBSERVACOES_ENG_MEC =
+  'Declaro que o aluno acima mencionado cursou com aprovação todas as disciplinas obrigatórias, integralizou a carga horária total exigida e demais exigências para conclusão do Curso de Bacharelado em Engenharia de Produção Mecânica, conforme grade curricular do curso.';
+
+function renderHistoricoEngMecPdf(opts: RenderOpts): void {
+  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm } = opts;
+
+  const MARG = 40;
+  const doc = new PDFDocument({ size: 'A4', margin: MARG, layout: 'portrait' });
+  const stream = fs.createWriteStream(destinoPath);
+  doc.pipe(stream);
+  registrarFontes(doc);
+
+  const larguraPagina = doc.page.width;
+  const alturaPagina = doc.page.height;
+  const utilizavel = larguraPagina - MARG * 2;
+  const bottomLimit = alturaPagina - 50;
+
+  const COL_RATIOS = [45, 165, 118, 60, 28, 24, 30, 45];
+  const totalRatio = COL_RATIOS.reduce((a, b) => a + b, 0);
+  const colLarguras = COL_RATIOS.map((r) => (r / totalRatio) * utilizavel);
+  const COL_HEADERS = ['Período', 'Componentes Curriculares', 'Docente', 'Titulação', 'CH', 'FT', 'Nota', 'Situação'];
+  const ALT_LINHA = 14;
+  const ALT_SEMESTRE = 15;
+  const ALT_HEADER_TABELA = 16;
+
+  // coluna direita do cabeçalho (título + pág.)
+  const colEsqW = utilizavel * 0.62;
+  const colDirX = MARG + colEsqW + 10;
+  const colDirW = utilizavel - colEsqW - 10;
+  const PAG_NUM_Y = MARG + 16;
+
+  // agrupa por período ordenado → ordem do semestre (1º, 2º, ...)
+  const periodosOrd = Array.from(new Set(disciplinas.map((d) => d.periodo))).sort();
+  const grupos = periodosOrd.map((p, idx) => ({
+    ordem: idx + 1,
+    periodo: p,
+    discs: disciplinas.filter((d) => d.periodo === p),
+  }));
+
+  let y = MARG;
+
+  function cabecalho(): number {
+    let yy = MARG;
+    doc.font(F_BOLD()).fontSize(11).fillColor('#000000');
+    doc.text(faculdade.nome, MARG, yy, { width: colEsqW });
+    yy = doc.y + 1;
+    if (faculdade.registroRtd) {
+      doc.font(F_REG()).fontSize(7.5).fillColor('#000000');
+      doc.text(faculdade.registroRtd, MARG, yy, { width: colEsqW });
+      yy = doc.y;
+    }
+    doc.font(F_BOLD()).fontSize(12).fillColor('#000000');
+    doc.text('Histórico Escolar', colDirX, MARG, { width: colDirW, align: 'right' });
+    yy = Math.max(yy, doc.y);
+    yy += 6;
+    doc.font(F_BOLD()).fontSize(13).fillColor('#000000');
+    doc.text('HISTÓRICO ESCOLAR', MARG, yy, { width: utilizavel, align: 'center' });
+    yy = doc.y + 4;
+    doc.moveTo(MARG, yy).lineTo(MARG + utilizavel, yy).lineWidth(1).strokeColor('#000000').stroke();
+    return yy + 8;
+  }
+
+  function dadosAluno(yIn: number): number {
+    let yy = yIn;
+    const ALT = 16;
+    const rows: { label: string; valor: string; w: number }[][] = [
+      [
+        { label: 'Aluno(a):', valor: aluno.nome || '—', w: 0.62 },
+        { label: 'CPF:', valor: aluno.cpf || '—', w: 0.38 },
+      ],
+      [
+        { label: 'Matrícula:', valor: aluno.matricula || '—', w: 1 / 3 },
+        { label: 'Data de Nascimento:', valor: formatarData(aluno.data_nascimento), w: 1 / 3 },
+        { label: 'Sexo:', valor: aluno.sexo || '—', w: 1 / 3 },
+      ],
+      [
+        { label: 'Nacionalidade:', valor: aluno.nacionalidade || '—', w: 1 / 3 },
+        { label: 'R.G.:', valor: aluno.rg || '—', w: 1 / 3 },
+        { label: 'Naturalidade:', valor: aluno.naturalidade || '—', w: 1 / 3 },
+      ],
+    ];
+    for (const row of rows) {
+      let cx = MARG;
+      for (const f of row) {
+        const fw = utilizavel * f.w;
+        doc.save();
+        doc.rect(cx, yy, fw, ALT).lineWidth(0.4).strokeColor('#000000').stroke();
+        doc.restore();
+        doc.font(F_BOLD()).fontSize(7.5).fillColor('#000000');
+        const lblW = doc.widthOfString(f.label);
+        doc.text(f.label, cx + 3, yy + 4.5, { width: fw - 6 });
+        doc.font(F_REG()).fontSize(9).fillColor('#000000');
+        doc.text(f.valor, cx + 3 + lblW + 2, yy + 4.5, { width: fw - 6 - lblW - 2 });
+        cx += fw;
+      }
+      yy += ALT;
+    }
+    return yy + 6;
+  }
+
+  function infoCurso(yIn: number): number {
+    let yy = yIn;
+    doc.font(F_BOLD()).fontSize(9).fillColor('#000000');
+    doc.text('Informação do Curso', MARG, yy, { width: utilizavel });
+    yy = doc.y + 2;
+    const top = yy;
+    const cursoNome = cursoInfo?.nome || aluno.curso || '—';
+    const regulatorio = cursoInfo?.regulatory || '—';
+    const situacao = !aluno.ano_conclusao ? '—' : aluno.ano_conclusao === 'Cursando' ? 'CURSANDO' : 'GRADUADO';
+    const ingresso = aluno.forma_ingresso || 'Vestibular';
+    const pad = 4;
+
+    doc.font(F_BOLD()).fontSize(8.5).fillColor('#000000');
+    doc.text('Curso:', MARG + pad, yy, { width: utilizavel - pad * 2 });
+    const lwC = doc.widthOfString('Curso:');
+    doc.font(F_REG()).fontSize(8.5);
+    doc.text(cursoNome, MARG + pad + lwC + 3, yy, { width: utilizavel - pad * 2 - lwC - 3 });
+    yy = Math.max(doc.y, yy + 12) + 2;
+
+    doc.font(F_BOLD()).fontSize(8.5);
+    doc.text('Autorização do Curso:', MARG + pad, yy, { width: utilizavel - pad * 2 });
+    const lwA = doc.widthOfString('Autorização do Curso:');
+    doc.font(F_REG()).fontSize(8.5);
+    doc.text(regulatorio, MARG + pad + lwA + 3, yy, { width: utilizavel - pad * 2 - lwA - 3 });
+    yy = Math.max(doc.y, yy + 12) + 2;
+
+    const metade = utilizavel / 2;
+    doc.font(F_BOLD()).fontSize(8.5);
+    doc.text('Forma de Ingresso:', MARG + pad, yy, { width: metade - pad });
+    const lwF = doc.widthOfString('Forma de Ingresso:');
+    doc.font(F_REG()).fontSize(8.5);
+    doc.text(ingresso, MARG + pad + lwF + 3, yy, { width: metade - pad - lwF - 3 });
+    doc.font(F_BOLD()).fontSize(8.5);
+    doc.text('Situação Atual:', MARG + metade, yy, { width: metade - pad });
+    const lwS = doc.widthOfString('Situação Atual:');
+    doc.font(F_REG()).fontSize(8.5);
+    doc.text(situacao, MARG + metade + lwS + 3, yy, { width: metade - pad - lwS - 3 });
+    yy += 14;
+
+    doc.rect(MARG, top, utilizavel, yy - top).lineWidth(0.5).strokeColor('#000000').stroke();
+    return yy + 8;
+  }
+
+  function topoPagina(): number {
+    let yy = cabecalho();
+    yy = dadosAluno(yy);
+    yy = infoCurso(yy);
+    return yy;
+  }
+
+  y = topoPagina();
+  function novaPagina(): number {
+    doc.addPage();
+    return topoPagina();
+  }
+  function garantir(alt: number): void {
+    if (y + alt > bottomLimit) y = novaPagina();
+  }
+
+  // ===== TABELA =====
+  garantir(ALT_HEADER_TABELA);
+  doc.save();
+  doc.rect(MARG, y, utilizavel, ALT_HEADER_TABELA).fillAndStroke('#000000', '#000000');
+  doc.font(F_BOLD()).fontSize(7.5).fillColor('#ffffff');
+  let cxh = MARG;
+  for (let i = 0; i < COL_HEADERS.length; i++) {
+    doc.text(COL_HEADERS[i], cxh + 2, y + 5, { width: colLarguras[i] - 4 });
+    cxh += colLarguras[i];
+  }
+  doc.restore();
+  y += ALT_HEADER_TABELA;
+
+  for (const g of grupos) {
+    garantir(ALT_SEMESTRE);
+    doc.save();
+    doc.rect(MARG, y, utilizavel, ALT_SEMESTRE).fillAndStroke('#e8e8e8', '#000000');
+    doc.font(F_BOLD()).fontSize(8).fillColor('#000000');
+    doc.text(`${g.ordem}º Semestre`, MARG + 3, y + 4, { width: utilizavel - 6 });
+    doc.restore();
+    y += ALT_SEMESTRE;
+
+    for (const d of g.discs) {
+      garantir(ALT_LINHA);
+      doc.save();
+      doc.rect(MARG, y, utilizavel, ALT_LINHA).lineWidth(0.3).strokeColor('#000000').stroke();
+      const celulas = [
+        g.periodo,
+        (d.disciplina || '').toUpperCase(),
+        formatarNome(d.docente || ''),
+        formatarNome(d.titulacao || ''),
+        d.ch || '',
+        d.ft || '',
+        d.nota || '',
+        d.status || '',
+      ];
+      let ccx = MARG;
+      for (let i = 0; i < celulas.length; i++) {
+        doc.font(i === 0 ? F_BOLD() : F_REG()).fontSize(7).fillColor('#000000');
+        doc.text(celulas[i], ccx + 2, y + 4.5, { width: colLarguras[i] - 4 });
+        ccx += colLarguras[i];
+      }
+      doc.restore();
+      y += ALT_LINHA;
+    }
+  }
+
+  // ===== BLOCO FINAL =====
+  // ENADE
+  garantir(16);
+  doc.font(F_REG()).fontSize(8.5).fillColor('#000000');
+  doc.text(`Exame Nacional: ${faculdade.enade || '—'}`, MARG, y, { width: utilizavel });
+  y = doc.y + 10;
+
+  // resumo de carga horária
+  const chAtividades = disciplinas
+    .filter((d) => (d.disciplina || '').toUpperCase().includes('ATIVIDADES COMPLEMENTARES'))
+    .reduce((s, d) => s + parseCh(d.ch), 0);
+  const chTotalGeral = disciplinas.reduce((s, d) => s + parseCh(d.ch), 0);
+  const chDisciplinas = chTotalGeral - chAtividades;
+  let crNum = 0;
+  let crPeso = 0;
+  for (const d of disciplinas) {
+    const n = parseNota(d.nota);
+    const c = parseCh(d.ch);
+    if (n !== null && c > 0) {
+      crNum += n * c;
+      crPeso += c;
+    }
+  }
+  const cr = crPeso > 0 ? (crNum / crPeso).toFixed(2).replace('.', ',') : '—';
+  const resumo: [string, string][] = [
+    ['CH Disciplinas Cursadas', fmtNum(chDisciplinas)],
+    ['CH Atividades Complementares', fmtNum(chAtividades)],
+    ['CH Total Cursada', fmtNum(chDisciplinas)],
+    ['CH Total Exigida', fmtNum(CH_TOTAL_EXIGIDA_ENG_MEC)],
+    ['Coeficiente de Rendimento', cr],
+  ];
+
+  garantir(85);
+  const resumoW = utilizavel * 0.5;
+  const resumoX = MARG + utilizavel - resumoW;
+  let ry = y;
+  for (const [lbl, val] of resumo) {
+    doc.save();
+    doc.rect(resumoX, ry, resumoW, 15).lineWidth(0.4).strokeColor('#000000').stroke();
+    doc.rect(resumoX, ry, resumoW * 0.7, 15).lineWidth(0.4).strokeColor('#000000').stroke();
+    doc.font(F_REG()).fontSize(8).fillColor('#000000');
+    doc.text(lbl, resumoX + 3, ry + 4.5, { width: resumoW * 0.7 - 6 });
+    doc.font(F_BOLD()).fontSize(8);
+    doc.text(val, resumoX + resumoW * 0.7 + 2, ry + 4.5, { width: resumoW * 0.3 - 4, align: 'right' });
+    doc.restore();
+    ry += 15;
+  }
+  y = ry + 8;
+
+  // observações
+  garantir(70);
+  doc.font(F_BOLD()).fontSize(9).fillColor('#000000');
+  doc.text('Observações', MARG, y, { width: utilizavel });
+  y = doc.y + 2;
+  doc.font(F_REG()).fontSize(8.5).fillColor('#000000');
+  doc.text(OBSERVACOES_ENG_MEC, MARG, y, { width: utilizavel, align: 'justify' });
+  y = doc.y + 6;
+  const situacaoObs = !aluno.ano_conclusao ? '—' : aluno.ano_conclusao === 'Cursando' ? 'Cursando' : 'Formado';
+  const dataConclusao = aluno.ano_conclusao && aluno.ano_conclusao !== 'Cursando' ? formatarData(aluno.ano_conclusao) : '';
+  const dataColacao = formatarData(aluno.data_colacao);
+  doc.font(F_REG()).fontSize(8.5);
+  doc.text(`Status: ${situacaoObs}`, MARG, y, { width: utilizavel });
+  y = doc.y + 2;
+  doc.text(`Data da Conclusão do Curso: ${dataConclusao || '_________________________'}`, MARG, y, { width: utilizavel });
+  y = doc.y + 2;
+  doc.text(`Data de Colação de Grau: ${dataColacao || '_________________________'}`, MARG, y, { width: utilizavel });
+  y = doc.y + 2;
+  doc.text(`Título Obtido: ${TITULO_OBTIDO_ENG_MEC}`, MARG, y, { width: utilizavel });
+  y = doc.y + 14;
+
+  // assinatura (imagem da assinatura ativa)
+  garantir(70);
+  const centro = larguraPagina / 2;
+  const assinatura = getAssinaturaAtiva();
+  const temImagem = !semAssinatura && !!(assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path));
+  const nomeAss = assinatura?.nome_signatario || faculdade.diretor || '';
+  const cargoAss = assinatura?.cargo || faculdade.cargoDiretor || 'Diretor Geral';
+  let assH = 0;
+  const assW = 220;
+  if (temImagem) {
+    try {
+      const dim = getImageSize(assinatura!.imagem_path!);
+      assH = (dim.height / dim.width) * assW;
+    } catch { /* ignora */ }
+  }
+  const linhaY = y + assH + 6;
+  if (temImagem) {
+    try {
+      const dim = getImageSize(assinatura!.imagem_path!);
+      const bounds = getPngContentBounds(assinatura!.imagem_path!);
+      const baselineFrac = bounds ? bounds.baseline / dim.height : 1;
+      const imageTop = linhaY - baselineFrac * assH + 2.835;
+      doc.image(assinatura!.imagem_path!, centro - assW / 2, imageTop, { width: assW });
+    } catch { /* ignora */ }
+  }
+  doc.moveTo(centro - 120, linhaY).lineTo(centro + 120, linhaY).lineWidth(0.7).strokeColor('#000000').stroke();
+  doc.font(F_BOLD()).fontSize(9.5).fillColor('#000000');
+  doc.text(nomeAss, centro - 120, linhaY + 3, { width: 240, align: 'center' });
+  doc.font(F_REG()).fontSize(8.5);
+  doc.text(cargoAss, centro - 120, doc.y, { width: 240, align: 'center' });
+  y = doc.y + 14;
+
+  // QR + verificação
+  if (qrBuffer) {
+    garantir(80);
+    const qrSize = 55;
+    try {
+      doc.image(qrBuffer, centro - qrSize / 2, y, { width: qrSize, height: qrSize });
+    } catch { /* ignora */ }
+    doc.font(F_REG()).fontSize(7).fillColor('#000000');
+    doc.text(`Código de verificação: ${codigoVerificacao}`, MARG, y + qrSize + 2, { width: utilizavel, align: 'center' });
+    doc.text('Escaneie o QR Code para validar em qualquer dispositivo.', MARG, doc.y, { width: utilizavel, align: 'center' });
+    y = doc.y + 4;
+  }
+
+  // emissão
+  doc.font(F_REG()).fontSize(7.5).fillColor('#000000');
+  doc.text(`Emitido em ${formatarDataHoraBrasilia(emitidoEm)} (horário de Brasília)`, MARG, y, { width: utilizavel, align: 'center' });
+
+  // rodapé (última página)
+  if (faculdade.rodape) {
+    doc.font(F_REG()).fontSize(6.5).fillColor('#000000');
+    doc.text(faculdade.rodape, MARG, alturaPagina - 32, { width: utilizavel, align: 'center' });
+  }
+
+  // ===== PAGE NUMBERS (X/Y) — stamp no final =====
+  const range = doc.bufferedPageRange();
+  const total = range.count;
+  for (let i = range.start; i < range.start + total; i++) {
+    doc.switchToPage(i);
+    doc.font(F_REG()).fontSize(8).fillColor('#000000');
+    doc.text(`Pág. ${i - range.start + 1}/${total}`, colDirX, PAG_NUM_Y, { width: colDirW, align: 'right' });
   }
 
   doc.end();
@@ -801,6 +1173,7 @@ async function gerarXmlHistorico(
       conteudoPeriodos += `        <titulacao>${e(d.titulacao || '')}</titulacao>\n`;
       conteudoPeriodos += `        <cargaHoraria>${e(d.ch || '')}</cargaHoraria>\n`;
       conteudoPeriodos += `        <nota>${e(d.nota || '')}</nota>\n`;
+      conteudoPeriodos += `        <faltas>${e(d.ft || '')}</faltas>\n`;
       conteudoPeriodos += `        <status>${e(d.status || '')}</status>\n`;
       conteudoPeriodos += `      </disciplina>\n`;
     }

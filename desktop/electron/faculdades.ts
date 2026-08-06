@@ -17,6 +17,7 @@ export interface FaculdadeInfo {
   cargoDiretor: string;
   rodape: string;
   enade: string;
+  registroRtd: string;
   logoPath: string | null;
   cursos: Record<string, CursoInfo>;
 }
@@ -30,6 +31,7 @@ const SEM_LOGO: Partial<FaculdadeInfo> = {
   cargoDiretor: 'Diretor Geral',
   rodape: '',
   enade: '',
+  registroRtd: '',
   logoPath: null,
   cursos: {},
 };
@@ -47,6 +49,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     rodape:
       'QUALQUER INFORMAÇÃO, DEVE SER SOLICITADA ATRAVÉS DO NOSSO E-MAIL: joseaugusto@faculdadeheliorocha.com.br , OU ATRAVÉS DO WHATSAPP (71) 9 2003-7875.',
     enade: 'Aluno dispensado de acordo com o Calendário Trienal',
+    registroRtd: '',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-helio-rocha.png'),
     cursos: {
       Administração: {
@@ -123,6 +126,8 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     rodape:
       'QUALQUER INFORMAÇÃO, DEVE SER SOLICITADA ATRAVÉS DO NOSSO E-MAIL: contato@faciip.com.br, OU ATRAVÉS DO WHATSAPP (71) 9 2003-7875.',
     enade: 'Estudante dispensado de realização do ENADE, em razão do calendário trienal',
+    registroRtd:
+      'Registro de Títulos e Documentos, sob o Nº 965, Registrado no Livro A-1 Sob o Nº 113 do Registro de Pessoas Jurídicas em 13/05/1996',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-faciip.png'),
     cursos: {
       'Administração': {
@@ -169,7 +174,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
       },
       'Pedagogia': {
         nome: 'Pedagogia - Licenciatura',
-        codEmec: '',
+        codEmec: '107330',
         turno: 'Noturno',
         regulatory:
           'Autorização do Curso Portaria Nº 1.457 - MEC de 23/12/1998 com Renovação de Reconhecimento de Curso Portaria Nº 1094 - MEC de 24/12/2015 - D.O.U de 30/12/2015',
@@ -193,6 +198,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     cargoDiretor: 'Diretor Geral',
     rodape: 'QUALQUER INFORMAÇÃO, DEVE SER SOLICITADA ATRAVÉS DO NOSSO E-MAIL: secretaria@faculdadefatece.com.br, OU ATRAVÉS DO WHATSAPP (71) 9 2003-7875.',
     enade: 'Aluno dispensado de acordo com o Calendário Trienal',
+    registroRtd: '',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-fatece.png'),
     cursos: {
       'Administração': { nome: 'Bacharelado em Administração', codEmec: '1261187', turno: 'Noturno', regulatory: 'Autorização do Curso: Portaria nº 254 de 17 de março de 2015, DOU de 18 de março de 2015.' },

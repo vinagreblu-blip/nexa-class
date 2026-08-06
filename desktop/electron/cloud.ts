@@ -54,6 +54,7 @@ const TABELAS = [
   'declaracoes',
   'assinaturas',
   'diplomas',
+  'atas_colacao',
   'cursos_livres',
 ];
 

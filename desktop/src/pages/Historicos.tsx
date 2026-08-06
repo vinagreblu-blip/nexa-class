@@ -15,6 +15,7 @@ const DISC_VAZIA: HistoricoDisciplinaInput = {
   titulacao: '',
   ch: '',
   nota: '',
+  ft: '',
   status: 'AP',
 };
 
@@ -193,6 +194,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
       titulacao: d.titulacao ?? '',
       ch: d.ch ?? '',
       nota: d.nota ?? '',
+      ft: d.ft ?? '',
       status: d.status ?? 'AP',
     });
     setErro(null);
@@ -340,6 +342,10 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
             <input placeholder="9.3" value={form.nota} onChange={(e) => setForm({ ...form, nota: e.target.value })} />
           </div>
           <div>
+            <label>Faltas (FT)</label>
+            <input placeholder="0" value={form.ft} onChange={(e) => setForm({ ...form, ft: e.target.value })} />
+          </div>
+          <div>
             <label>Status (STC)</label>
             <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
               {STATUS_DISC.map((s) => (
@@ -349,7 +355,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
               ))}
             </select>
           </div>
-          <div style={{ gridColumn: 'span 2', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+          <div style={{ gridColumn: 'span 4', display: 'flex', alignItems: 'flex-end', gap: 8 }}>
             <button className="btn-primary" onClick={salvarDisc} disabled={salvando}>
               {salvando ? 'Salvando…' : editId != null ? 'Atualizar' : '+ Adicionar'}
             </button>
@@ -380,6 +386,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
                 <th style={{ width: 110 }}>Titulação</th>
                 <th style={{ width: 60 }}>CH</th>
                 <th style={{ width: 60 }}>Nota</th>
+                <th style={{ width: 50 }}>FT</th>
                 <th style={{ width: 60 }}>Status</th>
                 <th style={{ width: 130 }}>Ações</th>
               </tr>
@@ -475,6 +482,7 @@ function GrupoPeriodo({
           <td>{d.titulacao || '—'}</td>
           <td>{d.ch || '—'}</td>
           <td>{d.nota || '—'}</td>
+          <td>{d.ft || '—'}</td>
           <td>
             <span className="badge badge-ok">{d.status || '—'}</span>
           </td>
@@ -513,7 +521,7 @@ function GrupoPeriodo({
         <td style={{ fontStyle: 'italic' }}>TOTAIS DO PERÍODO</td>
         <td colSpan={2}></td>
         <td>{chTotal}H</td>
-        <td colSpan={3}></td>
+        <td colSpan={4}></td>
       </tr>
     </>
   );

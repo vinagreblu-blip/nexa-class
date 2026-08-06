@@ -82,6 +82,7 @@ export interface HistoricoDisciplina {
   titulacao: string;
   ch: string;
   nota: string;
+  ft: string;
   status: string;
   ordem: number;
 }
@@ -93,6 +94,7 @@ export interface HistoricoDisciplinaInput {
   titulacao: string;
   ch: string;
   nota: string;
+  ft: string;
   status: string;
 }
 
@@ -153,6 +155,38 @@ export interface ApiResult<T> {
   ok: boolean;
   data?: T;
   error?: string;
+}
+
+export interface AtaColacaoConcluinte {
+  id: number;
+  matricula: string;
+  nome: string;
+  cpf: string | null;
+  rg: string | null;
+  curso: string | null;
+  faculdade: string | null;
+  ano_conclusao: string | null;
+  data_colacao: string | null;
+  ata_id: number | null;
+  numero_ata: string | null;
+  emitido_em: string | null;
+}
+
+export interface AtaColacaoDados {
+  aluno_id: number;
+  numero_ata?: string;
+  data?: string;
+  horario?: string;
+  plataforma?: string;
+  instituicao?: string;
+  cidade?: string;
+  estado?: string;
+  grau?: string;
+  modalidade?: string;
+  presidente_nome?: string;
+  presidente_cargo?: string;
+  secretario_nome?: string;
+  secretario_cargo?: string;
 }
 
 export interface DeclaracaoEmitida {
@@ -222,6 +256,10 @@ export const IPC_CHANNELS = {
   DIPLOMA_LISTAR: 'diploma:listar',
   DIPLOMA_EXCLUIR: 'diploma:excluir',
   DIPLOMA_BAIXAR: 'diploma:baixar',
+  ATA_COLACAO_LISTAR_CONCLUINTES: 'ata-colacao:listar-concluintes',
+  ATA_COLACAO_OBTER: 'ata-colacao:obter',
+  ATA_COLACAO_SALVAR: 'ata-colacao:salvar',
+  ATA_COLACAO_GERAR_PDF: 'ata-colacao:gerar-pdf',
   CURSO_LIVRE_LISTAR: 'curso-livre:listar',
   CURSO_LIVRE_CRIAR: 'curso-livre:criar',
   CURSO_LIVRE_ATUALIZAR: 'curso-livre:atualizar',

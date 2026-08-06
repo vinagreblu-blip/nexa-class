@@ -7,6 +7,7 @@ import { registrarAlunosHandlers } from './ipc/alunos';
 import { registrarUsuariosHandlers } from './ipc/usuarios';
 import { registrarDeclaracaoHandlers } from './ipc/declaracao';
 import { registrarDiplomaHandlers } from './ipc/diploma';
+import { registrarAtaColacaoHandlers } from './ipc/ata-colacao';
 import { registrarCursosLivresHandlers } from './ipc/cursos-livres';
 import { registrarHistoricoHandlers } from './ipc/historico';
 import { registrarDocentesHandlers } from './ipc/docentes';
@@ -129,6 +130,7 @@ function registrarHandlers(): void {
   registrarUsuariosHandlers();
   registrarDeclaracaoHandlers();
   registrarDiplomaHandlers();
+  registrarAtaColacaoHandlers();
   registrarCursosLivresHandlers();
   registrarHistoricoHandlers();
   registrarDocentesHandlers();

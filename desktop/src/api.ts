@@ -3,6 +3,8 @@ import type {
   AlunoInput,
   AlunoDocumento,
   ApiResult,
+  AtaColacaoConcluinte,
+  AtaColacaoDados,
   CursoLivreInput,
   CursoLivreRow,
   DeclaracaoEmitida,
@@ -60,6 +62,12 @@ export interface DesktopApi {
     listar: (alunoId?: number) => Promise<ApiResult<DiplomaRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<true>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+  };
+  ataColacao: {
+    listarConcluintes: (busca?: string) => Promise<ApiResult<AtaColacaoConcluinte[]>>;
+    obter: (alunoId: number) => Promise<ApiResult<AtaColacaoDados | null>>;
+    salvar: (dados: AtaColacaoDados) => Promise<ApiResult<AtaColacaoDados>>;
+    gerarPdf: (alunoId: number) => Promise<ApiResult<{ pdfPath: string }>>;
   };
   cursosLivres: {
     verificar: (senha: string) => Promise<ApiResult<true>>;
@@ -151,4 +159,6 @@ export type {
   AlunoDocumento,
   CursoLivreRow,
   CursoLivreInput,
+  AtaColacaoConcluinte,
+  AtaColacaoDados,
 };

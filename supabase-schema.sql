@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS historico_disciplinas (
   titulacao TEXT,
   ch TEXT,
   nota TEXT,
+  ft TEXT,
   status TEXT,
   ordem INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
