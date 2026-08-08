@@ -279,8 +279,6 @@ export function obterPerfilFaciip(curso: string, cursoInfo: CursoInfo | null): P
     return {
       ...base,
       mostrarTituloInfoCurso: true,
-      mostrarDataIngresso: true,
-      conteudoProcessoSeletivo: 'Português, Redação, Conhecimentos Gerais e Específicos.',
       observacoesCurso: 'Licenciatura em Pedagogia',
       tituloObtido: 'Licenciado(a)',
       disciplinasUppercase: false,
