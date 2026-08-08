@@ -352,7 +352,7 @@ export function Usuarios() {
           ) : (
             <>
               <div className="alert alert-warning">
-                A senha do usuário será resetada para <strong>senha123</strong>. O usuário deverá trocá-la no Perfil após o login.
+                Será gerada uma <strong>senha temporária aleatória</strong>. O usuário deverá trocá-la no Perfil após o login.
               </div>
               {resetErro && <div className="alert alert-error">{resetErro}</div>}
               <div className="form-row" style={{ marginBottom: 0 }}>

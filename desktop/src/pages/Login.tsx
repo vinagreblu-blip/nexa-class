@@ -14,9 +14,14 @@ export function Login() {
     e.preventDefault();
     setErro(null);
     setEnviando(true);
-    const res = await login(username.trim(), password);
-    if (!res.ok) {
-      setErro(res.error ?? 'Falha ao entrar');
+    try {
+      const res = await login(username.trim(), password);
+      if (!res.ok) {
+        setErro(res.error ?? 'Falha ao entrar');
+      }
+    } catch {
+      setErro('Erro de comunicação. Tente novamente.');
+    } finally {
       setEnviando(false);
     }
   };

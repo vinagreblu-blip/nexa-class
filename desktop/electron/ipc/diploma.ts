@@ -31,11 +31,12 @@ interface DiplomaOpts {
   semAssinatura?: boolean;
 }
 
-function gerarPdf(opts: DiplomaOpts): void {
+function gerarPdf(opts: DiplomaOpts): Promise<void> {
   const { aluno, codigo, hash, qrBuffer, emitidoEm, destinoPath, cursoTexto, cargaHorariaTotal, faculdadeNome, diretor, faculdade, semAssinatura } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: 60 });
   const stream = fs.createWriteStream(destinoPath);
+  stream.on('error', () => {});
   doc.pipe(stream);
 
   const largura = doc.page.width;
@@ -204,7 +205,11 @@ function gerarPdf(opts: DiplomaOpts): void {
   doc.text(`Hash: ${hash.substring(0, 48)}...`, 60, doc.y);
   doc.text('Documento válido em todo território nacional.', 60, doc.y);
 
-  doc.end();
+  return new Promise<void>((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+    doc.end();
+  });
 }
 
 async function emitir(
@@ -280,7 +285,7 @@ async function emitir(
     return s + (isNaN(n) ? 0 : n);
   }, 0);
 
-  gerarPdf({
+  await gerarPdf({
     aluno,
     codigo,
     hash,

@@ -9,7 +9,7 @@ export function Diploma() {
   const podeExcluir = usuario?.username === 'admin';
   const [lista, setLista] = useState<DiplomaRow[]>([]);
   const [carregando, setCarregando] = useState(true);
-  const [busca, setBusca] = useState('');
+  const [buscaAluno, setBuscaAluno] = useState('');
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [seletorAberto, setSeletorAberto] = useState(false);
   const [alunoSelecionado, setAlunoSelecionado] = useState<Aluno | null>(null);
@@ -30,7 +30,7 @@ export function Diploma() {
   }
 
   async function carregarAlunos() {
-    const res = await api.alunos.listar(busca);
+    const res = await api.alunos.listar(buscaAluno);
     if (res.ok && res.data) setAlunos(res.data);
   }
 
@@ -40,10 +40,10 @@ export function Diploma() {
     if (!seletorAberto) return;
     const t = setTimeout(() => { carregarAlunos(); }, 200);
     return () => clearTimeout(t);
-  }, [seletorAberto, busca]);
+  }, [seletorAberto, buscaAluno]);
 
   function abrirSeletor() {
-    setBusca('');
+    setBuscaAluno('');
     setAlunoSelecionado(null);
     setErro(null);
     setSucesso(null);
@@ -98,12 +98,7 @@ export function Diploma() {
     }
   }
 
-  const filtrados = lista.filter(
-    (d) =>
-      !busca ||
-      d.aluno_nome?.toLowerCase().includes(busca.toLowerCase()) ||
-      d.aluno_matricula?.toLowerCase().includes(busca.toLowerCase())
-  );
+  const filtrados = lista;
 
   return (
     <div>
@@ -188,8 +183,8 @@ export function Diploma() {
             <label>Buscar aluno</label>
             <input
               placeholder="Nome, matrícula, CPF ou curso…"
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
+              value={buscaAluno}
+              onChange={(e) => setBuscaAluno(e.target.value)}
             />
           </div>
           <div style={{ maxHeight: 300, overflow: 'auto', marginTop: 8, border: '1px solid var(--border)', borderRadius: 6 }}>

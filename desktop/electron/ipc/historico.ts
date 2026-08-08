@@ -295,9 +295,9 @@ async function gerarPdf(
       emitidoEm,
     });
   } else if (aluno.curso === 'Engenharia de Produção Mecânica') {
-    renderHistoricoEngMecPdf(renderOpts);
+    await renderHistoricoEngMecPdf(renderOpts);
   } else {
-    renderHistoricoPdf(renderOpts);
+    await renderHistoricoPdf(renderOpts);
   }
 
   return { ok: true, data: { pdfPath: destino.filePath, enviadoWeb } };
@@ -350,11 +350,12 @@ const COLUNAS = [
   { titulo: 'STC', largura: 25 },
 ];
 
-function renderHistoricoPdf(opts: RenderOpts): void {
+function renderHistoricoPdf(opts: RenderOpts): Promise<void> {
   const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: MARGEM, layout: 'portrait' });
   const stream = fs.createWriteStream(destinoPath);
+  stream.on('error', () => {});
   doc.pipe(stream);
 
   registrarFontes(doc);
@@ -593,27 +594,25 @@ function renderHistoricoPdf(opts: RenderOpts): void {
     doc.text(faculdade.rodape, MARGEM, doc.y, { width: utilizavel, align: 'center' });
   }
 
-  doc.end();
+  return new Promise<void>((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+    doc.end();
+  });
 }
-
-// ============================================================
-// HISTÓRICO — Layout específico Engenharia de Produção Mecânica
-// (modelo HTML FACIIP). Cabeçalho institucional + RTD, dados do
-// aluno em 3 linhas, informação do curso, tabela 8 colunas com
-// cabeçalho de semestre, resumo de carga horária e observações.
-// ============================================================
 
 const CH_TOTAL_EXIGIDA_ENG_MEC = 3920;
 const TITULO_OBTIDO_ENG_MEC = 'Bacharelado';
 const OBSERVACOES_ENG_MEC =
   'Declaro que o aluno acima mencionado cursou com aprovação todas as disciplinas obrigatórias, integralizou a carga horária total exigida e demais exigências para conclusão do Curso de Bacharelado em Engenharia de Produção Mecânica, conforme grade curricular do curso.';
 
-function renderHistoricoEngMecPdf(opts: RenderOpts): void {
+function renderHistoricoEngMecPdf(opts: RenderOpts): Promise<void> {
   const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm } = opts;
 
   const MARG = 40;
   const doc = new PDFDocument({ size: 'A4', margin: MARG, layout: 'portrait' });
   const stream = fs.createWriteStream(destinoPath);
+  stream.on('error', () => {});
   doc.pipe(stream);
   registrarFontes(doc);
 
@@ -838,7 +837,7 @@ function renderHistoricoEngMecPdf(opts: RenderOpts): void {
   const resumo: [string, string][] = [
     ['CH Disciplinas Cursadas', fmtNum(chDisciplinas)],
     ['CH Atividades Complementares', fmtNum(chAtividades)],
-    ['CH Total Cursada', fmtNum(chDisciplinas)],
+    ['CH Total Cursada', fmtNum(chTotalGeral)],
     ['CH Total Exigida', fmtNum(CH_TOTAL_EXIGIDA_ENG_MEC)],
     ['Coeficiente de Rendimento', cr],
   ];
@@ -945,7 +944,11 @@ function renderHistoricoEngMecPdf(opts: RenderOpts): void {
     doc.text(`Pág. ${i - range.start + 1}/${total}`, colDirX, PAG_NUM_Y, { width: colDirW, align: 'right' });
   }
 
-  doc.end();
+  return new Promise<void>((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+    doc.end();
+  });
 }
 
 interface CelulaDados {

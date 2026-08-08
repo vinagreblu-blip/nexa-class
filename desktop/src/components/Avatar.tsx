@@ -23,6 +23,8 @@ export function Avatar({
         setDataUrl(res.ok && res.data ? res.data.dataUrl : null);
         setCarregando(false);
       }
+    }).catch(() => {
+      if (ativo) { setDataUrl(null); setCarregando(false); }
     });
     return () => {
       ativo = false;

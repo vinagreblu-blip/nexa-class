@@ -56,7 +56,11 @@ const TABELAS = [
   'diplomas',
   'atas_colacao',
   'cursos_livres',
+  'curso_livre_alunos',
+  'aluno_documentos',
 ];
+
+const BOOL_COLS = new Set(['ativo', 'enviado_web', 'convertido']);
 
 /** Converte timestamp ISO do Supabase para formato SQLite */
 function isoToSqlite(v: any): string {
@@ -95,35 +99,47 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
       const localCols = (db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[]).map((c) => c.name);
       if (localCols.length === 0) continue;
 
-      // 1. PULL: baixa dados da nuvem
-      const { data: remoteRows, error } = await client.from(tabela).select('*').limit(10000);
-      if (!error && remoteRows) {
+      // 1. PULL: baixa dados da nuvem (paginação completa)
+      let fromOffset = 0;
+      const PAGE_SIZE = 1000;
+      let hasMore = true;
+      while (hasMore) {
+        const { data: remoteRows, error } = await client.from(tabela).select('*').range(fromOffset, fromOffset + PAGE_SIZE - 1);
+        if (error) break;
+        if (!remoteRows || remoteRows.length === 0) { hasMore = false; break; }
+        if (remoteRows.length < PAGE_SIZE) hasMore = false;
+        fromOffset += PAGE_SIZE;
+
         for (const row of remoteRows) {
           try {
-            // Filtra colunas que existem localmente
-            const cols = Object.keys(row).filter((k) => localCols.includes(k) && row[k] !== null && row[k] !== undefined);
+            const cols = Object.keys(row).filter((k) => localCols.includes(k) && row[k] !== undefined);
             const vals = cols.map((k) => {
               const v = row[k];
+              if (v === null) return null;
               if (typeof v === 'boolean') return v ? 1 : 0;
               if (k === 'created_at' || k === 'updated_at' || k === 'emitido_em') return isoToSqlite(v);
               if (typeof v === 'object') return JSON.stringify(v);
               return String(v);
             });
 
-            // Verifica conflito: só sobrescreve se remoto for mais recente
             if (row.id != null && localCols.includes('updated_at')) {
-              // Nunca sobrescreve o usuário admin local
               if (tabela === 'usuarios' && row.username === 'admin') continue;
 
               const local = db.prepare(`SELECT updated_at FROM ${tabela} WHERE id = ?`).get(row.id) as { updated_at?: string } | undefined;
               if (local?.updated_at) {
-                const cmp = compararTs(local.updated_at, isoToSqlite(row.updated_at));
-                if (cmp >= 0) continue; // local é mais novo ou igual — não sobrescreve
+                const cmp = compararTs(local.updated_at, isoToSqlite(row.updated_at ?? ''));
+                if (cmp >= 0) continue;
               }
             }
 
             const placeholders = cols.map(() => '?').join(', ');
-            db.prepare(`INSERT OR REPLACE INTO ${tabela} (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals);
+            const updateCols = cols.filter((c) => c !== 'id');
+            if (updateCols.length > 0) {
+              const updateSet = updateCols.map((c) => `${c} = excluded.${c}`).join(', ');
+              db.prepare(`INSERT INTO ${tabela} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${updateSet}`).run(...vals);
+            } else {
+              db.prepare(`INSERT OR IGNORE INTO ${tabela} (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals);
+            }
           } catch { /* ignora linha com erro */ }
         }
       }
@@ -134,8 +150,10 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
         const batch = localRows.map((row) => {
           const r: Record<string, any> = {};
           for (const [k, v] of Object.entries(row)) {
-            if (v === null || v === undefined) continue;
-            if (k === 'created_at' || k === 'updated_at' || k === 'emitido_em') {
+            if (v === undefined) continue;
+            if (BOOL_COLS.has(k)) {
+              r[k] = v === 1 || v === true;
+            } else if (k === 'created_at' || k === 'updated_at' || k === 'emitido_em') {
               r[k] = sqliteToIso(String(v));
             } else {
               r[k] = v;
@@ -214,9 +232,13 @@ export async function downloadAllFilesFromCloud(dir: string): Promise<void> {
 
     for (const row of data) {
       try {
-        const localPath = path.join(dir, row.caminho);
+        const safeName = path.basename(row.caminho);
+        if (!safeName || safeName !== row.caminho) continue;
+        const localPath = path.join(dir, safeName);
+        const resolved = path.resolve(localPath);
+        if (!resolved.startsWith(path.resolve(dir) + path.sep)) continue;
         const buf = Buffer.from(row.dados, 'base64');
-        fs.writeFileSync(localPath, buf);
+        fs.writeFileSync(resolved, buf);
         console.log(`[cloud] Arquivo baixado: ${row.caminho}`);
       } catch { /* ignora */ }
     }

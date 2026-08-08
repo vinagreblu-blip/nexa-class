@@ -152,8 +152,11 @@ function registrarHandlers(): void {
   } catch (e: any) {
     console.warn('[main] Serviço de verificação não iniciado:', e?.message);
   }
-  // Inicia túnel público (funciona de qualquer rede)
-  iniciarTunnel();
+  try {
+    iniciarTunnel();
+  } catch (e: any) {
+    console.warn('[main] Túnel não iniciado:', e?.message);
+  }
 }
 
 app.whenReady().then(async () => {
@@ -170,10 +173,6 @@ app.whenReady().then(async () => {
   // Sync bidirecional após 5s (não bloqueia o login inicial)
   setTimeout(() => {
     syncBidirecional(() => getDb()).catch(() => {});
-    // Sync bidirecional automático a cada 30 segundos
-    setInterval(() => {
-      syncBidirecional(() => getDb()).catch(() => {});
-    }, 30000);
   }, 5000);
   } catch (e: any) {
     // Antes: falha silenciosa deixava o app abrir em estado quebrado.
@@ -205,11 +204,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  // Sync final antes de fechar
-  try { syncBidirecional(() => getDb()); } catch { /* ignora */ }
-  // Flush síncrono do SQLite para evitar perder últimos writes
   try { dbShutdown(); } catch { /* ignora */ }
-  // Encerra túnel se ativo
   try { fecharTunnel(); } catch { /* ignora */ }
   if (process.platform !== 'darwin') app.quit();
 });

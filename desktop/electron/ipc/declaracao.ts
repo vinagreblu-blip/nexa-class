@@ -340,6 +340,8 @@ async function emitir(
       : { canceled: true, filePath: '' };
 
   if (destino.canceled || !destino.filePath) {
+    db.prepare('DELETE FROM declaracoes WHERE id = ?').run(declaracao.id);
+    if (webResult.ok) removerDoWeb(codigo).catch(() => {});
     return { ok: false, error: 'Operação cancelada pelo usuário' };
   };
 

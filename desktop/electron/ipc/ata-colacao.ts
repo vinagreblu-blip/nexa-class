@@ -163,11 +163,12 @@ function formatarDataPT(iso: string | null): string {
   return formatarDataExtensoBrasilia(d);
 }
 
-function gerarPdf(opts: PdfOpts): void {
+function gerarPdf(opts: PdfOpts): Promise<void> {
   const { aluno, ata, destinoPath, faculdade } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: 70 });
   const stream = fs.createWriteStream(destinoPath);
+  stream.on('error', () => {});
   doc.pipe(stream);
 
   const largura = doc.page.width;
@@ -402,7 +403,11 @@ function gerarPdf(opts: PdfOpts): void {
     { width: conteudoLargura, align: 'center' }
   );
 
-  doc.end();
+  return new Promise<void>((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+    doc.end();
+  });
 }
 
 async function gerarPdfHandler(
@@ -444,7 +449,7 @@ async function gerarPdfHandler(
   const fac = getFaculdadeInfo(aluno.faculdade);
 
   try {
-    gerarPdf({ aluno, ata, destinoPath: destino.filePath, faculdade: fac });
+    await gerarPdf({ aluno, ata, destinoPath: destino.filePath, faculdade: fac });
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Erro ao gerar o PDF' };
   }

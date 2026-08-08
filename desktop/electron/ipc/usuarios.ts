@@ -143,15 +143,13 @@ function excluir(_event: IpcMainInvokeEvent, id: number): ApiResult<true> {
     return { ok: false, error: 'Não é possível excluir o último administrador ativo' };
   }
 
+  const fotoRow = db.prepare('SELECT foto_path FROM usuarios WHERE id = ?').get(id) as { foto_path: string | null } | undefined;
+
   const result = db.prepare('DELETE FROM usuarios WHERE id = ?').run(id);
   if (result.changes === 0) return { ok: false, error: 'Usuário não encontrado' };
-  // remove foto do disco
   try {
-    const row = db.prepare('SELECT foto_path FROM usuarios WHERE id = ?').get(id) as { foto_path: string | null } | undefined;
-    if (row?.foto_path && fs.existsSync(row.foto_path)) fs.unlinkSync(row.foto_path);
-  } catch {
-    /* a tabela já pode ter sido afetada pelo cascade; ignora */
-  }
+    if (fotoRow?.foto_path && fs.existsSync(fotoRow.foto_path)) fs.unlinkSync(fotoRow.foto_path);
+  } catch { /* ignora */ }
   return { ok: true, data: true };
 }
 

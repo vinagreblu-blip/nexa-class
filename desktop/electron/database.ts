@@ -374,9 +374,8 @@ function seedAdmin(): void {
       `[db] Admin inicial criado: ${CONFIG.ADMIN_SEED.username}`
     );
   } else {
-    // Sempre garante que o admin tenha a senha padrão e role admin
-    db.prepare('UPDATE usuarios SET password_hash = ?, role = ?, nome = ? WHERE username = ?')
-      .run(hash, 'admin', CONFIG.ADMIN_SEED.nome, CONFIG.ADMIN_SEED.username);
+    db.prepare('UPDATE usuarios SET role = ?, nome = ? WHERE username = ?')
+      .run('admin', CONFIG.ADMIN_SEED.nome, CONFIG.ADMIN_SEED.username);
   }
 }
 

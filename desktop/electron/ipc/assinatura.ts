@@ -155,19 +155,14 @@ export function assinarXml(xmlContent: string, senhaPfx: string): { ok: boolean;
     let privateKeyPem = '';
     let certPem = '';
     for (const keyId in pfx.bags) {
-      const bag = pfx.bags[keyId];
-      if (bag.type === forge.pki.oids.pkcs8ShroudedKeyBag) {
-        for (const item of bag) {
-          if (item.asn1) {
-            privateKeyPem = forge.pki.privateKeyToPem(item.key);
-          }
+      const bags = pfx.bags[keyId];
+      if (!Array.isArray(bags)) continue;
+      for (const item of bags) {
+        if (item.type === forge.pki.oids.pkcs8ShroudedKeyBag && item.asn1) {
+          privateKeyPem = forge.pki.privateKeyToPem(item.key);
         }
-      }
-      if (bag.type === forge.pki.oids.certBag) {
-        for (const item of bag) {
-          if (item.cert) {
-            certPem = forge.pki.certificateToPem(item.cert);
-          }
+        if (item.type === forge.pki.oids.certBag && item.cert) {
+          certPem = forge.pki.certificateToPem(item.cert);
         }
       }
     }
