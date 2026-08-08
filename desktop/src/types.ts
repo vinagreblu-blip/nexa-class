@@ -233,6 +233,6 @@ export interface AtaColacaoDados {
   modalidade?: string;
   presidente_nome?: string;
   presidente_cargo?: string;
-  secretario_nome?: string;
-  secretario_cargo?: string;
+  diretor_nome?: string;
+  diretor_cargo?: string;
 }

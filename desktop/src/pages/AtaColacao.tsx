@@ -17,8 +17,8 @@ const VAZIO: AtaColacaoDados = {
   modalidade: 'EAD',
   presidente_nome: '',
   presidente_cargo: 'Presidente da Sessão',
-  secretario_nome: '',
-  secretario_cargo: 'Secretário(a)',
+  diretor_nome: '',
+  diretor_cargo: 'Diretor(a)',
 };
 
 const OPCOES_GRAU = ['Bacharelado', 'Licenciatura', 'Tecnólogo', 'Mestrado', 'Doutorado', 'Especialização'];
@@ -70,8 +70,8 @@ export function AtaColacao() {
       modalidade: dados?.modalidade ?? 'EAD',
       presidente_nome: dados?.presidente_nome ?? '',
       presidente_cargo: dados?.presidente_cargo ?? 'Presidente da Sessão',
-      secretario_nome: dados?.secretario_nome ?? '',
-      secretario_cargo: dados?.secretario_cargo ?? 'Secretário(a)',
+      diretor_nome: dados?.diretor_nome ?? '',
+      diretor_cargo: dados?.diretor_cargo ?? 'Diretor(a)',
     });
   }
 
@@ -329,17 +329,17 @@ export function AtaColacao() {
               />
             </div>
             <div className="form-row">
-              <label>Secretário(a) — Nome</label>
+              <label>Diretor(a) — Nome</label>
               <input
-                value={form.secretario_nome}
-                onChange={(e) => setForm({ ...form, secretario_nome: e.target.value })}
+                value={form.diretor_nome}
+                onChange={(e) => setForm({ ...form, diretor_nome: e.target.value })}
               />
             </div>
             <div className="form-row">
-              <label>Secretário(a) — Cargo</label>
+              <label>Diretor(a) — Cargo</label>
               <input
-                value={form.secretario_cargo}
-                onChange={(e) => setForm({ ...form, secretario_cargo: e.target.value })}
+                value={form.diretor_cargo}
+                onChange={(e) => setForm({ ...form, diretor_cargo: e.target.value })}
               />
             </div>
           </div>

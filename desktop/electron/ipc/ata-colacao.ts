@@ -29,8 +29,8 @@ interface AtaColacaoRow {
   modalidade: string | null;
   presidente_nome: string | null;
   presidente_cargo: string | null;
-  secretario_nome: string | null;
-  secretario_cargo: string | null;
+  diretor_nome: string | null;
+  diretor_cargo: string | null;
   pdf_caminho: string | null;
   emitido_por: number | null;
   emitido_em: string | null;
@@ -112,8 +112,8 @@ function salvar(
     limpar(dados.modalidade) || 'EAD',
     limpar(dados.presidente_nome) || null,
     limpar(dados.presidente_cargo) || null,
-    limpar(dados.secretario_nome) || null,
-    limpar(dados.secretario_cargo) || null,
+    limpar(dados.diretor_nome) || null,
+    limpar(dados.diretor_cargo) || null,
   ];
 
   const existente = db
@@ -126,7 +126,7 @@ function salvar(
         `UPDATE atas_colacao
          SET numero_ata = ?, data = ?, horario = ?, plataforma = ?, instituicao = ?,
              cidade = ?, estado = ?, grau = ?, modalidade = ?, presidente_nome = ?,
-             presidente_cargo = ?, secretario_nome = ?, secretario_cargo = ?,
+             presidente_cargo = ?, diretor_nome = ?, diretor_cargo = ?,
              updated_at = datetime('now')
          WHERE aluno_id = ?`
       ).run(...valores, dados.aluno_id);
@@ -134,7 +134,7 @@ function salvar(
       db.prepare(
         `INSERT INTO atas_colacao
            (aluno_id, numero_ata, data, horario, plataforma, instituicao, cidade, estado,
-            grau, modalidade, presidente_nome, presidente_cargo, secretario_nome, secretario_cargo, emitido_por)
+            grau, modalidade, presidente_nome, presidente_cargo, diretor_nome, diretor_cargo, emitido_por)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(dados.aluno_id, ...valores, sessao.usuario.id);
     }
@@ -220,7 +220,7 @@ function gerarPdf(opts: PdfOpts): void {
 
   // ===== TÍTULO =====
   doc.font('Helvetica-Bold').fontSize(15).fillColor('#000000');
-  doc.text('ATA DE COLAÇÃO DE GRAU INDIVIDUAL – SESSÃO ONLINE', esquerda, doc.y, {
+  doc.text('ATA DE COLAÇÃO DE GRAU INDIVIDUAL', esquerda, doc.y, {
     width: conteudoLargura,
     align: 'center',
   });
@@ -308,7 +308,7 @@ function gerarPdf(opts: PdfOpts): void {
   );
   doc.moveDown(0.3);
   doc.text(
-    `Secretário(a): ${ouBranco(ata.secretario_nome)} — Cargo: ${ouBranco(ata.secretario_cargo)}`,
+    `Diretor(a): ${ouBranco(ata.diretor_nome)} — Cargo: ${ouBranco(ata.diretor_cargo)}`,
     esquerda,
     doc.y,
     { width: conteudoLargura, align: 'justify', lineGap: 3 }
@@ -322,11 +322,10 @@ function gerarPdf(opts: PdfOpts): void {
 
   doc.font('Helvetica').fontSize(11).fillColor('#000000');
   const paragrafos = [
-    `Aos ${formatarDataPT(ata.data)} , em sessão pública realizada por videoconferência, ` +
-      `por meio da plataforma ${plataforma}, às ${horario}, a ${instituicao || BRANCO}, ` +
-      `sediada em ${cidade}/${estado}, procedeu à sessão de colação de grau individual, ` +
-      `na modalidade ${modalidade}, em conformidade com o Regulamento Acadêmico da Instituição ` +
-      `e a legislação educacional vigente.`,
+    `Aos ${formatarDataPT(ata.data)} , em sessão solene realizada às ${horario}, ` +
+      `a ${instituicao || BRANCO}, sediada em ${cidade}/${estado}, procedeu à colação de grau ` +
+      `individual do(a) concluinte abaixo identificado(a), na modalidade ${modalidade}, ` +
+      `em conformidade com o Regulamento Acadêmico da Instituição e a legislação educacional vigente.`,
 
     `Devidamente verificada a identidade do(a) concluinte ${ouBranco(aluno.nome)}, ` +
       `portador(a) do CPF ${ouBranco(aluno.cpf)} e da matrícula ${ouBranco(aluno.matricula)}, ` +
@@ -343,7 +342,7 @@ function gerarPdf(opts: PdfOpts): void {
       `sendo o presente ato registrado para os devidos fins legais.`,
 
     `Nada mais havendo a tratar, a sessão foi encerrada e, para constar, foi lavrada a presente ata, ` +
-      `que vai assinada eletronicamente pelos membros da Mesa e, quando exigido pela Instituição, ` +
+      `que vai assinada pelo Presidente da Sessão e, quando exigido pela Instituição, ` +
       `também pelo(a) concluinte.`,
   ];
 
@@ -361,18 +360,13 @@ function gerarPdf(opts: PdfOpts): void {
       cargo: ouBranco(ata.presidente_cargo),
     },
     {
-      titulo: 'Secretário(a)',
-      nome: ouBranco(ata.secretario_nome),
-      cargo: ouBranco(ata.secretario_cargo),
-    },
-    {
       titulo: 'Concluinte',
       nome: ouBranco(aluno.nome),
       cargo: 'Concluinte',
     },
   ];
 
-  const assW = (conteudoLargura - 24) / 3;
+  const assW = (conteudoLargura - 12) / 2;
   const baseY = doc.y;
   colunas.forEach((c, i) => {
     const x = esquerda + i * (assW + 12);
@@ -402,7 +396,7 @@ function gerarPdf(opts: PdfOpts): void {
   doc.font('Helvetica').fontSize(7).fillColor('#888888');
   doc.text(
     `Documento gerado em ${formatarDataExtensoBrasilia(new Date())}. ` +
-      `Sessão online realizada nos termos da legislação educacional vigente.`,
+      `Ato realizado nos termos da legislação educacional vigente.`,
     esquerda,
     doc.y,
     { width: conteudoLargura, align: 'center' }

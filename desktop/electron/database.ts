@@ -28,6 +28,7 @@ export async function initDatabase(): Promise<DbAdapter> {
   const dbPath = getDbPath();
   db = await openDatabase(dbPath);
   createSchema();
+  migrateAtasColacao();
   migrateAlunos();
   atribuirCodigosUsuarios();
   seedAdmin();
@@ -274,8 +275,8 @@ function createSchema(): void {
       modalidade TEXT,
       presidente_nome TEXT,
       presidente_cargo TEXT,
-      secretario_nome TEXT,
-      secretario_cargo TEXT,
+      diretor_nome TEXT,
+      diretor_cargo TEXT,
       pdf_caminho TEXT,
       emitido_por INTEGER,
       emitido_em TEXT,
@@ -285,6 +286,17 @@ function createSchema(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_atas_colacao_aluno ON atas_colacao(aluno_id);
   `);
+}
+
+function migrateAtasColacao(): void {
+  const cols = db.prepare('PRAGMA table_info(atas_colacao)').all() as { name: string }[];
+  const names = cols.map((c) => c.name);
+  if (names.includes('secretario_nome')) {
+    db.exec('ALTER TABLE atas_colacao RENAME COLUMN secretario_nome TO diretor_nome');
+  }
+  if (names.includes('secretario_cargo')) {
+    db.exec('ALTER TABLE atas_colacao RENAME COLUMN secretario_cargo TO diretor_cargo');
+  }
 }
 
 function migrateAlunos(): void {
