@@ -557,8 +557,8 @@ ${pagina2}
 // Renderização HTML -> PDF via Chromium
 // ============================================================
 
-async function renderizarHtmlParaPdf(html: string, destinoPath: string): Promise<void> {
-  const tmpHtml = path.join(os.tmpdir(), `faciip-hist-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
+export async function renderizarHtmlParaPdf(html: string, destinoPath: string): Promise<void> {
+  const tmpHtml = path.join(os.tmpdir(), `hist-${Date.now()}-${Math.random().toString(36).slice(2)}.html`);
   fs.writeFileSync(tmpHtml, html, 'utf8');
   let win: BrowserWindow | null = null;
   try {

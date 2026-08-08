@@ -11,6 +11,7 @@ import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult, HistoricoDisciplina, HistoricoDisciplinaInput } from '../types';
 import { getFaculdadeInfo } from '../faculdades';
 import { renderHtmlFaciipPdf } from '../faciip-historico-html';
+import { renderHtmlHelioRochaPdf } from '../helio-rocha-historico-html';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
@@ -271,6 +272,18 @@ async function gerarPdf(
   };
   if (aluno.faculdade === 'FACIIP') {
     await renderHtmlFaciipPdf({
+      aluno,
+      disciplinas,
+      faculdade: info,
+      cursoInfo,
+      destinoPath: destino.filePath,
+      codigoVerificacao: codigo,
+      qrBuffer,
+      semAssinatura,
+      emitidoEm,
+    });
+  } else if (aluno.faculdade === 'Hélio Rocha') {
+    await renderHtmlHelioRochaPdf({
       aluno,
       disciplinas,
       faculdade: info,
