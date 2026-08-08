@@ -422,9 +422,10 @@ function renderStudentGrid(aluno: Aluno): string {
 }
 
 function renderRegulatorio(regulatory: string): string {
-  const text = regulatory.replace(/^Autorização do Curso\s*/i, '').trim();
+  const text = regulatory.trim();
+  if (!text) return '';
   const sentences = text.split(/\.\s+/).filter((s) => s.trim());
-  if (!sentences.length) return `<p>${esc(text)}</p>`;
+  if (sentences.length <= 1) return `<p>${esc(text)}</p>`;
   return sentences.map((s) => `<p>${esc(s.trim())}${s.trim().endsWith('.') ? '' : '.'}</p>`).join('');
 }
 

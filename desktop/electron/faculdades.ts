@@ -60,37 +60,37 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
           'Autorização do Curso: Portaria nº 211 de 08 de fevereiro de 2001. Renovação de Reconhecimento de Curso: Portaria nº 706, de 10 de novembro de 2016',
       },
       'Comunicação Social (Publicidade e Propaganda)': {
-        nome: 'Bacharelado em Comunicação Social - Publicidade e Propaganda',
+        nome: 'Bacharelado em Comunicação Social – Publicidade e Propaganda',
         codEmec: '46290',
         turno: 'Noturno',
         regulatory:
-          'Autorização do Curso: Portaria nº 602 de 28 de março de 2001. Renovação de Reconhecimento de Curso: Portaria nº 930, de 24 de agosto de 2017',
+          'Autorização do Curso: Portaria nº 602 de 28 de março de 2001. Renovação de Reconhecimento de Curso: Portaria nº 930, de 24 de agosto de 2017.',
       },
       'Engenharia Civil': {
         nome: 'Bacharelado em Engenharia Civil',
         codEmec: '1169327',
         turno: 'Noturno',
         regulatory:
-          'Autorização de Curso Portaria nº 406 - MEC de 30/08/2013',
+          'Autorização de Curso Portaria nº 406 – MEC de 30/08/2013',
       },
       'Engenharia de Produção': {
         nome: 'Bacharelado em Engenharia de Produção',
         codEmec: '1177416',
         turno: 'Noturno',
         regulatory:
-          'Portaria nº 120 - MEC de 15/03/2013, publicado no DOU de 18/03/2013',
+          'Portaria nº 120 – MEC de 15/03/2013, publicado no DOU de 18/03/2013',
       },
       'Engenharia Elétrica': {
         nome: 'Bacharelado em Engenharia Elétrica',
         codEmec: '1169330',
         turno: 'Noturno',
-        regulatory: 'Portaria nº 326 - MEC de 24/07/2013',
+        regulatory: 'Portaria nº 326 – MEC de 24/07/2013',
       },
       'Fisioterapia': {
         nome: 'Bacharelado em Fisioterapia',
         codEmec: '1386456',
         turno: 'Noturno',
-        regulatory: 'Portaria nº 172 - MEC de 09/04/2019, DOU 10/04/2019',
+        regulatory: 'Portaria nº 172 – MEC de 09/04/2019, DOU 10/04/2019',
       },
       'Serviço Social': {
         nome: 'Bacharelado em Serviço Social',
@@ -111,7 +111,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
         codEmec: '46282',
         turno: 'Noturno',
         regulatory:
-          'Autorização do Curso: Portaria nº 210 de 08 de fevereiro de 2001. Reconhecimento de Curso: Portaria nº 490 de 09 de fevereiro de 2006',
+          'Autorização do Curso: Portaria nº 210 de 08 de fevereiro de 2001. Reconhecimento de Curso: Portaria nº 490 de 09 de fevereiro de 2006.',
       },
     },
   },
