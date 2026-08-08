@@ -72,22 +72,19 @@ body {
 .course-box .row { display: flex; gap: 25px; margin-top: 6px; }
 
 .subjects-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; margin-top: 8px; }
-.subjects-table thead th { border: 1px solid #000; background: #fff; text-align: center; font-weight: bold; padding: 4px; vertical-align: middle; }
-.subjects-table tbody td { border: 1px solid #000; padding: 3px 4px; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; }
-.subjects-table th:nth-child(1), .subjects-table td:nth-child(1) { width: 75px; text-align: center; }
-.subjects-table th:nth-child(2), .subjects-table td:nth-child(2) { width: auto; }
-.subjects-table th:nth-child(3), .subjects-table td:nth-child(3) { width: 210px; }
-.subjects-table th:nth-child(4), .subjects-table td:nth-child(4) { width: 85px; text-align: center; }
-.subjects-table th:nth-child(5), .subjects-table td:nth-child(5) { width: 42px; text-align: center; }
-.subjects-table th:nth-child(6), .subjects-table td:nth-child(6) { width: 35px; text-align: center; }
-.subjects-table th:nth-child(7), .subjects-table td:nth-child(7) { width: 45px; text-align: center; }
-.subjects-table th:nth-child(8), .subjects-table td:nth-child(8) { width: 70px; text-align: center; }
-.subjects-table .semester td { background: #f3f3f3; font-weight: bold; font-size: 10px; text-align: left; padding: 5px 6px; }
-.subjects-table tbody tr { height: 22px; }
-.subjects-table tbody tr td { line-height: 1.25; }
-.subjects-table td:nth-child(2) { text-align: left; }
-.subjects-table td:nth-child(3) { text-align: left; }
-.subjects-table td:nth-child(4) { text-align: center; }
+.subjects-table thead th { border: 1px solid #000; background: #fff; text-align: center; font-weight: bold; padding: 4px 3px; vertical-align: middle; line-height: 1.15; }
+.subjects-table tbody td { border: 1px solid #000; padding: 3px 4px; vertical-align: middle; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.2; }
+.subjects-table th:nth-child(1), .subjects-table td:nth-child(1) { width: 48px; text-align: center; }
+.subjects-table th:nth-child(2), .subjects-table td:nth-child(2) { width: auto; text-align: left; }
+.subjects-table th:nth-child(3), .subjects-table td:nth-child(3) { width: 185px; text-align: left; font-size: 8.5px; }
+.subjects-table th:nth-child(4), .subjects-table td:nth-child(4) { width: 75px; text-align: center; font-size: 8.5px; }
+.subjects-table th:nth-child(5), .subjects-table td:nth-child(5) { width: 35px; text-align: center; }
+.subjects-table th:nth-child(6), .subjects-table td:nth-child(6) { width: 30px; text-align: center; }
+.subjects-table th:nth-child(7), .subjects-table td:nth-child(7) { width: 42px; text-align: center; }
+.subjects-table th:nth-child(8), .subjects-table td:nth-child(8) { width: 62px; text-align: center; }
+.subjects-table .semester td { background: #f3f3f3; font-weight: bold; font-size: 9px; text-align: left; padding: 4px 6px; }
+.subjects-table tbody tr:not(.semester) { height: 21px; }
+.subjects-table .semester { height: 21px; }
 
 .summary { margin-top: 18px; width: 320px; }
 .summary table { width: 100%; border-collapse: collapse; }
@@ -257,6 +254,7 @@ export interface PerfilCursoFaciip {
   observacoesCurso: string;
   tituloObtido: string;
   disciplinasUppercase: boolean;
+  periodoVazio: boolean;
 }
 
 export function obterPerfilFaciip(curso: string, cursoInfo: CursoInfo | null): PerfilCursoFaciip {
@@ -264,32 +262,50 @@ export function obterPerfilFaciip(curso: string, cursoInfo: CursoInfo | null): P
   const codEmec = cursoInfo?.codEmec?.trim() || '';
   const cursoComCodigo = codEmec ? `${nomeCurso} (${codEmec})` : nomeCurso;
   const autorizacao = (cursoInfo?.regulatory || '').replace(/^Autorização do Curso\s*/i, '').trim();
-  const isPedagogia = /pedagogia/i.test(curso);
 
-  if (isPedagogia) {
+  const base: Omit<PerfilCursoFaciip, 'observacoesCurso'> = {
+    cursoComCodigo,
+    autorizacao,
+    mostrarTituloInfoCurso: false,
+    mostrarDataIngresso: false,
+    conteudoProcessoSeletivo: undefined,
+    enadeBloco: 'blank',
+    tituloObtido: 'Bacharel(a)',
+    disciplinasUppercase: true,
+    periodoVazio: true,
+  };
+
+  if (/pedagogia/i.test(curso)) {
     return {
-      cursoComCodigo,
-      autorizacao,
+      ...base,
       mostrarTituloInfoCurso: true,
       mostrarDataIngresso: true,
       conteudoProcessoSeletivo: 'Português, Redação, Conhecimentos Gerais e Específicos.',
-      enadeBloco: 'blank',
       observacoesCurso: 'Licenciatura em Pedagogia',
       tituloObtido: 'Licenciado(a)',
       disciplinasUppercase: false,
     };
   }
 
+  const mostrarTitulo = /relações públicas/i.test(curso) || /jornalismo/i.test(curso);
+
+  let observacoesCurso = nomeCurso;
+  if (/hospitalar/i.test(curso)) {
+    observacoesCurso = 'Administração com Habilitação em Administração Hospitalar';
+  } else if (/jornalismo/i.test(curso)) {
+    observacoesCurso = 'Comunicação Social com Habilitação em Jornalismo';
+  } else if (/contábeis/i.test(curso)) {
+    observacoesCurso = 'Ciências Contábeis';
+  } else if (/mecânica/i.test(curso)) {
+    observacoesCurso = 'Engenharia de Produção Mecânica';
+  } else if (/turismo/i.test(curso)) {
+    observacoesCurso = 'Turismo e Hotelaria';
+  }
+
   return {
-    cursoComCodigo,
-    autorizacao,
-    mostrarTituloInfoCurso: false,
-    mostrarDataIngresso: false,
-    conteudoProcessoSeletivo: undefined,
-    enadeBloco: 'dispensa',
-    observacoesCurso: nomeCurso,
-    tituloObtido: 'Bacharel(a)',
-    disciplinasUppercase: true,
+    ...base,
+    mostrarTituloInfoCurso: mostrarTitulo,
+    observacoesCurso,
   };
 }
 
@@ -372,8 +388,9 @@ function renderTabela(disciplinas: HistoricoDisciplina[], perfil: PerfilCursoFac
       const disc = perfil.disciplinasUppercase
         ? (d.disciplina || '').toUpperCase()
         : formatarNome(d.disciplina || '');
+      const periodoCell = perfil.periodoVazio ? '' : esc(periodo);
       body += `<tr>
-        <td>${esc(periodo)}</td>
+        <td>${periodoCell}</td>
         <td>${esc(disc)}</td>
         <td>${esc(formatarNome(d.docente || ''))}</td>
         <td>${esc(titulacaoFaciip(d.titulacao))}</td>
