@@ -259,20 +259,20 @@ function atualizar(
 
 function excluir(_event: IpcMainInvokeEvent, id: number): ApiResult<true> {
   const db = getDb();
-  const decl = db
-    .prepare('SELECT COUNT(*) AS total FROM declaracoes WHERE aluno_id = ?')
-    .get(id) as { total: number };
+  try {
+    db.prepare('DELETE FROM historico_disciplinas WHERE aluno_id = ?').run(id);
+    db.prepare('DELETE FROM declaracoes WHERE aluno_id = ?').run(id);
+    db.prepare('DELETE FROM diplomas WHERE aluno_id = ?').run(id);
+    db.prepare('DELETE FROM aluno_documentos WHERE aluno_id = ?').run(id);
+    db.prepare('DELETE FROM atas_colacao WHERE aluno_id = ?').run(id);
+    db.prepare('DELETE FROM curso_livre_alunos WHERE aluno_id = ?').run(id);
 
-  if (decl.total > 0) {
-    return {
-      ok: false,
-      error: `Não é possível excluir: existem ${decl.total} declaração(ões) vinculada(s) a este aluno`,
-    };
+    const result = db.prepare('DELETE FROM alunos WHERE id = ?').run(id);
+    if (result.changes === 0) return { ok: false, error: 'Aluno não encontrado' };
+    return { ok: true, data: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'Erro ao excluir aluno' };
   }
-
-  const result = db.prepare('DELETE FROM alunos WHERE id = ?').run(id);
-  if (result.changes === 0) return { ok: false, error: 'Aluno não encontrado' };
-  return { ok: true, data: true };
 }
 
 export function registrarAlunosHandlers(): void {
