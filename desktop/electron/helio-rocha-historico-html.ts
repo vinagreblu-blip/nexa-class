@@ -592,7 +592,6 @@ function renderDegree(cursoInfo: CursoInfo | null, aluno: Aluno): string {
 }
 
 function renderSignature(
-  faculdade: FaculdadeInfo,
   assinaturaImgDataUrl: string | null,
   nomeSignatario: string,
   cargoSignatario: string,
@@ -654,7 +653,7 @@ function gerarHtmlHelioRocha(opts: HelioRochaHtmlOpts): string {
     ${renderActivities(disciplinas)}
     ${renderObservations(aluno)}
     ${renderDegree(cursoInfo, aluno)}
-    ${renderSignature(faculdade, assinaturaImgDataUrl, nomeSignatario, cargoSignatario)}
+    ${renderSignature(assinaturaImgDataUrl, nomeSignatario, cargoSignatario)}
     ${renderFooter(faculdade)}
     ${renderVerificacao(codigoVerificacao, qrDataUrl, emitidoEm)}
   </div>`;
