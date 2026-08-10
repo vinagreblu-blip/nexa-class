@@ -22,3 +22,4 @@ hashgen.js
 test-results/
 coverage/
 .playwright/
+dev-logs.txt

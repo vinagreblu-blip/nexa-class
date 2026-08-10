@@ -87,6 +87,12 @@ export function getTunnelUrl(): string | null {
 }
 
 export function getBaseUrl(): string {
+  // Prioridade:
+  //  1. process.env.VERIFICACAO_BASE_URL — deploy controlado (serviço web público)
+  //  2. tunnelUrl (pinggy) — se túnel explícito ativo
+  //  3. IP local — fallback (funciona só na mesma rede WiFi)
+  const fromEnv = process.env.VERIFICACAO_BASE_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, '');
   if (tunnelUrl && tunnelUrl.startsWith('https://')) return tunnelUrl;
   return `http://${getLocalIP()}:3001`;
 }

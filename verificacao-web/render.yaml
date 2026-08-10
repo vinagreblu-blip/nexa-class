@@ -1,0 +1,35 @@
+# Render Blueprint — deploy gratuito/low-cost do serviço web NEXA CLASS.
+# Site: https://render.com
+#
+# Como usar:
+#  1. Crie conta no Render e conecte seu repositório GitHub.
+#  2. New → Blueprint → selecione este repo. Render detecta render.yaml.
+#  3. Configure as env vars em Dashboard → Environment:
+#       API_KEY       — gerar com `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+#       NODE_ENV      — production (default do blueprint)
+#       INSTITUICAO   — nome da sua instituição (opcional)
+#       SENTRY_DSN    — (opcional) se tiver Sentry
+#  4. Deploy. Render gera URL pública tipo https://nexa-verificacao.onrender.com.
+#  5. Use essa URL como VERIFICACAO_BASE_URL no app desktop (em todas as máquinas).
+#
+# Free tier: 750h/mês suficiente para 6 máquinas com uso intermitente.
+# Pode "adormecer" após 15min sem tráfego — primeiro request demora ~30s.
+
+services:
+  - type: web
+    name: nexa-verificacao
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_KEY
+        sync: false  # setar manualmente no dashboard — NÃO commit
+      - key: INSTITUICAO
+        value: NEXA CLASS - Network for Education and Academic Excellence Class
+      - key: SENTRY_DSN
+        sync: false
