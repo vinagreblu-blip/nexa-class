@@ -2,6 +2,7 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { ipcMain } from 'electron';
 import { randomInt } from 'node:crypto';
 import { getDb } from '../database';
+import { getClient, withSyncLock } from '../cloud';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, AlunoInput, ApiResult } from '../types';
 import { requerAuth, getSessao } from './auth';
@@ -257,22 +258,46 @@ function atualizar(
   }
 }
 
-function excluir(_event: IpcMainInvokeEvent, id: number): ApiResult<true> {
-  const db = getDb();
-  try {
-    db.prepare('DELETE FROM historico_disciplinas WHERE aluno_id = ?').run(id);
-    db.prepare('DELETE FROM declaracoes WHERE aluno_id = ?').run(id);
-    db.prepare('DELETE FROM diplomas WHERE aluno_id = ?').run(id);
-    db.prepare('DELETE FROM aluno_documentos WHERE aluno_id = ?').run(id);
-    db.prepare('DELETE FROM atas_colacao WHERE aluno_id = ?').run(id);
-    db.prepare('DELETE FROM curso_livre_alunos WHERE aluno_id = ?').run(id);
+async function excluir(_event: IpcMainInvokeEvent, id: number): Promise<ApiResult<true>> {
+  // A exclusão precisa ser propagada para a nuvem; caso contrário, o sync
+  // bidirecional (PULL a cada 15s) re-insere o aluno a partir do Supabase.
+  // O withSyncLock impede que um sync concorrente ressuscite o registro no meio.
+  return withSyncLock(async () => {
+    const db = getDb();
+    try {
+      db.prepare('DELETE FROM historico_disciplinas WHERE aluno_id = ?').run(id);
+      db.prepare('DELETE FROM declaracoes WHERE aluno_id = ?').run(id);
+      db.prepare('DELETE FROM diplomas WHERE aluno_id = ?').run(id);
+      db.prepare('DELETE FROM aluno_documentos WHERE aluno_id = ?').run(id);
+      db.prepare('DELETE FROM atas_colacao WHERE aluno_id = ?').run(id);
+      db.prepare('DELETE FROM curso_livre_alunos WHERE aluno_id = ?').run(id);
 
-    const result = db.prepare('DELETE FROM alunos WHERE id = ?').run(id);
-    if (result.changes === 0) return { ok: false, error: 'Aluno não encontrado' };
-    return { ok: true, data: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Erro ao excluir aluno' };
-  }
+      const result = db.prepare('DELETE FROM alunos WHERE id = ?').run(id);
+      if (result.changes === 0) return { ok: false, error: 'Aluno não encontrado' };
+
+      const client = getClient();
+      if (client) {
+        try {
+          await Promise.all([
+            client.from('historico_disciplinas').delete().eq('aluno_id', id),
+            client.from('declaracoes').delete().eq('aluno_id', id),
+            client.from('diplomas').delete().eq('aluno_id', id),
+            client.from('aluno_documentos').delete().eq('aluno_id', id),
+            client.from('atas_colacao').delete().eq('aluno_id', id),
+            client.from('curso_livre_alunos').delete().eq('aluno_id', id),
+            client.from('alunos').delete().eq('id', id),
+          ]);
+        } catch (e: any) {
+          // Se a nuvem rejeitar (RLS/offline), o aluno pode voltar no próximo sync.
+          console.warn('[alunos] Exclusão local ok, mas falhou na nuvem:', e?.message);
+        }
+      }
+
+      return { ok: true, data: true };
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? 'Erro ao excluir aluno' };
+    }
+  });
 }
 
 export function registrarAlunosHandlers(): void {

@@ -190,6 +190,22 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
   }
 }
 
+/**
+ * Executa `fn` segurando o mutex do sync, de forma que o sync periódico (a cada
+ * 15s) não rode durante a operação. Usado para exclusões que precisam apagar o
+ * registro local e remoto atomicamente — sem isso, um sync no meio da operação
+ * poderia re-inserir (PULL) ou re-enviar (PUSH) o registro e ressuscitá-lo.
+ */
+export async function withSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+  while (syncing) await new Promise((r) => setTimeout(r, 50));
+  syncing = true;
+  try {
+    return await fn();
+  } finally {
+    syncing = false;
+  }
+}
+
 // ============================================================
 // SYNC DE ARQUIVOS (assinaturas, certificados)
 // ============================================================
