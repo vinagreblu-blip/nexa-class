@@ -12,6 +12,8 @@ import type { Aluno, ApiResult, HistoricoDisciplina, HistoricoDisciplinaInput } 
 import { getFaculdadeInfo } from '../faculdades';
 import { renderHtmlFaciipPdf } from '../faciip-historico-html';
 import { renderHtmlHelioRochaPdf } from '../helio-rocha-historico-html';
+import { renderHtmlFatecePdf } from '../fatece-historico-html';
+import { renderHtmlDoisDeJulhoPdf } from '../dois-de-julho-historico-html';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
@@ -284,6 +286,30 @@ async function gerarPdf(
     });
   } else if (aluno.faculdade === 'Hélio Rocha') {
     await renderHtmlHelioRochaPdf({
+      aluno,
+      disciplinas,
+      faculdade: info,
+      cursoInfo,
+      destinoPath: destino.filePath,
+      codigoVerificacao: codigo,
+      qrBuffer,
+      semAssinatura,
+      emitidoEm,
+    });
+  } else if (aluno.faculdade === 'FATECE') {
+    await renderHtmlFatecePdf({
+      aluno,
+      disciplinas,
+      faculdade: info,
+      cursoInfo,
+      destinoPath: destino.filePath,
+      codigoVerificacao: codigo,
+      qrBuffer,
+      semAssinatura,
+      emitidoEm,
+    });
+  } else if (aluno.faculdade === '2 de Julho') {
+    await renderHtmlDoisDeJulhoPdf({
       aluno,
       disciplinas,
       faculdade: info,

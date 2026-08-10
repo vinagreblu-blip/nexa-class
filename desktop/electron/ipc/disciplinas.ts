@@ -1,14 +1,14 @@
 import type { IpcMainInvokeEvent } from 'electron';
 import { ipcMain } from 'electron';
-import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult, Disciplina, DisciplinaInput } from '../types';
 import { requerAuth } from './auth';
+import { validarSenhaMaster } from '../utils/regras';
 
 function validarMaster(senha: string): boolean {
-  return bcrypt.compareSync(senha ?? '', CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH);
+  return validarSenhaMaster(senha, CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH);
 }
 
 const SELECT_JOIN = `SELECT d.*, doc.nome AS docente_nome

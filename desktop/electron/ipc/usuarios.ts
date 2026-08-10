@@ -9,6 +9,7 @@ import { CONFIG } from '../config';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult, Usuario, UsuarioInput } from '../types';
 import { getSessao, requerAdmin, requerAuth } from './auth';
+import { validarInputUsuario, validarExclusaoUsuario, podeTrocarFotoPerfil, validarSenhaMaster } from '../utils/regras';
 
 function semHash(u: any): Usuario {
   const { password_hash, ...rest } = u;
@@ -31,20 +32,8 @@ function listar(): ApiResult<Usuario[]> {
   return { ok: true, data: rows };
 }
 
-function validarInput(input: UsuarioInput): string | null {
-  if (!input.username?.trim()) return 'Username é obrigatório';
-  if (!input.nome?.trim()) return 'Nome é obrigatório';
-  if (!input.password || input.password.length < 6) {
-    return 'A senha deve ter ao menos 6 caracteres';
-  }
-  if (input.role !== 'admin' && input.role !== 'operador') {
-    return 'Role inválido';
-  }
-  return null;
-}
-
 function criar(_event: IpcMainInvokeEvent, input: UsuarioInput): ApiResult<Usuario> {
-  const erro = validarInput(input);
+  const erro = validarInputUsuario(input);
   if (erro) return { ok: false, error: erro };
 
   const db = getDb();
@@ -127,10 +116,6 @@ function atualizar(
 
 function excluir(_event: IpcMainInvokeEvent, id: number): ApiResult<true> {
   const sessao = getSessao();
-  if (sessao?.usuario.id === id) {
-    return { ok: false, error: 'Você não pode excluir o próprio usuário' };
-  }
-
   const db = getDb();
   const countAdmins = db
     .prepare("SELECT COUNT(*) AS total FROM usuarios WHERE role = 'admin' AND ativo = 1")
@@ -139,9 +124,14 @@ function excluir(_event: IpcMainInvokeEvent, id: number): ApiResult<true> {
     | { role: string; ativo: number }
     | undefined;
 
-  if (alvo?.role === 'admin' && alvo.ativo === 1 && countAdmins.total <= 1) {
-    return { ok: false, error: 'Não é possível excluir o último administrador ativo' };
-  }
+  const erro = validarExclusaoUsuario({
+    sessaoUsuarioId: sessao?.usuario.id ?? -1,
+    alvoId: id,
+    alvoRole: alvo?.role as any,
+    alvoAtivo: alvo?.ativo,
+    totalAdminsAtivos: countAdmins.total,
+  });
+  if (erro) return { ok: false, error: erro };
 
   const fotoRow = db.prepare('SELECT foto_path FROM usuarios WHERE id = ?').get(id) as { foto_path: string | null } | undefined;
 
@@ -166,8 +156,7 @@ async function trocarFoto(
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
   // Admin pode trocar a foto de qualquer um; operador só a sua própria
-  const isOperador = sessao.usuario.role !== 'admin';
-  if (isOperador && sessao.usuario.id !== userId) {
+  if (!podeTrocarFotoPerfil({ sessaoRole: sessao.usuario.role, sessaoUsuarioId: sessao.usuario.id, alvoId: userId })) {
     return { ok: false, error: 'Operadores só podem alterar a própria foto' };
   }
   const db = getDb();
@@ -233,7 +222,7 @@ function resetarSenha(
   userId: number,
   masterPassword: string
 ): ApiResult<{ senhaTemporaria: string }> {
-  if (!bcrypt.compareSync(masterPassword ?? '', CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
+  if (!validarSenhaMaster(masterPassword, CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
     return { ok: false, error: 'Senha master incorreta' };
   }
   const db = getDb();

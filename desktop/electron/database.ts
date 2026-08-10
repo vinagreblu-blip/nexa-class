@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { openDatabase, type DbAdapter } from './sqlite-adapter';
+import { logger } from './utils/logger';
 import { getDbPath, getDbPathAntigo, getDbPathAntigo2, CONFIG } from './config';
 
 let db: DbAdapter;
@@ -15,7 +16,7 @@ function migrarArquivoDb(): void {
     if (fs.existsSync(antigo)) {
       try {
         fs.renameSync(antigo, novo);
-        console.log(`[db] Arquivo migrado: ${path.basename(antigo)} -> nexa-class.sqlite`);
+        logger.info({ de: path.basename(antigo) }, 'Arquivo de DB migrado para nexa-class.sqlite');
         return;
       } catch {
         /* ignora */
@@ -75,6 +76,10 @@ function atribuirCodigosUsuarios(): void {
   if (!cols.map((c) => c.name).includes('reset_expires')) {
     db.exec('ALTER TABLE usuarios ADD COLUMN reset_expires TEXT');
   }
+  // Contador de tentativas falhas de redefinição por token — lockout após 5.
+  if (!cols.map((c) => c.name).includes('reset_attempts')) {
+    db.exec('ALTER TABLE usuarios ADD COLUMN reset_attempts INTEGER NOT NULL DEFAULT 0');
+  }
   const semCodigo = db
     .prepare('SELECT id FROM usuarios WHERE codigo IS NULL OR codigo = \'\'')
     .all() as { id: number }[];
@@ -85,7 +90,7 @@ function atribuirCodigosUsuarios(): void {
     stmt.run(gerarCodigoUsuarioUnico(), u.id);
     n++;
   }
-  if (n > 0) console.log(`[db] Códigos identificadores atribuídos a ${n} usuário(s)`);
+  if (n > 0) logger.info({ total: n }, 'Códigos identificadores atribuídos a usuários');
 }
 
 export function getDb(): DbAdapter {
@@ -389,7 +394,7 @@ function seedAdmin(): void {
       .get(username) as { password_hash: string } | undefined;
     if (row?.password_hash && bcrypt.compareSync('admin123', row.password_hash)) {
       db.prepare('UPDATE usuarios SET senha_temporaria = 1 WHERE username = ?').run(username);
-      console.warn('[db] Admin ainda usa a senha padrão "admin123" — troca obrigatória no próximo login.');
+      logger.warn('Admin ainda usa a senha padrão "admin123" — troca obrigatória no próximo login');
     }
     return;
   }
@@ -412,11 +417,12 @@ function seedAdmin(): void {
       `Senha: ${senha}\n\n` +
       `Troque a senha no primeiro login. Voce pode apagar este arquivo com seguranca.\n`;
     fs.writeFileSync(credsPath, conteudo, 'utf8');
-    console.log(`[db] Admin inicial criado: ${username} (credenciais em ${credsPath})`);
+    logger.info({ username, credsPath }, 'Admin inicial criado (credenciais salvas em arquivo)');
   } catch (e: any) {
-    // Fallback: loga a senha uma vez no console (apenas se não conseguir gravar o arquivo).
-    console.warn('[db] Nao foi possivel salvar credenciais iniciais:', e?.message);
-    console.log(`[db] Admin inicial criado: ${username} | senha inicial: ${senha}`);
+    // NUNCA logar a senha em texto — falha aqui exige intervenção (recriar DB
+    // ou ler a senha via tooling administrativo). Antes este catch imprimia
+    // a senha no console, o que vazava para qualquer um com acesso aos logs.
+    logger.error({ err: e, username }, 'Falha ao salvar credenciais iniciais — senha NÃO está nos logs; recriar DB ou ler via recovery');
   }
 }
 
@@ -611,7 +617,7 @@ function seedDocentes(): void {
     const r = stmt.run(d.nome, d.titulacao);
     if (r.changes > 0) novos++;
   }
-  if (novos > 0) console.log(`[db] Seed de docentes: +${novos} novo(s) (${DOCENTES_SEED.length} no total)`);
+  if (novos > 0) logger.info({ novos, total: DOCENTES_SEED.length }, 'Seed de docentes aplicada');
 }
 
 // Disciplinas extraídas do documento "ADM Helio Rocha-historico.docx"
@@ -1313,5 +1319,5 @@ function seedDisciplinas(): void {
     const r = stmt.run(d.nome, doc?.id ?? null, d.ch);
     if (r.changes > 0) novas++;
   }
-  if (novas > 0) console.log(`[db] Seed de disciplinas: +${novas} nova(s) (${DISCIPLINAS_SEED.length} no total)`);
+  if (novas > 0) logger.info({ novas, total: DISCIPLINAS_SEED.length }, 'Seed de disciplinas aplicada');
 }

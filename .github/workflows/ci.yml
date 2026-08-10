@@ -36,9 +36,17 @@ jobs:
       - name: Build web
         run: npm run web:build
 
+      - name: Testes (Vitest)
+        run: npm test
+
+      - name: Testes E2E (Playwright Electron)
+        run: npm run e2e -w desktop
+        # E2E no Windows runner pode ser instável no primeiro boot do Electron
+        # — mantemos continue-on-error para não bloquear PRs, mas falhas aparecem.
+        continue-on-error: true
+
       - name: Lint
         run: npm run lint
-        continue-on-error: true # lint eh non-blocking na 1a execucao
 
       - name: Audit (falha em vulnerabilidades high/critical)
         run: npm audit --audit-level=high

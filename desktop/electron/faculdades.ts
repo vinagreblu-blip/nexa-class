@@ -211,8 +211,28 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     nome: 'FACEI - FACULDADE DE CIÊNCIAS EMPRESARIAIS',
   } as FaculdadeInfo,
   '2 de Julho': {
-    ...SEM_LOGO,
-    nome: 'FACULDADE 2 DE JULHO',
+    nome: 'Faculdade 2 de Julho',
+    cnpj: '',
+    email: 'jose.mtorres@hotmail.com',
+    telefone: '(71) 9 2003-7875',
+    endereco: '',
+    diretor: 'Prof. Dr. José Augusto Maciel Torres',
+    cargoDiretor: 'Diretor Geral',
+    rodape:
+      'QUALQUER INFORMAÇÃO, DEVE SER SOLICITADA ATRAVÉS DO NOSSO E-MAIL: jose.mtorres@hotmail.com, OU ATRAVÉS DO WHATSAPP (71) 9 2003-7875.',
+    enade: '',
+    registroRtd:
+      'Autorização. Portaria nº 2.032 de 15/07/2002, D.O.U de 16/07/2002. Renovação de Reconhecimento Portaria nº 207 de 25/06/2020, publicada D.O.U nº 128, em 07/07/2020.',
+    logoPath: path.join(__dirname, '..', 'resources', 'logo-2-de-julho.png'),
+    cursos: {
+      'Direito': {
+        nome: 'Bacharelado em Direito',
+        codEmec: '',
+        turno: 'Noturno',
+        regulatory:
+          'Autorização. Portaria nº 2.032 de 15/07/2002, D.O.U de 16/07/2002. Renovação de Reconhecimento Portaria nº 207 de 25/06/2020, publicada D.O.U nº 128, em 07/07/2020.',
+      },
+    },
   } as FaculdadeInfo,
 };
 

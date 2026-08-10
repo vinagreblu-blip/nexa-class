@@ -17,3 +17,8 @@ process-*.js
 debug-*.js
 test-*.js
 hashgen.js
+
+# Artefatos de teste
+test-results/
+coverage/
+.playwright/

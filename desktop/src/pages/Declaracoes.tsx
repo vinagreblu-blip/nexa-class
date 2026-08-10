@@ -4,7 +4,26 @@ import { useAuth } from '../context/AuthContext';
 import type { Aluno, DeclaracaoRow } from '../types';
 import { Modal } from '../components/Modal';
 
-export function Declaracoes() {
+interface DeclaracoesLabels {
+  titulo: string;
+  subtitulo: string;
+  btnEmitir: string;
+  btnEmitirSA: string;
+  docSingular: string;
+  docPlural: string;
+}
+
+const LABELS_PADRAO: DeclaracoesLabels = {
+  titulo: 'Declarações de Autenticidade',
+  subtitulo: 'Emita declarações em PDF com QR Code e código de verificação.',
+  btnEmitir: '+ Emitir Nova Declaração',
+  btnEmitirSA: '+ Emitir Nova Declaração (SA)',
+  docSingular: 'Declaração',
+  docPlural: 'declaração',
+};
+
+export function Declaracoes({ labels }: { labels?: Partial<DeclaracoesLabels> }) {
+  const L = { ...LABELS_PADRAO, ...labels };
   const { usuario } = useAuth();
   const podeExcluir = usuario?.username === 'admin';
   const [historico, setHistorico] = useState<DeclaracaoRow[]>([]);
@@ -63,12 +82,12 @@ export function Declaracoes() {
       setSeletorAberto(false);
       setSucesso(
         res.data.enviadoWeb
-          ? `Declaração gerada com sucesso em: ${res.data.pdfPath}`
-          : `Declaração gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`
+          ? `${L.docSingular} gerada com sucesso em: ${res.data.pdfPath}`
+          : `${L.docSingular} gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`
       );
       await carregarHistorico();
     } else {
-      setErro(res.error ?? 'Erro ao emitir declaração');
+      setErro(res.error ?? `Erro ao emitir ${L.docPlural.toLowerCase()}`);
     }
   }
 
@@ -88,13 +107,13 @@ export function Declaracoes() {
       setExcluirAlvo(null);
       setSucesso(
         res.data?.webOk
-          ? 'Declaração excluída (local e no serviço de verificação).'
-          : 'Declaração excluída localmente (não foi possível remover do serviço web).'
+          ? `${L.docSingular} excluída (local e no serviço de verificação).`
+          : `${L.docSingular} excluída localmente (não foi possível remover do serviço web).`
       );
       await carregarHistorico();
       setTimeout(() => setSucesso(null), 4000);
     } else {
-      setErroExcluir(res.error ?? 'Erro ao excluir declaração');
+      setErroExcluir(res.error ?? `Erro ao excluir ${L.docPlural.toLowerCase()}`);
     }
   }
 
@@ -102,17 +121,17 @@ export function Declaracoes() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
         <div>
-          <h1 style={{ margin: '0 0 4px', fontSize: 22 }}>Declarações de Autenticidade</h1>
+          <h1 style={{ margin: '0 0 4px', fontSize: 22 }}>{L.titulo}</h1>
           <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
-            Emita declarações em PDF com QR Code e código de verificação.
+            {L.subtitulo}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn-primary" onClick={() => { setSemAssinatura(false); abrirSeletor(); }}>
-            + Emitir Nova Declaração
+            {L.btnEmitir}
           </button>
           <button className="btn-ghost" onClick={() => { setSemAssinatura(true); abrirSeletor(); }}>
-            + Emitir Nova Declaração (SA)
+            {L.btnEmitirSA}
           </button>
         </div>
       </div>
@@ -144,7 +163,7 @@ export function Declaracoes() {
             {!carregando && historico.length === 0 && (
               <tr>
                 <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                  Nenhuma declaração emitida ainda.
+                  Nenhuma {L.docPlural.toLowerCase()} emitida ainda.
                 </td>
               </tr>
             )}
@@ -169,7 +188,7 @@ export function Declaracoes() {
                         setSucesso(null);
                         const res = await api.declaracoes.baixar(d.id);
                         if (res.ok && res.data) {
-                          setSucesso(`Declaração baixada em: ${res.data.salvoPath}`);
+                          setSucesso(`${L.docSingular} baixada em: ${res.data.salvoPath}`);
                           setTimeout(() => setSucesso(null), 5000);
                         } else if (res.error !== 'Operação cancelada') {
                           setErro(res.error ?? 'Erro ao baixar');
@@ -195,7 +214,7 @@ export function Declaracoes() {
 
       {seletorAberto && (
         <Modal
-          title={semAssinatura ? 'Emitir Declaração (Sem Assinatura)' : 'Emitir Declaração'}
+          title={semAssinatura ? `Emitir ${L.docSingular} (Sem Assinatura)` : `Emitir ${L.docSingular}`}
           width={620}
           onClose={() => (emitindo ? undefined : (setSeletorAberto(false), setSemAssinatura(false)))}
           footer={
@@ -262,7 +281,7 @@ export function Declaracoes() {
 
       {excluirAlvo && (
         <Modal
-          title="Excluir Declaração"
+          title={`Excluir ${L.docSingular}`}
           onClose={() => (excluindo ? undefined : setExcluirAlvo(null))}
           footer={
             <>
@@ -280,7 +299,7 @@ export function Declaracoes() {
           }
         >
           <div className="alert alert-warning">
-            Esta ação remove a declaração <strong>{excluirAlvo.aluno_nome}</strong> ({excluirAlvo.aluno_matricula})
+            Esta ação remove a {L.docPlural.toLowerCase()} <strong>{excluirAlvo.aluno_nome}</strong> ({excluirAlvo.aluno_matricula})
             {' '}e invalida o QR Code de verificação. Não pode ser desfeita.
           </div>
           {erroExcluir && <div className="alert alert-error">{erroExcluir}</div>}

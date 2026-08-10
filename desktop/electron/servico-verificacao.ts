@@ -4,10 +4,14 @@ import path from 'node:path';
 import { getDb } from './database';
 import { CONFIG } from './config';
 import { getLocalIP } from './network';
+import { logger } from './utils/logger';
 
-const API_KEY = CONFIG.VERIFICACAO_API_KEY;
 const PORT = 3001;
 const LOCAL_IP = getLocalIP();
+
+// API key resolvida lazy dentro de iniciarServicoVerificacao() — o getter de
+// CONFIG.VERIFICACAO_API_KEY depende de app.getPath('userData'), que só está
+// disponível após app.whenReady().
 
 // Carrega a página de validação (QR com dados embutidos)
 let validadorHtml = '';
@@ -29,6 +33,9 @@ let serverInstance: http.Server | null = null;
 
 export function iniciarServicoVerificacao(): http.Server | null {
   if (serverInstance) return serverInstance;
+
+  // Resolve a API key agora (após app.whenReady), não no import do módulo.
+  const API_KEY = CONFIG.VERIFICACAO_API_KEY;
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
@@ -188,14 +195,14 @@ export function iniciarServicoVerificacao(): http.Server | null {
 
   server.on('error', (e: any) => {
     if (e?.code === 'EADDRINUSE') {
-      console.warn(`[verificacao] Porta ${PORT} já em uso — serviço externo provavelmente ativo`);
+      logger.warn({ port: PORT }, 'Porta em uso — serviço externo provavelmente ativo');
     } else {
-      console.error('[verificacao] Erro:', e?.message);
+      logger.error({ err: e }, 'Erro no serviço de verificação');
     }
   });
 
   server.listen(PORT, () => {
-    console.log(`[verificacao] Serviço de validação ativo em http://localhost:${PORT}`);
+    logger.info({ port: PORT, ip: LOCAL_IP }, 'Serviço de validação ativo');
   });
 
   serverInstance = server;

@@ -4,7 +4,26 @@ import { useAuth } from '../context/AuthContext';
 import type { Aluno, DiplomaRow } from '../types';
 import { Modal } from '../components/Modal';
 
-export function Diploma() {
+interface DiplomaLabels {
+  titulo: string;
+  subtitulo: string;
+  btnEmitir: string;
+  btnEmitirSA: string;
+  docSingular: string;
+  docPlural: string;
+}
+
+const LABELS_PADRAO: DiplomaLabels = {
+  titulo: 'Diplomas',
+  subtitulo: 'Emissão e gestão de diplomas de conclusão.',
+  btnEmitir: '+ Emitir Diploma',
+  btnEmitirSA: '+ Emitir Diploma (SA)',
+  docSingular: 'Diploma',
+  docPlural: 'diploma',
+};
+
+export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
+  const L = { ...LABELS_PADRAO, ...labels };
   const { usuario } = useAuth();
   const podeExcluir = usuario?.username === 'admin';
   const [lista, setLista] = useState<DiplomaRow[]>([]);
@@ -60,10 +79,10 @@ export function Diploma() {
     if (res.ok && res.data) {
       setSeletorAberto(false);
       setSemAssinatura(false);
-      setSucesso(`Diploma gerado em: ${(res.data as any).pdfPath}`);
+      setSucesso(`${L.docSingular} gerado em: ${(res.data as any).pdfPath}`);
       await carregar();
     } else {
-      setErro(res.error ?? 'Erro ao emitir diploma');
+      setErro(res.error ?? `Erro ao emitir ${L.docPlural.toLowerCase()}`);
     }
   }
 
@@ -90,7 +109,7 @@ export function Diploma() {
     setExcluindo(false);
     if (res.ok) {
       setExcluirAlvo(null);
-      setSucesso('Diploma excluído.');
+      setSucesso(`${L.docSingular} excluído.`);
       await carregar();
       setTimeout(() => setSucesso(null), 4000);
     } else {
@@ -104,17 +123,17 @@ export function Diploma() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
         <div>
-          <h1 style={{ margin: '0 0 4px', fontSize: 22 }}>Diplomas</h1>
+          <h1 style={{ margin: '0 0 4px', fontSize: 22 }}>{L.titulo}</h1>
           <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
-            Emissão e gestão de diplomas de conclusão.
+            {L.subtitulo}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn-primary" onClick={() => { setSemAssinatura(false); abrirSeletor(); }}>
-            + Emitir Diploma
+            {L.btnEmitir}
           </button>
           <button className="btn-ghost" onClick={() => { setSemAssinatura(true); abrirSeletor(); }}>
-            + Emitir Diploma (SA)
+            {L.btnEmitirSA}
           </button>
         </div>
       </div>
@@ -137,7 +156,7 @@ export function Diploma() {
             {filtrados.length === 0 && (
               <tr>
                 <td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
-                  {carregando ? 'Carregando…' : 'Nenhum diploma emitido ainda.'}
+                  {carregando ? 'Carregando…' : `Nenhum(a) ${L.docPlural.toLowerCase()} emitido(a) ainda.`}
                 </td>
               </tr>
             )}
@@ -165,7 +184,7 @@ export function Diploma() {
 
       {seletorAberto && (
         <Modal
-          title={semAssinatura ? 'Emitir Diploma (Sem Assinatura)' : 'Emitir Diploma'}
+          title={semAssinatura ? `Emitir ${L.docSingular} (Sem Assinatura)` : `Emitir ${L.docSingular}`}
           width={620}
           onClose={() => (emitindo ? undefined : (setSeletorAberto(false), setSemAssinatura(false)))}
           footer={
@@ -232,7 +251,7 @@ export function Diploma() {
           }
         >
           <p style={{ marginBottom: 12 }}>
-            Excluir o diploma de <strong>{excluirAlvo.aluno_nome}</strong> ({excluirAlvo.aluno_matricula})?
+            Excluir o(a) {L.docPlural.toLowerCase()} de <strong>{excluirAlvo.aluno_nome}</strong> ({excluirAlvo.aluno_matricula})?
           </p>
           <input
             type="password"

@@ -202,6 +202,8 @@ export const IPC_CHANNELS = {
   AUTH_SESSAO: 'auth:sessao',
   AUTH_ALTERAR_SENHA: 'auth:alterar-senha',
   AUTH_SOLICITAR_RECUPERACAO: 'auth:solicitar-recuperacao',
+  AUTH_REDEFINIR_COM_TOKEN: 'auth:redefinir-com-token',
+  DASHBOARD_OBTER: 'dashboard:obter',
   SMTP_OBTER: 'smtp:obter',
   SMTP_SALVAR: 'smtp:salvar',
   ALUNO_LISTAR: 'aluno:listar',

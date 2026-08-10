@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { logger } from './utils/logger';
 
 // ============================================================
 // CONFIG EMBUTIDA — sempre ativo, sem configuração manual
@@ -11,6 +12,19 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 let client: SupabaseClient | null = null;
 let syncing = false;
+
+// Status do último sync bidirecional — lido pelo Dashboard.
+// `ultimoSyncEm` = ISO timestamp; `ultimoSyncOk` = true se foi bem-sucedido.
+let ultimoSyncEm: string | null = null;
+let ultimoSyncOk: boolean | null = null;
+
+export function obterStatusCloud(): { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null } {
+  return {
+    ativo: client !== null,
+    ultimoSyncEm,
+    ultimoSyncOk,
+  };
+}
 
 export function isCloudEnabled(): boolean {
   return client !== null;
@@ -34,9 +48,9 @@ export function initCloud(): void {
     client = createClient(SUPABASE_URL, SUPABASE_KEY, {
       realtime: { transport: WebSocket },
     });
-    console.log('[cloud] Supabase conectado (auto-config)');
+    logger.info('Supabase conectado (auto-config)');
   } catch (e: any) {
-    console.warn('[cloud] Erro ao conectar:', e?.message);
+    logger.warn({ err: e }, 'Erro ao conectar ao Supabase');
     client = null;
   }
 }
@@ -167,7 +181,7 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
           try {
             await client.from(tabela).upsert(chunk);
           } catch (e: any) {
-            console.warn(`[cloud] Erro ao enviar ${tabela} (${i}-${i + chunk.length}):`, e?.message);
+            logger.warn({ err: e, tabela, range: `${i}-${i + chunk.length}` }, 'Erro ao enviar chunk');
           }
         }
       }
@@ -180,13 +194,20 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
         } catch { /* tabela sem autoincrement */ }
       }
     } catch (e: any) {
-      console.warn(`[cloud] Erro ao sincronizar ${tabela}:`, e?.message);
+      logger.warn({ err: e, tabela }, 'Erro ao sincronizar tabela');
     }
   }
   } catch (e: any) {
-    console.warn('[cloud] Erro no sync:', e?.message);
+    logger.warn({ err: e }, 'Erro no sync bidirecional');
+    ultimoSyncEm = new Date().toISOString();
+    ultimoSyncOk = false;
   } finally {
     syncing = false;
+  }
+  // Sem erros neste ponto → sync OK.
+  if (ultimoSyncEm === null || ultimoSyncOk !== false) {
+    ultimoSyncEm = new Date().toISOString();
+    ultimoSyncOk = true;
   }
 }
 
@@ -225,12 +246,12 @@ export async function uploadFileToCloud(localPath: string): Promise<void> {
       updated_at: new Date().toISOString(),
     });
     if (error) {
-      console.warn(`[cloud] Erro ao enviar ${nome}:`, error.message);
+      logger.warn({ arquivo: nome, err: error }, 'Erro ao enviar arquivo');
     } else {
-      console.log(`[cloud] Arquivo enviado: ${nome}`);
+      logger.info({ arquivo: nome }, 'Arquivo enviado');
     }
   } catch (e: any) {
-    console.warn(`[cloud] Erro ao enviar ${localPath}:`, e?.message);
+    logger.warn({ err: e, arquivo: localPath }, 'Erro ao enviar arquivo');
   }
 }
 
@@ -255,11 +276,11 @@ export async function downloadAllFilesFromCloud(dir: string): Promise<void> {
         if (!resolved.startsWith(path.resolve(dir) + path.sep)) continue;
         const buf = Buffer.from(row.dados, 'base64');
         fs.writeFileSync(resolved, buf);
-        console.log(`[cloud] Arquivo baixado: ${row.caminho}`);
+        logger.info({ arquivo: row.caminho }, 'Arquivo baixado');
       } catch { /* ignora */ }
     }
   } catch (e: any) {
-    console.warn('[cloud] Erro ao baixar arquivos:', e?.message);
+    logger.warn({ err: e }, 'Erro ao baixar arquivos');
   }
 }
 

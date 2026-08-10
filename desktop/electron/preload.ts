@@ -27,6 +27,16 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.AUTH_ALTERAR_SENHA, atual, nova),
     solicitarRecuperacao: (email: string): Promise<ApiResult<{ enviado: boolean }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.AUTH_SOLICITAR_RECUPERACAO, email),
+    redefinirComToken: (input: {
+      email: string;
+      codigo: string;
+      novaSenha: string;
+    }): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AUTH_REDEFINIR_COM_TOKEN, input),
+    dashboard: {
+      obter: (): Promise<ApiResult<unknown>> =>
+        ipcRenderer.invoke(IPC_CHANNELS.DASHBOARD_OBTER),
+    },
   },
   smtp: {
     obter: (): Promise<ApiResult<{ provedor: string; email: string; senha: string } | null>> =>

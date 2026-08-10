@@ -3,6 +3,7 @@ dist/
 dist-electron/
 release/
 build/
+coverage/
 *.log
 package-lock.json
 .vercel

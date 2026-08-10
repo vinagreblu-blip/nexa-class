@@ -4,6 +4,8 @@ import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult, Sessao, Usuario, UsuarioPublico } from '../types';
+import { validarNovaSenha } from '../utils/regras';
+import { logger } from '../utils/logger';
 
 let sessaoAtual: Sessao | null = null;
 
@@ -39,10 +41,13 @@ function login(_event: IpcMainInvokeEvent, username: string, password: string): 
     .get(username) as (Usuario & { password_hash: string }) | undefined;
 
   if (!row) {
+    // Log sem revelar se usuário existe — mas registra a tentativa (auditoria).
+    logger.warn({ username }, 'Tentativa de login com usuário inexistente/inativo');
     return { ok: false, error: 'Usuário ou senha inválidos' };
   }
 
   if (!bcrypt.compareSync(password, row.password_hash)) {
+    logger.warn({ userId: row.id, username }, 'Tentativa de login com senha incorreta');
     return { ok: false, error: 'Usuário ou senha inválidos' };
   }
 
@@ -60,6 +65,7 @@ function login(_event: IpcMainInvokeEvent, username: string, password: string): 
     },
   };
 
+  logger.info({ userId: row.id, username, role: row.role }, 'Login bem-sucedido');
   return { ok: true, data: sessaoAtual.usuario };
 }
 
@@ -87,9 +93,8 @@ function alterarSenha(
     return { ok: false, error: 'Senha atual incorreta' };
   }
 
-  if (novaSenha.length < 6) {
-    return { ok: false, error: 'A nova senha deve ter ao menos 6 caracteres' };
-  }
+  const erroSenha = validarNovaSenha(novaSenha);
+  if (erroSenha) return { ok: false, error: erroSenha };
 
   const hash = bcrypt.hashSync(novaSenha, 10);
   db.prepare('UPDATE usuarios SET password_hash = ?, senha_temporaria = 0, updated_at = datetime(\'now\') WHERE id = ?').run(

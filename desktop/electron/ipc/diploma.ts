@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import PDFDocument from 'pdfkit';
-import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { getFaculdadeInfo } from '../faculdades';
@@ -13,6 +12,7 @@ import type { Aluno, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
+import { validarSenhaMaster } from '../utils/regras';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarHashConteudo, gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
 
@@ -342,7 +342,7 @@ async function excluir(
   if (sessao.usuario.username !== 'admin') {
     return { ok: false, error: 'Apenas o administrador pode excluir diplomas' };
   }
-  if (!bcrypt.compareSync(senha ?? '', CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
+  if (!validarSenhaMaster(senha, CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
     return { ok: false, error: 'Senha de exclusão incorreta' };
   }
   const db = getDb();

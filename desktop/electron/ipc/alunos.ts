@@ -6,6 +6,7 @@ import { getClient, withSyncLock } from '../cloud';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, AlunoInput, ApiResult } from '../types';
 import { requerAuth, getSessao } from './auth';
+import { logger } from '../utils/logger';
 import { HISTORICO_PADRAO_HELIOROCHA_ADM, HISTORICO_PADRAO_HELIOROCHA_COM_SOCIAL_PP, HISTORICO_PADRAO_HELIOROCHA_ENG_CIVIL, HISTORICO_PADRAO_HELIOROCHA_ENG_PRODUCAO, HISTORICO_PADRAO_HELIOROCHA_ENG_ELETRICA, HISTORICO_PADRAO_HELIOROCHA_FISIOTERAPIA, HISTORICO_PADRAO_HELIOROCHA_SERVICO_SOCIAL, HISTORICO_PADRAO_HELIOROCHA_SISTEMA_INFORMACAO, HISTORICO_PADRAO_HELIOROCHA_TURISMO, HISTORICO_PADRAO_FACIIP_ADM, HISTORICO_PADRAO_FACIIP_ADM_HOSPITALAR, HISTORICO_PADRAO_FACIIP_COM_SOCIAL_RP, HISTORICO_PADRAO_FACIIP_CONTABEIS, HISTORICO_PADRAO_FACIIP_ENG_PRODUCAO_MEC, HISTORICO_PADRAO_FACIIP_JORNALISMO, HISTORICO_PADRAO_FACIIP_PEDAGOGIA, HISTORICO_PADRAO_FACIIP_TURISMO_HOTELARIA, HISTORICO_PADRAO_FATECE_PEDAGOGIA, HISTORICO_PADRAO_FATECE_TEOLOGIA } from '../historico-template';
 
 // Gera sequência de semestres a partir de um período inicial (ex: "2021.1" → ["2021.1","2021.2","2022.1",...])
@@ -289,7 +290,7 @@ async function excluir(_event: IpcMainInvokeEvent, id: number): Promise<ApiResul
           ]);
         } catch (e: any) {
           // Se a nuvem rejeitar (RLS/offline), o aluno pode voltar no próximo sync.
-          console.warn('[alunos] Exclusão local ok, mas falhou na nuvem:', e?.message);
+          logger.warn({ err: e, alunoId: id }, 'Exclusão local ok, mas falhou na nuvem');
         }
       }
 

@@ -1,5 +1,20 @@
-import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
+import Database from 'better-sqlite3';
 import fs from 'node:fs';
+import path from 'node:path';
+
+/**
+ * Adapter SQLite nativo (better-sqlite3) para o serviço de verificação web.
+ *
+ * Substitui o sql.js (WASM) anterior. Mantém a mesma interface `DbAdapter`
+ * para que `db.ts` não precise mudar — drop-in replacement.
+ *
+ * Diferenciais vs sql.js:
+ *  - Nativo (compilado C++) — sem WASM, sem carregar DB inteiro em memória
+ *  - Persistência transparente via mmap (não reescreve arquivo a cada op)
+ *  - Síncrono — combina com o modelo single-thread do Node
+ *
+ * Trade-off: adiciona dep de build nativa (prebuilt binary para win/linux/mac).
+ */
 
 export interface StatementResult {
   run: (...params: any[]) => { changes: number; lastInsertRowid: number | bigint };
@@ -13,86 +28,77 @@ export interface DbAdapter {
   pragma: (s: string) => void;
 }
 
-let instance: SqlJsDatabase | null = null;
-let persistFn: (() => void) | null = null;
-
-function lastInsertRowid(): number {
-  if (!instance) return 0;
-  const res = instance.exec('SELECT last_insert_rowid() AS id');
-  if (res.length && res[0].values.length) {
-    const v = res[0].values[0][0];
-    return typeof v === 'bigint' ? Number(v) : (v as number);
-  }
-  return 0;
-}
+let instance: Database.Database | null = null;
 
 function makeStatement(sql: string): StatementResult {
+  // Statement é criado lazy na primeira chamada — better-sqlite3 cacheia internamente.
+  let stmt: Database.Statement | null = null;
+  const getStmt = (): Database.Statement => {
+    if (!instance) throw new Error('DB não inicializado');
+    if (!stmt) stmt = instance.prepare(sql);
+    return stmt;
+  };
+
   return {
     run(...params: any[]) {
       if (!instance) throw new Error('DB não inicializado');
       try {
-        instance.run(sql, params);
+        const result = getStmt().run(...params);
+        return {
+          changes: result.changes,
+          lastInsertRowid: result.lastInsertRowid as number | bigint,
+        };
       } catch (e: any) {
         const msg = e?.message ? e.message : String(e);
         const err = new Error(msg);
-        if (/UNIQUE constraint/i.test(msg)) (err as any).code = 'SQLITE_CONSTRAINT_UNIQUE';
+        // better-sqlite3 usa códigos como SQLITE_CONSTRAINT_UNIQUE diretamente em e.code
+        if (e?.code) (err as any).code = e.code;
+        else if (/UNIQUE constraint/i.test(msg)) (err as any).code = 'SQLITE_CONSTRAINT_UNIQUE';
         throw err;
       }
-      const changes = instance.getRowsModified();
-      const id = lastInsertRowid();
-      persistFn?.();
-      return { changes, lastInsertRowid: id };
     },
     get(...params: any[]) {
       if (!instance) throw new Error('DB não inicializado');
-      const stmt = instance.prepare(sql);
-      let row: any;
-      if (params.length) {
-        stmt.bind(params);
-        if (stmt.step()) row = stmt.getAsObject();
-      } else {
-        if (stmt.step()) row = stmt.getAsObject();
-      }
-      stmt.free();
-      return row;
+      return getStmt().get(...params);
     },
     all(...params: any[]) {
       if (!instance) throw new Error('DB não inicializado');
-      const stmt = instance.prepare(sql);
-      const rows: any[] = [];
-      if (params.length) stmt.bind(params);
-      while (stmt.step()) rows.push(stmt.getAsObject());
-      stmt.free();
-      return rows;
+      return getStmt().all(...params);
     },
   };
 }
 
-export async function openDatabase(dbPath: string): Promise<DbAdapter> {
-  const SQL = await initSqlJs();
-  if (fs.existsSync(dbPath)) {
-    instance = new SQL.Database(fs.readFileSync(dbPath));
-  } else {
-    instance = new SQL.Database();
+export function openDatabase(dbPath: string): DbAdapter {
+  // Garante que o diretório pai existe — melhor-sqlite3 falha silenciosamente
+  // se o path não for gravável.
+  const dir = dbPath.substring(0, dbPath.lastIndexOf(path.sep));
+  if (dir && !fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
-  persistFn = () => {
-    if (!instance) return;
-    fs.writeFileSync(dbPath, Buffer.from(instance.export()));
-  };
 
-  instance.run('PRAGMA foreign_keys = ON');
+  instance = new Database(dbPath);
+  instance.pragma('journal_mode = WAL');
+  instance.pragma('foreign_keys = ON');
 
   const adapter: DbAdapter = {
     prepare: (sql: string) => makeStatement(sql),
     exec: (sql: string) => {
       if (!instance) throw new Error('DB não inicializado');
       instance.exec(sql);
-      persistFn?.();
     },
-    pragma: (_s: string) => {
-      /* no-op */
+    pragma: (s: string) => {
+      if (!instance) return;
+      instance.pragma(s);
     },
   };
 
   return adapter;
+}
+
+/** Fecha o DB — usado apenas em shutdown/testes para liberar o handle. */
+export function closeDatabase(): void {
+  if (instance) {
+    instance.close();
+    instance = null;
+  }
 }

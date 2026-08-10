@@ -1,5 +1,6 @@
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import fs from 'node:fs';
+import { logger } from './utils/logger';
 
 export interface StatementResult {
   run: (...params: any[]) => { changes: number; lastInsertRowid: number | bigint };
@@ -52,7 +53,7 @@ function persistAtomicSync(): void {
     } catch {
       /* ignora */
     }
-    console.error('[sqlite-adapter] Falha ao persistir banco:', e?.message);
+    logger.error({ err: e }, 'Falha ao persistir banco');
     throw e;
   }
 }
@@ -108,7 +109,7 @@ function schedulePersist(): void {
       try {
         persistAtomicSync();
       } catch (e: any) {
-        console.error('[sqlite-adapter] persist debounced falhou:', e?.message);
+        logger.error({ err: e }, 'persist debounced falhou');
       }
     }
   }, PERSIST_DEBOUNCE_MS);

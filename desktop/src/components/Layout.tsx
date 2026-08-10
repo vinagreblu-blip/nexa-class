@@ -3,12 +3,13 @@ import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { Home } from '../pages/Home';
+import { Dashboard } from '../pages/Dashboard';
 import { Alunos } from '../pages/Alunos';
 import { Docentes } from '../pages/Docentes';
 import { Disciplinas } from '../pages/Disciplinas';
 import { Historicos } from '../pages/Historicos';
 import { Usuarios } from '../pages/Usuarios';
-import { Declaracoes } from '../pages/Declaracoes';
+import { DocumentosInstitucionais } from '../pages/DocumentosInstitucionais';
 import { AtaColacao } from '../pages/AtaColacao';
 import { Diploma } from '../pages/Diploma';
 import { CursosLivres } from '../pages/CursosLivres';
@@ -22,11 +23,12 @@ import solIcon from '../assets/sol.png';
 
 type Aba =
   | 'home'
+  | 'dashboard'
   | 'alunos'
   | 'docentes'
   | 'disciplinas'
   | 'historicos'
-  | 'declaracoes'
+  | 'documentos-institucionais'
   | 'ata-colacao'
   | 'diploma'
   | 'cursos-livres'
@@ -45,11 +47,12 @@ export function Layout() {
 
   const itens: { id: Aba; label: string; adminOnly?: boolean }[] = [
     { id: 'home', label: 'Home' },
+    { id: 'dashboard', label: 'Dashboard', adminOnly: true },
     { id: 'alunos', label: 'Alunos' },
     { id: 'docentes', label: 'Docentes' },
     { id: 'disciplinas', label: 'Disciplinas' },
     { id: 'historicos', label: 'Histórico Acadêmico' },
-    { id: 'declaracoes', label: 'Declarações' },
+    { id: 'documentos-institucionais', label: 'Documentos Institucionais' },
     { id: 'ata-colacao', label: 'Ata de Colação de Grau' },
     { id: 'diploma', label: 'Diploma', adminOnly: true },
     { id: 'cursos-livres', label: 'Cursos', adminOnly: true },
@@ -213,11 +216,12 @@ export function Layout() {
 
       <main style={{ flex: 1, overflow: 'auto', padding: 28 }}>
         {aba === 'home' && <Home />}
+        {aba === 'dashboard' && usuario?.role === 'admin' && <Dashboard />}
         {aba === 'alunos' && <Alunos />}
         {aba === 'docentes' && <Docentes />}
         {aba === 'disciplinas' && <Disciplinas />}
         {aba === 'historicos' && <Historicos />}
-        {aba === 'declaracoes' && <Declaracoes />}
+        {aba === 'documentos-institucionais' && <DocumentosInstitucionais />}
         {aba === 'ata-colacao' && <AtaColacao />}
         {aba === 'diploma' && <Diploma />}
         {aba === 'cursos-livres' && usuario?.role === 'admin' && <CursosLivres />}

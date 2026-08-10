@@ -4,7 +4,6 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import PDFDocument from 'pdfkit';
-import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { getFaculdadeInfo } from '../faculdades';
@@ -15,6 +14,8 @@ import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarHashConteudo, gerarQrPng, formatarDataHoraBrasilia } from '../utils';
+import { validarExclusaoDeclaracao } from '../utils/regras';
+import { logger } from '../utils/logger';
 
 async function registrarNoWeb(
   codigo: string,
@@ -318,7 +319,7 @@ async function emitir(
     db.prepare('UPDATE declaracoes SET enviado_web = 1 WHERE id = ?').run(declaracao.id);
     declaracao.enviado_web = 1;
   } else {
-    console.warn('[declaracao] Falha ao enviar para web:', webResult.error);
+    logger.warn({ declaracaoId: declaracao.id, erro: webResult.error }, 'Falha ao enviar declaração para web');
   }
 
   const win = BrowserWindow.fromWebContents(event.sender);
@@ -452,15 +453,12 @@ async function excluir(
   senha: string
 ): Promise<ApiResult<{ webOk: boolean }>> {
   const sessao = getSessao();
-  if (!sessao) return { ok: false, error: 'Não autenticado' };
-
-  if (sessao.usuario.username !== 'admin') {
-    return { ok: false, error: 'Apenas o administrador (admin) pode excluir declarações' };
-  }
-
-  if (!bcrypt.compareSync(senha ?? '', CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
-    return { ok: false, error: 'Senha de exclusão incorreta' };
-  }
+  const erro = validarExclusaoDeclaracao({
+    sessao,
+    senha,
+    senhaMasterHash: CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH,
+  });
+  if (erro) return { ok: false, error: erro };
 
   const db = getDb();
 

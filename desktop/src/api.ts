@@ -20,6 +20,40 @@ import type {
   UsuarioInput,
 } from './types';
 
+/**
+ * Métricas retornadas pelo Dashboard admin. Mantida em sync com
+ * `desktop/electron/ipc/dashboard.ts:MetricasDashboard`.
+ */
+export interface MetricasDashboard {
+  contadores: {
+    alunos: number;
+    usuariosAtivos: number;
+    declaracoes: number;
+    diplomas: number;
+    docentes: number;
+    disciplinas: number;
+    cursosLivres: number;
+  };
+  atividadeRecente: {
+    usuarios: Array<{ username: string; nome: string; role: string; updated_at: string | null }>;
+    declaracoes: Array<{
+      emitido_em: string;
+      aluno_nome: string;
+      aluno_matricula: string;
+      emitido_por_nome: string;
+    }>;
+  };
+  status: {
+    cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null };
+    smtp: boolean;
+    sentry: boolean;
+    apiKeyForte: boolean;
+    senhaMasterForte: boolean;
+    userDataBytes: number;
+    appVersao: string;
+  };
+}
+
 export interface DesktopApi {
   auth: {
     login: (username: string, password: string) => Promise<ApiResult<Usuario>>;
@@ -27,6 +61,14 @@ export interface DesktopApi {
     sessao: () => Promise<ApiResult<Usuario | null>>;
     alterarSenha: (atual: string, nova: string) => Promise<ApiResult<true>>;
     solicitarRecuperacao: (email: string) => Promise<ApiResult<{ enviado: boolean }>>;
+    redefinirComToken: (input: {
+      email: string;
+      codigo: string;
+      novaSenha: string;
+    }) => Promise<ApiResult<true>>;
+    dashboard: {
+      obter: () => Promise<ApiResult<MetricasDashboard>>;
+    };
   };
   smtp: {
     obter: () => Promise<ApiResult<{ provedor: string; email: string; senha: string } | null>>;

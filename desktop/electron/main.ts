@@ -1,5 +1,23 @@
+// Sentry DEVE ser o primeiro import para que hooks globais de erro capturem
+// quaisquer exceções lançadas durante o boot dos módulos abaixo.
+import { initSentryDesktop } from './sentry';
+initSentryDesktop({ dsn: process.env.SENTRY_DSN });
+
 import { app, BrowserWindow, Menu, session, shell, Notification } from 'electron';
 import path from 'node:path';
+
+// Override de userData para testes E2E. Em produção esta env fica unset.
+// Nota: --user-data-dir é passed como launch arg no helper de testes
+// (mais confiável que app.setPath que pode rodar tarde demais).
+const userDataOverride = process.env.NEXA_USERDATA;
+if (userDataOverride && !app.isReady()) {
+  try {
+    app.setPath('userData', userDataOverride);
+  } catch {
+    /* Path pode já ter sido lido; --user-data-dir via launch arg é o fallback. */
+  }
+}
+
 import { autoUpdater } from 'electron-updater';
 import { initDatabase } from './database';
 import { shutdown as dbShutdown } from './sqlite-adapter';
@@ -15,6 +33,7 @@ import { registrarDocentesHandlers } from './ipc/docentes';
 import { registrarDisciplinasHandlers } from './ipc/disciplinas';
 import { registrarDocumentosHandlers } from './ipc/documentos';
 import { registrarRecuperacaoHandlers } from './ipc/recuperacao';
+import { registrarDashboardHandlers } from './ipc/dashboard';
 import { registrarSmtpHandlers } from './ipc/smtp';
 import { registrarExtracaoHandlers } from './ipc/extracao';
 import { registrarConversoesHandlers } from './ipc/conversoes';
@@ -22,12 +41,15 @@ import { registrarAssinaturaHandlers } from './ipc/assinatura';
 import { registrarCloudHandlers } from './ipc/cloud';
 import { initCloud, syncBidirecional } from './cloud';
 import { getDb } from './database';
-import { iniciarResetServer } from './reset-server';
 import { iniciarServicoVerificacao } from './servico-verificacao';
 import { iniciarTunnel, fecharTunnel } from './tunnel';
 import { CONFIG } from './config';
+import { logger } from './utils/logger';
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+// Em modo E2E (testes Playwright), carrega do build local mesmo em "dev"
+// para não depender do Vite dev server rodando.
+const isE2E = process.env.NEXA_E2E === '1';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -114,7 +136,7 @@ function criarJanela(): void {
     }
   });
 
-  if (isDev) {
+  if (isDev && !isE2E) {
     mainWindow.loadURL('http://localhost:5174');
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
@@ -138,25 +160,21 @@ function registrarHandlers(): void {
   registrarDisciplinasHandlers();
   registrarDocumentosHandlers();
   registrarRecuperacaoHandlers();
+  registrarDashboardHandlers();
   registrarSmtpHandlers();
   registrarExtracaoHandlers();
   registrarConversoesHandlers();
   registrarAssinaturaHandlers();
   registrarCloudHandlers();
   try {
-    iniciarResetServer();
-  } catch (e: any) {
-    console.warn('[main] Reset server não iniciado:', e?.message);
-  }
-  try {
     iniciarServicoVerificacao();
   } catch (e: any) {
-    console.warn('[main] Serviço de verificação não iniciado:', e?.message);
+    logger.warn({ err: e }, 'Serviço de verificação não iniciado');
   }
   try {
     iniciarTunnel();
   } catch (e: any) {
-    console.warn('[main] Túnel não iniciado:', e?.message);
+    logger.warn({ err: e }, 'Túnel não iniciado');
   }
 }
 
@@ -170,13 +188,13 @@ function configurarAutoUpdate(): void {
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('update-available', (info) => {
-    console.log(`[update] Nova versão disponível: ${info.version} (baixando…)`);
+    logger.info({ version: info.version }, 'Nova versão disponível (baixando)');
   });
   autoUpdater.on('update-not-available', () => {
-    console.log('[update] App atualizado.');
+    logger.debug('App atualizado');
   });
   autoUpdater.on('update-downloaded', (info) => {
-    console.log(`[update] Atualização ${info.version} baixada — instala ao fechar.`);
+    logger.info({ version: info.version }, 'Atualização baixada — instala ao fechar');
     try {
       if (Notification.isSupported()) {
         new Notification({
@@ -187,11 +205,11 @@ function configurarAutoUpdate(): void {
     } catch { /* ignora */ }
   });
   autoUpdater.on('error', (e) => {
-    console.warn('[update] Erro:', e?.message);
+    logger.warn({ err: e }, 'Erro no auto-update');
   });
 
   autoUpdater.checkForUpdatesAndNotify().catch((e: any) => {
-    console.warn('[update] Falha ao checar atualizações:', e?.message);
+    logger.warn({ err: e }, 'Falha ao checar atualizações');
   });
   // Re-checa a cada 4h enquanto o app estiver aberto.
   setInterval(() => {
@@ -210,6 +228,12 @@ app.whenReady().then(async () => {
     // Inicializa banco de dados local
     await initDatabase();
 
+    // Força resolução da senha master no boot — garante que o arquivo
+    // senha-master.txt esteja presente desde o primeiro boot, ao lado das
+    // credenciais-iniciais.txt e api-key.txt (todas as secrets em um lugar).
+    void CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH;
+    void CONFIG.VERIFICACAO_API_KEY;
+
   // Sync bidirecional após 5s (não bloqueia o login inicial)
   setTimeout(() => {
     syncBidirecional(() => getDb()).catch(() => {});
@@ -217,7 +241,7 @@ app.whenReady().then(async () => {
   } catch (e: any) {
     // Antes: falha silenciosa deixava o app abrir em estado quebrado.
     // Agora: loga e segue — o app pode funcionar offline mesmo sem sync.
-    console.error('[main] Falha no boot (DB/cloud/sync):', e?.message);
+    logger.error({ err: e }, 'Falha no boot (DB/cloud/sync)');
   }
 
   registrarHandlers();
@@ -237,7 +261,7 @@ app.whenReady().then(async () => {
   // Sync bidirecional automático a cada 15 segundos
   setInterval(() => {
     syncBidirecional(() => getDb()).catch((e: any) => {
-      console.warn('[main] Sync periódico falhou:', e?.message);
+      logger.warn({ err: e }, 'Sync periódico falhou');
     });
   }, 15000);
 
@@ -246,7 +270,7 @@ app.whenReady().then(async () => {
   });
 }).catch((e: any) => {
   // Erro não tratado em whenReady — antes virava UnhandledPromiseRejection silencioso.
-  console.error('[main] Erro fatal no boot:', e?.message);
+  logger.error({ err: e }, 'Erro fatal no boot');
 });
 
 app.on('window-all-closed', () => {

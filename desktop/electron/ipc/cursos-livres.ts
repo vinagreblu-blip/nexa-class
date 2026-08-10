@@ -1,11 +1,11 @@
 import type { IpcMainInvokeEvent } from 'electron';
 import { ipcMain } from 'electron';
-import bcrypt from 'bcryptjs';
 import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
+import { validarSenhaMaster } from '../utils/regras';
 
 export interface CursoLivre {
   id: number;
@@ -20,7 +20,7 @@ export interface CursoLivre {
 }
 
 function verificar(_event: IpcMainInvokeEvent, senha: string): ApiResult<true> {
-  if (!bcrypt.compareSync(senha ?? '', CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
+  if (!validarSenhaMaster(senha, CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
     return { ok: false, error: 'Senha incorreta' };
   }
   return { ok: true, data: true };

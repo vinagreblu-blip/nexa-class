@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { getLocalIP } from './network';
+import { logger } from './utils/logger';
 
 let tunnelUrl: string | null = null;
 let tunnelProcess: any = null;
@@ -17,19 +18,19 @@ export async function iniciarTunnel(): Promise<string | null> {
       const url = await tentarPinggy();
       if (url) {
         tunnelUrl = url;
-        console.log(`[tunnel] URL pública criada: ${url}`);
+        logger.info({ url }, 'Túnel público criado');
         return url;
       }
     } catch (e: any) {
-      console.warn('[tunnel] Túnel público falhou:', e?.message);
+      logger.warn({ err: e }, 'Túnel público falhou');
     }
   } else {
-    console.log('[tunnel] Túnel público DESATIVADO (set NEXA_ENABLE_TUNNEL=1 para habilitar).');
+    logger.debug('Túnel público DESATIVADO (set NEXA_ENABLE_TUNNEL=1 para habilitar)');
   }
 
   // Fallback: IP local (mesma rede WiFi)
   tunnelUrl = `http://${localIP}:3001`;
-  console.log(`[tunnel] Usando IP local: ${tunnelUrl} (funciona na mesma rede WiFi)`);
+  logger.info({ url: tunnelUrl }, 'Usando IP local (mesma rede WiFi)');
   return tunnelUrl;
 }
 
