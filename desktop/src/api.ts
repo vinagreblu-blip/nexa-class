@@ -94,7 +94,12 @@ export interface DesktopApi {
     resetarSenha: (id: number, masterPassword: string) => Promise<ApiResult<{ senhaTemporaria: string }>>;
   };
   declaracoes: {
-    emitir: (alunoId: number, semAssinatura?: boolean) => Promise<ApiResult<DeclaracaoEmitida>>;
+    emitir: (
+      alunoId: number,
+      semAssinatura?: boolean,
+      tipo?: 'generico' | 'historico' | 'diploma',
+      diplomaId?: number
+    ) => Promise<ApiResult<DeclaracaoEmitida>>;
     listar: (alunoId?: number) => Promise<ApiResult<DeclaracaoRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<{ webOk: boolean }>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;

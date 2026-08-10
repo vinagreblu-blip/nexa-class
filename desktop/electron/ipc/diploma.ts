@@ -13,6 +13,7 @@ import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { validarSenhaMaster } from '../utils/regras';
+import { montarNomePdf } from '../utils/sistema';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarHashConteudo, gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
 
@@ -243,7 +244,7 @@ async function emitir(
   const diplomaId = info.lastInsertRowid as number;
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  const nomeArquivo = `diploma-${aluno.matricula}-${diplomaId}.pdf`;
+  const nomeArquivo = montarNomePdf('diploma', aluno.nome, aluno.matricula, diplomaId);
 
   const diplomasDir = path.join(app.getPath('userData'), 'diplomas');
   if (!fs.existsSync(diplomasDir)) fs.mkdirSync(diplomasDir, { recursive: true });

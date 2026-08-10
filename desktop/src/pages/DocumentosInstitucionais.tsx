@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Declaracoes } from './Declaracoes';
-import { Diploma } from './Diploma';
+import { DeclaracaoDiploma } from './DeclaracaoDiploma';
 import { EmBreve } from './EmBreve';
 
 type Vista = 'menu' | 'certidao' | 'declaracao-diploma' | 'declaracao-historico' | 'projeto-pedagogico';
@@ -26,25 +26,32 @@ export function DocumentosInstitucionais() {
   }
 
   if (vista === 'declaracao-diploma') {
-    return <div>{voltar}<Diploma labels={{
-      titulo: 'Declaração de Autenticidade de Diploma',
-      subtitulo: 'Emita declarações de autenticidade de diploma em PDF com QR Code e código de verificação.',
-      btnEmitir: '+ Emitir Nova Declaração',
-      btnEmitirSA: '+ Emitir Nova Declaração (SA)',
-      docSingular: 'Declaração',
-      docPlural: 'declaração',
-    }} /></div>;
+    return (
+      <div>
+        {voltar}
+        <DeclaracaoDiploma />
+      </div>
+    );
   }
 
   if (vista === 'declaracao-historico') {
-    return <div>{voltar}<Declaracoes labels={{
-      titulo: 'Declaração de autenticidade de histórico',
-      subtitulo: 'Emita declarações de autenticidade de histórico escolar em PDF com QR Code e código de verificação.',
-      btnEmitir: 'Emitir nova declaração',
-      btnEmitirSA: 'Emitir nova declaração (SA)',
-      docSingular: 'Declaração',
-      docPlural: 'declaração',
-    }} /></div>;
+    return (
+      <div>
+        {voltar}
+        <Declaracoes
+          labels={{
+            titulo: 'Declaração de Autenticidade de Histórico Escolar',
+            subtitulo:
+              'Emita declarações específicas para histórico escolar em PDF com QR Code e código de verificação.',
+            btnEmitir: '+ Emitir Nova Declaração',
+            btnEmitirSA: '+ Emitir Nova Declaração (SA)',
+            docSingular: 'Declaração',
+            docPlural: 'declaração',
+          }}
+          tipo="historico"
+        />
+      </div>
+    );
   }
 
   if (vista === 'projeto-pedagogico') {

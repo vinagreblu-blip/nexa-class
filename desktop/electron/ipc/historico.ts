@@ -13,6 +13,7 @@ import { getFaculdadeInfo } from '../faculdades';
 import { renderHtmlFaciipPdf } from '../faciip-historico-html';
 import { renderHtmlHelioRochaPdf } from '../helio-rocha-historico-html';
 import { renderHtmlFatecePdf } from '../fatece-historico-html';
+import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
 import { renderHtmlDoisDeJulhoPdf } from '../dois-de-julho-historico-html';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
@@ -224,7 +225,7 @@ async function gerarPdf(
   }
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  const nomeArquivo = `historico-${aluno.matricula || aluno.id}.pdf`;
+  const nomeArquivo = montarNomePdf('historico', aluno.nome, aluno.matricula || String(aluno.id), aluno.id);
   const destino = win
     ? await dialog.showSaveDialog(win, {
         title: 'Salvar Histórico Acadêmico',
@@ -1266,7 +1267,7 @@ ${conteudoPeriodos}  </periodos>
 `;
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  const nomeArquivo = `historico-${aluno.matricula || aluno.id}.xml`;
+  const nomeArquivo = montarNomeArquivo('historico', aluno.nome, aluno.matricula || String(aluno.id), aluno.id, 'xml');
   const destino = win
     ? await dialog.showSaveDialog(win, {
         title: 'Salvar Histórico XML',

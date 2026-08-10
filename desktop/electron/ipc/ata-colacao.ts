@@ -14,6 +14,8 @@ import type {
 } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { formatarDataExtensoBrasilia } from '../utils';
+import { montarNomePdf } from '../utils/sistema';
+import { logger } from '../utils/logger';
 
 interface AtaColacaoRow {
   id: number;
@@ -417,41 +419,64 @@ async function gerarPdfHandler(
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
 
+  logger.info({ alunoId, userId: sessao.usuario.id }, 'Ata: iniciando geração de PDF');
+
   const db = getDb();
   const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(alunoId) as Aluno | undefined;
-  if (!aluno) return { ok: false, error: 'Aluno não encontrado' };
+  if (!aluno) {
+    logger.warn({ alunoId }, 'Ata: aluno não encontrado');
+    return { ok: false, error: 'Aluno não encontrado' };
+  }
+  logger.info({ alunoId, alunoNome: aluno.nome }, 'Ata: aluno encontrado');
 
   const ata = db
     .prepare('SELECT * FROM atas_colacao WHERE aluno_id = ?')
     .get(alunoId) as AtaColacaoRow | undefined;
   if (!ata) {
+    logger.warn({ alunoId }, 'Ata: ata não cadastrada — usuário precisa editar antes de gerar');
     return {
       ok: false,
-      error: 'Não há dados de ata cadastrados para este aluno. Edite as informações antes de gerar o PDF.',
+      error: 'Não há dados de ata cadastrados para este aluno. Clique em "Editar" e salve os dados da ata antes de gerar o PDF.',
     };
   }
+  logger.info({ alunoId, ataId: ata.id }, 'Ata: ata encontrada no DB');
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  const nomeArquivo = `ata-colacao-${aluno.matricula || aluno.id}.pdf`;
-
-  const destino = win
-    ? await dialog.showSaveDialog(win, {
-        title: 'Salvar Ata de Colação de Grau',
-        defaultPath: nomeArquivo,
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
-      })
-    : { canceled: true, filePath: '' };
-
-  if (destino.canceled || !destino.filePath) {
-    return { ok: false, error: 'Operação cancelada pelo usuário' };
+  if (!win) {
+    logger.error({ alunoId }, 'Ata: BrowserWindow não disponível');
+    return { ok: false, error: 'Janela do app não disponível para abrir diálogo de salvar.' };
   }
 
+  const nomeArquivo = montarNomePdf('ata-colacao', aluno.nome, aluno.matricula || String(aluno.id), ata.id);
+
+  logger.info({ alunoId, nomeArquivo }, 'Ata: abrindo diálogo salvar como');
+  const destino = await dialog.showSaveDialog(win, {
+    title: 'Salvar Ata de Colação de Grau',
+    defaultPath: nomeArquivo,
+    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+  });
+
+  if (destino.canceled || !destino.filePath) {
+    logger.info({ alunoId }, 'Ata: usuário cancelou diálogo de salvar');
+    return { ok: false, error: 'Operação cancelada pelo usuário' };
+  }
+  logger.info({ alunoId, destinoPath: destino.filePath }, 'Ata: destino selecionado');
+
   const fac = getFaculdadeInfo(aluno.faculdade);
+  if (!fac || !fac.nome) {
+    logger.warn({ alunoId, faculdade: aluno.faculdade }, 'Ata: faculdade não encontrada em getFaculdadeInfo');
+  }
 
   try {
+    logger.info({ alunoId }, 'Ata: chamando gerarPdf');
     await gerarPdf({ aluno, ata, destinoPath: destino.filePath, faculdade: fac });
+    logger.info({ alunoId, destinoPath: destino.filePath }, 'Ata: PDF gerado com sucesso');
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Erro ao gerar o PDF' };
+    logger.error({ err: e, alunoId }, 'Ata: erro ao gerar PDF');
+    return {
+      ok: false,
+      error: `Erro ao gerar PDF: ${e?.message ?? 'erro desconhecido'}. Verifique se todos os dados da ata estão preenchidos e tente novamente.`,
+    };
   }
 
   // Salva caminho interno + marca data de emissão
@@ -462,8 +487,9 @@ async function gerarPdfHandler(
     fs.copyFileSync(destino.filePath, caminhoInterno);
     db.prepare('UPDATE atas_colacao SET pdf_caminho = ?, emitido_em = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?')
       .run(caminhoInterno, ata.id);
-  } catch {
-    /* ignora */
+    logger.info({ alunoId, caminhoInterno }, 'Ata: cópia interna salva');
+  } catch (e: any) {
+    logger.warn({ err: e, alunoId }, 'Ata: falha ao salvar cópia interna (não crítico)');
   }
 
   return { ok: true, data: { pdfPath: destino.filePath } };

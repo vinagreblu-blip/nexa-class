@@ -6,10 +6,12 @@ import type {
   AlunoDocumento,
   ApiResult,
   DeclaracaoEmitida,
+  DeclaracaoRow,
   Disciplina,
   DisciplinaInput,
   Docente,
   DocenteInput,
+  DiplomaRow,
   HistoricoDisciplina,
   HistoricoDisciplinaInput,
   Usuario,
@@ -74,9 +76,14 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.USUARIO_RESETAR_SENHA, id, masterPassword),
   },
   declaracoes: {
-    emitir: (alunoId: number, semAssinatura = false): Promise<ApiResult<DeclaracaoEmitida>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura),
-    listar: (alunoId?: number): Promise<ApiResult<any[]>> =>
+    emitir: (
+      alunoId: number,
+      semAssinatura = false,
+      tipo?: 'generico' | 'historico' | 'diploma',
+      diplomaId?: number
+    ): Promise<ApiResult<DeclaracaoEmitida>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura, tipo, diplomaId),
+    listar: (alunoId?: number): Promise<ApiResult<DeclaracaoRow[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_LISTAR, alunoId),
     excluir: (id: number, senha: string): Promise<ApiResult<{ webOk: boolean }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EXCLUIR, id, senha),
@@ -86,7 +93,7 @@ const api = {
   diplomas: {
     emitir: (alunoId: number, semAssinatura = false): Promise<ApiResult<any>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EMITIR, alunoId, semAssinatura),
-    listar: (alunoId?: number): Promise<ApiResult<any[]>> =>
+    listar: (alunoId?: number): Promise<ApiResult<DiplomaRow[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_LISTAR, alunoId),
     excluir: (id: number, senha: string): Promise<ApiResult<any>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EXCLUIR, id, senha),

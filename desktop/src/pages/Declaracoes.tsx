@@ -22,7 +22,18 @@ const LABELS_PADRAO: DeclaracoesLabels = {
   docPlural: 'declaração',
 };
 
-export function Declaracoes({ labels }: { labels?: Partial<DeclaracoesLabels> }) {
+/**
+ * Página genérica de declarações. Aceita `tipo` para diferenciar:
+ *  - 'generico' (default): declaração de autenticidade atual
+ *  - 'historico': declaração específica de autenticidade de histórico escolar
+ */
+export function Declaracoes({
+  labels,
+  tipo = 'generico',
+}: {
+  labels?: Partial<DeclaracoesLabels>;
+  tipo?: 'generico' | 'historico';
+}) {
   const L = { ...LABELS_PADRAO, ...labels };
   const { usuario } = useAuth();
   const podeExcluir = usuario?.username === 'admin';
@@ -76,7 +87,8 @@ export function Declaracoes({ labels }: { labels?: Partial<DeclaracoesLabels> })
     setEmitindo(true);
     setErro(null);
     setSucesso(null);
-    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura);
+    // Passa o tipo para o handler (default 'generico').
+    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo);
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);

@@ -80,6 +80,16 @@ function atribuirCodigosUsuarios(): void {
   if (!cols.map((c) => c.name).includes('reset_attempts')) {
     db.exec('ALTER TABLE usuarios ADD COLUMN reset_attempts INTEGER NOT NULL DEFAULT 0');
   }
+
+  // Tipo de declaração: 'generico' (default, retrocompatível) | 'historico' | 'diploma'
+  // 'diploma' exige diploma_id preenchido referenciando a tabela diplomas.
+  const colsDeclaracoes = (db.prepare("PRAGMA table_info(declaracoes)").all() as { name: string }[]);
+  if (!colsDeclaracoes.map((c) => c.name).includes('tipo')) {
+    db.exec("ALTER TABLE declaracoes ADD COLUMN tipo TEXT NOT NULL DEFAULT 'generico'");
+  }
+  if (!colsDeclaracoes.map((c) => c.name).includes('diploma_id')) {
+    db.exec('ALTER TABLE declaracoes ADD COLUMN diploma_id INTEGER');
+  }
   const semCodigo = db
     .prepare('SELECT id FROM usuarios WHERE codigo IS NULL OR codigo = \'\'')
     .all() as { id: number }[];

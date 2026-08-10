@@ -138,6 +138,9 @@ export interface AlunoDocumento {
   created_at: string;
 }
 
+/** Tipo de declaração de autenticidade. */
+export type TipoDeclaracao = 'generico' | 'historico' | 'diploma';
+
 export interface Declaracao {
   id: number;
   aluno_id: number;
@@ -146,6 +149,42 @@ export interface Declaracao {
   emitido_por: number;
   emitido_em: string;
   enviado_web: number;
+  /** 'generico' (default) | 'historico' | 'diploma' */
+  tipo?: TipoDeclaracao;
+  /** Quando tipo='diploma', referência ao diploma que esta declaração atesta. */
+  diploma_id?: number | null;
+}
+
+/** Linha de declaração com JOIN de aluno/usuário (usada na listagem da UI). */
+export interface DeclaracaoRow {
+  id: number;
+  aluno_id: number;
+  codigo_verificacao: string;
+  hash_conteudo: string;
+  emitido_por: number;
+  emitido_em: string;
+  enviado_web: number;
+  tipo?: string;
+  diploma_id?: number | null;
+  aluno_nome: string;
+  aluno_matricula: string;
+  emitido_por_nome: string;
+  emitido_por_codigo?: string;
+  pdf_caminho?: string | null;
+}
+
+/** Linha de diploma com JOIN (usada na listagem da UI). */
+export interface DiplomaRow {
+  id: number;
+  aluno_id: number;
+  codigo_verificacao: string;
+  hash_conteudo: string;
+  emitido_por: number;
+  emitido_em: string;
+  pdf_caminho?: string | null;
+  aluno_nome: string;
+  aluno_matricula: string;
+  emitido_por_nome: string;
 }
 
 export interface Sessao {

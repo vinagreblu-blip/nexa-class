@@ -8,13 +8,14 @@ import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { getFaculdadeInfo } from '../faculdades';
 import { IPC_CHANNELS } from '../types';
-import type { Aluno, ApiResult, Declaracao, DeclaracaoEmitida } from '../types';
+import type { Aluno, ApiResult, Declaracao, DeclaracaoEmitida, TipoDeclaracao } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarHashConteudo, gerarQrPng, formatarDataHoraBrasilia } from '../utils';
 import { validarExclusaoDeclaracao } from '../utils/regras';
+import { montarNomePdf } from '../utils/sistema';
 import { logger } from '../utils/logger';
 
 async function registrarNoWeb(
@@ -73,8 +74,27 @@ function gerarPdf(opts: {
   diretor: string;
   faculdade: ReturnType<typeof getFaculdadeInfo>;
   semAssinatura?: boolean;
+  /** Tipo de declaração — controla título e corpo do texto. */
+  tipo?: TipoDeclaracao;
+  /** Para tipo='diploma': código e data do diploma referenciado. */
+  diplomaReferenciado?: { codigo: string; emitidoEm: string };
 }): void {
-  const { aluno, codigo, hash, qrBuffer, emitidoEm, destinoPath, cursoTexto, cargaHorariaTotal, faculdadeNome, diretor, faculdade, semAssinatura } = opts;
+  const {
+    aluno,
+    codigo,
+    hash,
+    qrBuffer,
+    emitidoEm,
+    destinoPath,
+    cursoTexto,
+    cargaHorariaTotal,
+    faculdadeNome,
+    diretor,
+    faculdade,
+    semAssinatura,
+    tipo = 'generico',
+    diplomaReferenciado,
+  } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: 60 });
   const stream = fs.createWriteStream(destinoPath);
@@ -129,21 +149,38 @@ function gerarPdf(opts: {
   doc.moveTo(60, doc.y).lineTo(largura - 60, doc.y).lineWidth(1).strokeColor('#000000').stroke();
   doc.y += 10;
 
+  // Título e corpo variam por tipo de declaração.
+  const titulo =
+    tipo === 'diploma'
+      ? 'Declaração de Autenticidade de Diploma'
+      : tipo === 'historico'
+        ? 'Declaração de Autenticidade de Histórico Escolar'
+        : 'Declaração de Autenticidade';
+
   doc
     .fontSize(12)
     .font('Helvetica-Bold')
     .fillColor('#000000')
-    .text('Declaração de Autenticidade', { align: 'center' });
+    .text(titulo, { align: 'center' });
   doc.moveDown(1.2);
+
+  // Corpo do texto — específico por tipo
+  const corpoTexto =
+    tipo === 'diploma'
+      ? `Declaramos, para os devidos fins, que o Diploma de Conclusão do curso acima identificado, emitido por este sistema${
+          diplomaReferenciado
+            ? ` em ${formatarDataHoraBrasilia(diplomaReferenciado.emitidoEm)} sob o código de verificação ${diplomaReferenciado.codigo.substring(0, 13)}…`
+            : ''
+        }, é autêntico e foi expedido em conformidade com os registros acadêmicos oficiais. A autenticidade deste diploma pode ser verificada por meio do QR Code e do código de verificação impressos neste documento.`
+      : tipo === 'historico'
+        ? `Declaramos, para os devidos fins, que o Histórico Escolar do(a) aluno(a) abaixo identificado(a), referente ao curso acima indicado com carga horária total de ${cargaHorariaTotal.toLocaleString('pt-BR')} horas/aula, é autêntico e foi emitido por este sistema, refletindo com exatidão os registros acadêmicos oficiais. A autenticidade pode ser verificada por meio do código de verificação ou do QR Code impresso neste documento.`
+        : 'Declaramos, para os devidos fins, que o documento referente ao(a) aluno(a) abaixo identificado(a) é autêntico e foi emitido por este sistema, podendo ter sua autenticidade verificada por meio do código de verificação ou do QR Code impresso neste documento.';
 
   doc
     .fillColor('#000000')
     .fontSize(11)
     .font('Helvetica')
-    .text(
-      'Declaramos, para os devidos fins, que o documento referente ao(a) aluno(a) abaixo identificado(a) é autêntico e foi emitido por este sistema, podendo ter sua autenticidade verificada por meio do código de verificação ou do QR Code impresso neste documento.',
-      { align: 'justify', lineGap: 4 }
-    );
+    .text(corpoTexto, { align: 'justify', lineGap: 4 });
 
   doc.moveDown(1.2);
   const linhaY = doc.y;
@@ -189,15 +226,19 @@ function gerarPdf(opts: {
     doc.moveDown(1.5);
   }
 
-  // Texto de autenticidade
+  // Texto de autenticidade (varia por tipo)
+  const segundoParagrafo =
+    tipo === 'diploma'
+      ? `O diploma referenciado foi expedido com base nos registros acadêmicos oficiais da ${faculdadeNome}, em conformidade com a legislação educacional vigente e os atos legais de autorização e reconhecimento do curso junto ao Ministério da Educação (MEC). A presente declaração atesta exclusivamente a autenticidade do diploma identificado acima, podendo ser confirmada a qualquer tempo.`
+      : tipo === 'historico'
+        ? `O histórico escolar foi expedido com base nos registros acadêmicos oficiais da ${faculdadeNome}, refletindo informações verídicas sobre a trajetória acadêmica do aluno, incluindo disciplinas cursadas, cargas horárias, notas obtidas e data de conclusão do curso.`
+        : `O certificado e o histórico escolar apresentados foram emitidos com base nos registros acadêmicos oficiais da ${faculdadeNome}, refletindo informações verídicas sobre a trajetória acadêmica do aluno, incluindo disciplinas cursadas, cargas horárias, notas obtidas e data de conclusão do curso.`;
+
   doc
     .fillColor('#000000')
     .fontSize(10)
     .font('Helvetica')
-    .text(
-      `O certificado e o histórico escolar apresentados foram emitidos com base nos registros acadêmicos oficiais da ${faculdadeNome}, refletindo informações verídicas sobre a trajetória acadêmica do aluno, incluindo disciplinas cursadas, cargas horárias, notas obtidas e data de conclusão do curso.`,
-      { align: 'justify', lineGap: 3 }
-    );
+    .text(segundoParagrafo, { align: 'justify', lineGap: 3 });
   doc.moveDown(0.6);
   doc.text(
     'Este documento é autêntico e válido, emitido em conformidade com as normas educacionais vigentes e com os atos legais de autorização e reconhecimento do curso registrados junto ao Ministério da Educação (MEC).',
@@ -285,14 +326,42 @@ function gerarPdf(opts: {
 async function emitir(
   event: IpcMainInvokeEvent,
   alunoId: number,
-  semAssinatura = false
+  semAssinatura = false,
+  tipo: TipoDeclaracao = 'generico',
+  diplomaId?: number
 ): Promise<ApiResult<DeclaracaoEmitida>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
 
+  logger.info({ alunoId, tipo, diplomaId, semAssinatura }, 'Declaração: iniciando emissão');
+
   const db = getDb();
   const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(alunoId) as Aluno | undefined;
   if (!aluno) return { ok: false, error: 'Aluno não encontrado' };
+
+  // Validação específica por tipo
+  let diplomaReferenciado: { codigo: string; emitidoEm: string } | undefined;
+  if (tipo === 'diploma') {
+    if (!diplomaId) {
+      return { ok: false, error: 'Para declaração de diploma, informe o diplomaId do diploma já emitido.' };
+    }
+    const diploma = db
+      .prepare('SELECT id, aluno_id, codigo_verificacao, emitido_em FROM diplomas WHERE id = ?')
+      .get(diplomaId) as
+      | { id: number; aluno_id: number; codigo_verificacao: string; emitido_em: string }
+      | undefined;
+    if (!diploma) {
+      return { ok: false, error: 'Diploma não encontrado. Emite o diploma antes de emitir a declaração.' };
+    }
+    if (diploma.aluno_id !== alunoId) {
+      return { ok: false, error: 'O diploma informado não pertence ao aluno selecionado.' };
+    }
+    diplomaReferenciado = {
+      codigo: diploma.codigo_verificacao,
+      emitidoEm: diploma.emitido_em,
+    };
+    logger.info({ diplomaId, codigo: diploma.codigo_verificacao }, 'Declaração: diploma referenciado encontrado');
+  }
 
   const codigo = randomUUID();
   const agora = new Date().toISOString();
@@ -302,10 +371,10 @@ async function emitir(
   try {
     info = db
       .prepare(
-        `INSERT INTO declaracoes (aluno_id, codigo_verificacao, hash_conteudo, emitido_por)
-         VALUES (?, ?, ?, ?)`
+        `INSERT INTO declaracoes (aluno_id, codigo_verificacao, hash_conteudo, emitido_por, tipo, diploma_id)
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .run(aluno.id, codigo, hash, sessao.usuario.id);
+      .run(aluno.id, codigo, hash, sessao.usuario.id, tipo, tipo === 'diploma' ? diplomaId : null);
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Erro ao registrar declaração' };
   }
@@ -323,7 +392,7 @@ async function emitir(
   }
 
   const win = BrowserWindow.fromWebContents(event.sender);
-  const nomeArquivo = `declaracao-${aluno.matricula}-${declaracao.id}.pdf`;
+  const nomeArquivo = montarNomePdf('declaracao', aluno.nome, aluno.matricula, declaracao.id);
 
   // Salva uma cópia interna em userData/declaracoes/ (para re-download posterior)
   const declaracoesDir = path.join(app.getPath('userData'), 'declaracoes');
@@ -351,7 +420,7 @@ async function emitir(
     m: aluno.matricula || String(aluno.id),
     c: aluno.curso || undefined,
     f: aluno.faculdade || undefined,
-    t: 'Declaração de Autenticidade',
+    t: tipo === 'diploma' ? 'Declaração de Autenticidade de Diploma' : tipo === 'historico' ? 'Declaração de Autenticidade de Histórico Escolar' : 'Declaração de Autenticidade',
     e: agora,
     k: codigo,
   });
@@ -384,6 +453,8 @@ async function emitir(
     diretor,
     faculdade: fac,
     semAssinatura,
+    tipo,
+    diplomaReferenciado,
   });
 
   // Salva cópia interna para re-download
