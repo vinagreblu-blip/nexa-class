@@ -56,6 +56,7 @@ function login(_event: IpcMainInvokeEvent, username: string, password: string): 
       role: row.role,
       foto_path: row.foto_path,
       ativo: row.ativo,
+      senha_temporaria: row.senha_temporaria ?? 0,
     },
   };
 
@@ -91,10 +92,12 @@ function alterarSenha(
   }
 
   const hash = bcrypt.hashSync(novaSenha, 10);
-  db.prepare('UPDATE usuarios SET password_hash = ?, updated_at = datetime(\'now\') WHERE id = ?').run(
+  db.prepare('UPDATE usuarios SET password_hash = ?, senha_temporaria = 0, updated_at = datetime(\'now\') WHERE id = ?').run(
     hash,
     sessaoAtual.usuario.id
   );
+  // Atualiza a sessão em memória para a UI liberar o acesso imediatamente.
+  sessaoAtual.usuario.senha_temporaria = 0;
   return { ok: true, data: true };
 }
 

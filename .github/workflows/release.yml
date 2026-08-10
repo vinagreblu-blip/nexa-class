@@ -1,0 +1,43 @@
+name: Release
+
+# Disparado manualmente por tag: bump da versão em desktop/package.json,
+# `git tag vX.Y.Z` e `git push --tags`. O CI builda o instalador Windows e
+# publica no GitHub Releases (alimenta o auto-update e o botão de download).
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write # necessário para criar/publicar o Release
+
+jobs:
+  release:
+    name: Build e publicação Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run desktop:typecheck
+
+      - name: Build desktop (Vite + TS do electron)
+        run: npm -w desktop run build
+
+      - name: Empacotar e publicar instalador
+        working-directory: desktop
+        env:
+          # Token nativo do Actions — suficiente para repo público.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --publish always

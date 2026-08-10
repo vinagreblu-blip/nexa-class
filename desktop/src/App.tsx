@@ -1,6 +1,7 @@
 import { useAuth } from './context/AuthContext';
 import { Login } from './pages/Login';
 import { Layout } from './components/Layout';
+import { TrocarSenhaObrigatoria } from './pages/TrocarSenhaObrigatoria';
 
 export default function App() {
   const { usuario, carregando } = useAuth();
@@ -13,5 +14,7 @@ export default function App() {
     );
   }
 
-  return usuario ? <Layout /> : <Login />;
+  if (!usuario) return <Login />;
+  if (usuario.senha_temporaria === 1) return <TrocarSenhaObrigatoria />;
+  return <Layout />;
 }

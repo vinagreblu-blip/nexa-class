@@ -17,11 +17,15 @@ CREATE TABLE IF NOT EXISTS usuarios (
   role TEXT NOT NULL DEFAULT 'operador' CHECK (role IN ('admin','operador')),
   foto_path TEXT,
   ativo INTEGER NOT NULL DEFAULT 1,
+  senha_temporaria INTEGER NOT NULL DEFAULT 0,
   reset_token TEXT,
   reset_expires TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migração para installs Supabase já existentes (rode uma vez no SQL Editor):
+-- ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria INTEGER NOT NULL DEFAULT 0;
 
 -- Tabela: alunos
 CREATE TABLE IF NOT EXISTS alunos (

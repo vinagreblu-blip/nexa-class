@@ -11,8 +11,12 @@ export const CONFIG = {
   VERIFICACAO_API_KEY: process.env.VERIFICACAO_API_KEY ?? 'nexa-dev-api-key-trocar',
   ADMIN_SEED: {
     username: process.env.ADMIN_USERNAME ?? 'admin',
-    password: process.env.ADMIN_PASSWORD ?? 'admin123',
     nome: process.env.ADMIN_NOME ?? 'Administrador',
+    // Senha inicial do admin local. Se ADMIN_PASSWORD estiver no ambiente (ex.:
+    // build controlado), usa-a; caso contrário o seedAdmin gera uma senha forte
+    // aleatória por instalação e a salva em userData/credenciais-iniciais.txt.
+    // Nunca há uma senha padrão pública no código.
+    password: process.env.ADMIN_PASSWORD ?? '',
   },
   // Hash bcrypt da senha master exigida para excluir declarações, resetar usuários,
   // editar docentes/disciplinas e acessar cursos livres.

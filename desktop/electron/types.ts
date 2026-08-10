@@ -9,6 +9,7 @@ export interface Usuario {
   role: Role;
   foto_path: string | null;
   ativo: number;
+  senha_temporaria: number;
   created_at: string;
   updated_at: string;
 }

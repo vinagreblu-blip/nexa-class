@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { openDatabase, type DbAdapter } from './sqlite-adapter';
@@ -106,6 +107,7 @@ function createSchema(): void {
       foto_path TEXT,
       email TEXT,
       ativo INTEGER NOT NULL DEFAULT 1,
+      senha_temporaria INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -357,25 +359,64 @@ function migrateAlunos(): void {
   if (colsAluno.map((c) => c.name).includes('origem') === false) {
     db.exec("ALTER TABLE alunos ADD COLUMN origem TEXT DEFAULT 'sistema'");
   }
+
+  // usuarios: senha_temporaria (força troca de senha no primeiro login / reset)
+  const colsUsuario = db.prepare('PRAGMA table_info(usuarios)').all() as { name: string }[];
+  if (colsUsuario.map((c) => c.name).includes('senha_temporaria') === false) {
+    db.exec('ALTER TABLE usuarios ADD COLUMN senha_temporaria INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
+function gerarSenhaForte(): string {
+  return crypto.randomBytes(12).toString('base64url').slice(0, 16);
 }
 
 function seedAdmin(): void {
+  const username = CONFIG.ADMIN_SEED.username;
+  const nome = CONFIG.ADMIN_SEED.nome;
   const existing = db
     .prepare('SELECT id FROM usuarios WHERE username = ?')
-    .get(CONFIG.ADMIN_SEED.username);
+    .get(username);
 
-  const hash = bcrypt.hashSync(CONFIG.ADMIN_SEED.password, 10);
-
-  if (!existing) {
-    db.prepare(
-      'INSERT INTO usuarios (username, password_hash, nome, role) VALUES (?, ?, ?, ?)'
-    ).run(CONFIG.ADMIN_SEED.username, hash, CONFIG.ADMIN_SEED.nome, 'admin');
-    console.log(
-      `[db] Admin inicial criado: ${CONFIG.ADMIN_SEED.username}`
-    );
-  } else {
+  if (existing) {
+    // Garante role/nome corretos sem sobrescrever a senha do gestor.
     db.prepare('UPDATE usuarios SET role = ?, nome = ? WHERE username = ?')
-      .run('admin', CONFIG.ADMIN_SEED.nome, CONFIG.ADMIN_SEED.username);
+      .run('admin', nome, username);
+    // Migração de segurança: instalações antigas que ainda usam o padrão público
+    // "admin123" são marcadas como temporárias para forçar a troca no próximo login.
+    const row = db
+      .prepare('SELECT password_hash FROM usuarios WHERE username = ?')
+      .get(username) as { password_hash: string } | undefined;
+    if (row?.password_hash && bcrypt.compareSync('admin123', row.password_hash)) {
+      db.prepare('UPDATE usuarios SET senha_temporaria = 1 WHERE username = ?').run(username);
+      console.warn('[db] Admin ainda usa a senha padrão "admin123" — troca obrigatória no próximo login.');
+    }
+    return;
+  }
+
+  // Criação: senha = ADMIN_PASSWORD (env, build controlado) ou aleatória forte.
+  // Nunca há senha padrão pública.
+  const senha = CONFIG.ADMIN_SEED.password || gerarSenhaForte();
+  const hash = bcrypt.hashSync(senha, 10);
+  db.prepare(
+    'INSERT INTO usuarios (username, password_hash, nome, role, senha_temporaria) VALUES (?, ?, ?, ?, 1)'
+  ).run(username, hash, nome, 'admin');
+
+  // Persiste a credencial inicial localmente (fora do repo) para o gestor recuperar
+  // no primeiro acesso. Pode ser apagado após a troca de senha.
+  try {
+    const credsPath = path.join(path.dirname(getDbPath()), 'credenciais-iniciais.txt');
+    const conteudo =
+      `NEXA CLASS — credenciais iniciais\n` +
+      `Usuario: ${username}\n` +
+      `Senha: ${senha}\n\n` +
+      `Troque a senha no primeiro login. Voce pode apagar este arquivo com seguranca.\n`;
+    fs.writeFileSync(credsPath, conteudo, 'utf8');
+    console.log(`[db] Admin inicial criado: ${username} (credenciais em ${credsPath})`);
+  } catch (e: any) {
+    // Fallback: loga a senha uma vez no console (apenas se não conseguir gravar o arquivo).
+    console.warn('[db] Nao foi possivel salvar credenciais iniciais:', e?.message);
+    console.log(`[db] Admin inicial criado: ${username} | senha inicial: ${senha}`);
   }
 }
 

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NEXA CLASS — Download</title>
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.github.com; base-uri 'self'; form-action 'self'"
+    />
+    <style>
+      :root { --bg1: #1f4e5f; --bg2: #143a47; --accent: #2e8bb5; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, var(--bg1) 0%, var(--bg2) 100%);
+        color: #1f2d34;
+        padding: 24px;
+      }
+      .card {
+        background: #ffffff;
+        width: 100%;
+        max-width: 460px;
+        border-radius: 16px;
+        padding: 40px 32px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+        text-align: center;
+      }
+      .brand { font-size: 30px; font-weight: 800; letter-spacing: 3px; color: var(--bg1); margin: 0; }
+      .tagline { margin: 6px 0 28px; font-size: 12px; color: #6b7a82; letter-spacing: 0.3px; }
+      .btn {
+        display: inline-block;
+        background: var(--accent);
+        color: #fff;
+        text-decoration: none;
+        padding: 16px 28px;
+        border-radius: 10px;
+        font-size: 17px;
+        font-weight: 700;
+        width: 100%;
+        transition: transform 0.05s ease, background 0.2s ease;
+      }
+      .btn:hover { background: #277a9e; }
+      .btn:active { transform: translateY(1px); }
+      .version { margin: 14px 0 0; font-size: 13px; color: #6b7a82; min-height: 1em; }
+      .note {
+        margin-top: 28px;
+        padding: 14px 16px;
+        background: #f3f7f9;
+        border: 1px solid #e1ebee;
+        border-radius: 10px;
+        text-align: left;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #4a5a63;
+      }
+      .note strong { color: #2c3a42; }
+      .note ol { margin: 8px 0 0; padding-left: 18px; }
+      .footer { margin-top: 22px; font-size: 11px; color: #9aa7ad; }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1 class="brand">NEXA CLASS</h1>
+      <p class="tagline">Network for Education and Academic Excellence Class</p>
+
+      <a id="download" class="btn" href="https://github.com/vinagreblu-blip/nexa-class/releases/latest/download/NEXA-CLASS-Setup.exe">
+        Baixar para Windows
+      </a>
+      <p id="version" class="version">Carregando versão…</p>
+
+      <div class="note">
+        <strong>Primeira instalação?</strong>
+        <ol>
+          <li>Clique em <em>Baixar para Windows</em> e abra o arquivo <code>NEXA-CLASS-Setup.exe</code>.</li>
+          <li>Se o Windows avisar sobre “editor desconhecido”, vá em <em>Mais informações</em> &rsaquo; <em>Executar mesmo assim</em>.</li>
+          <li>Siga o instalador e abra o <strong>NEXA CLASS</strong>.</li>
+          <li>Entre com o usuário e a senha fornecidos pelo administrador.</li>
+        </ol>
+      </div>
+
+      <p class="footer">Atualizações são instaladas automaticamente ao fechar o app.</p>
+    </main>
+
+    <script>
+      // Mostra a versão mais recente publicada (fallback silencioso se limitar requisições).
+      fetch('https://api.github.com/repos/vinagreblu-blip/nexa-class/releases/latest')
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(); })
+        .then(function (data) {
+          var v = document.getElementById('version');
+          if (data && data.tag_name) v.textContent = 'Última versão: ' + data.tag_name;
+        })
+        .catch(function () {
+          document.getElementById('version').textContent = '';
+        });
+    </script>
+  </body>
+</html>

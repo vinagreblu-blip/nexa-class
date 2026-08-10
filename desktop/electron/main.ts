@@ -1,5 +1,6 @@
-import { app, BrowserWindow, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, session, shell, Notification } from 'electron';
 import path from 'node:path';
+import { autoUpdater } from 'electron-updater';
 import { initDatabase } from './database';
 import { shutdown as dbShutdown } from './sqlite-adapter';
 import { registrarAuthHandlers } from './ipc/auth';
@@ -159,6 +160,45 @@ function registrarHandlers(): void {
   }
 }
 
+/**
+ * Auto-update via GitHub Releases (electron-updater). Só roda em produção.
+ * Baixa a nova versão em background e instala ao fechar o app; notifica o
+ * usuário quando o download termina. Repo público → não exige token.
+ */
+function configurarAutoUpdate(): void {
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[update] Nova versão disponível: ${info.version} (baixando…)`);
+  });
+  autoUpdater.on('update-not-available', () => {
+    console.log('[update] App atualizado.');
+  });
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[update] Atualização ${info.version} baixada — instala ao fechar.`);
+    try {
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Atualização do NEXA CLASS',
+          body: `Versão ${info.version} baixada. Ela será instalada ao fechar o aplicativo.`,
+        }).show();
+      }
+    } catch { /* ignora */ }
+  });
+  autoUpdater.on('error', (e) => {
+    console.warn('[update] Erro:', e?.message);
+  });
+
+  autoUpdater.checkForUpdatesAndNotify().catch((e: any) => {
+    console.warn('[update] Falha ao checar atualizações:', e?.message);
+  });
+  // Re-checa a cada 4h enquanto o app estiver aberto.
+  setInterval(() => {
+    autoUpdater.checkForUpdatesAndNotify().catch(() => {});
+  }, 4 * 60 * 60 * 1000);
+}
+
 app.whenReady().then(async () => {
   // Aplica CSP antes de criar qualquer janela
   aplicarCsp();
@@ -187,6 +227,12 @@ app.whenReady().then(async () => {
   }
 
   criarJanela();
+
+  // Auto-update (somente em produção). Verifica no boot e a cada 4h; baixa em
+  // segundo plano e instala ao fechar o app. Sem token: repo público.
+  if (!isDev) {
+    configurarAutoUpdate();
+  }
 
   // Sync bidirecional automático a cada 15 segundos
   setInterval(() => {

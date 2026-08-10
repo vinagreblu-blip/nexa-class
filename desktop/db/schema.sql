@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   nome TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'operador' CHECK (role IN ('admin','operador')),
   ativo INTEGER NOT NULL DEFAULT 1,
+  senha_temporaria INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
