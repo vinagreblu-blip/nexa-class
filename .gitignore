@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 dist/
 build/
 out/
@@ -8,7 +8,6 @@ release/
 .env.local
 desktop/dist/
 desktop/release/
-# dist-electron é saída de tsc -p tsconfig.node.json — nunca deve ser versionado
 desktop/dist-electron/
 verificacao-web/dist/
 verificacao-web/data/*.sqlite
@@ -24,6 +23,12 @@ coverage/
 .playwright/
 dev-logs.txt
 web-test-*.txt
-
-# SQLite gerado pelo serviço web em modo dev/teste local
+web-prod-*.txt
 data/
+
+# Deploy local via Cloudflare Tunnel (URL muda a cada run)
+tunnel-log.txt
+tunnel-out.txt
+tunnel-err.txt
+tunnel-url-atual.txt
+deploy-keys.txt

@@ -1,0 +1,39 @@
+# Fly.io config para o serviço web NEXA CLASS.
+# Deploy: na pasta verificacao-web/, rodar `fly deploy`
+# Doc: https://fly.io/docs/apps/
+
+app = "nexa-verificacao"
+primary_region = "gru"  # São Paulo — menor latência para Brasil
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = false  # nunca dorme — garante QR codes sempre respondam
+  auto_start_machines = true
+  min_machines_running = 1    # mantém 1 instância sempre ativa
+
+[http_service.concurrency]
+  type = "requests"
+  soft_limit = 200
+  hard_limit = 250
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  path = "/health"
+  timeout = "5s"
+
+# Volume persistente para o SQLite — declarações registradas sobrevivem a redeploys.
+[mounts]
+  source = "nexa_verificacao_data"
+  destination = "/app/data"
+
+# Secrets recomendados (setar via `fly secrets set`):
+#   API_KEY       — forte, 32+ chars hex
+#   NODE_ENV      — production
+#   INSTITUICAO   — nome da instituição
+#   SENTRY_DSN    — (opcional)
