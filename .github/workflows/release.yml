@@ -36,11 +36,11 @@ jobs:
         run: npm -w desktop run build
 
       - name: Empacotar instalador
-        # Sem --publish: o upload do electron-builder é flaky para arquivos
+        # --publish never: o upload do electron-builder é flaky para arquivos
         # grandes (~140 MB). O publish é feito no próximo passo via `gh`, que
-        # é mais confiável e permite retry/destravar releases incompletos.
+        # é mais confiável e permite recriar releases incompletos.
         working-directory: desktop
-        run: npx electron-builder
+        run: npx electron-builder --publish never
 
       - name: Publicar release (upload robusto)
         env:
