@@ -23,3 +23,7 @@ test-results/
 coverage/
 .playwright/
 dev-logs.txt
+web-test-*.txt
+
+# SQLite gerado pelo serviço web em modo dev/teste local
+data/
