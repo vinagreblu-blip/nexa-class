@@ -544,7 +544,10 @@ function renderHistoricoPdf(opts: RenderOpts): Promise<void> {
 
   // Verifica assinatura ativa (imagem) — aparece independente de certificado
   const assinatura = getAssinaturaAtiva();
-  const temCertificado = !!(assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path));
+  const temCertificado = !!(
+    (assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path)) ||
+    (assinatura?.certificado_tipo === 'A3' && !!assinatura.certificado_a3_thumbprint)
+  );
   const temImagem = !semAssinatura && !!(assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path));
   const nomeAss = assinatura?.nome_signatario || faculdade.diretor || '';
   const cargoAss = assinatura?.cargo || faculdade.cargoDiretor || 'Diretor Geral';

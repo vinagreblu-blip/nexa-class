@@ -5,7 +5,7 @@ import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAdmin } from './auth';
 import { obterSmtpConfig } from './smtp';
-import { obterStatusCloud } from '../cloud';
+import { obterStatusCloud, obterStatusAuth, listarInstalacoes, revogarInstalacao } from '../cloud';
 import { CONFIG, DEFAULT_API_KEY, SENHA_MASTER_DEV_HASH } from '../config';
 import { deveIniciarSentry } from '../sentry-config';
 import { calcularTamanhoDiretorio } from '../utils/sistema';
@@ -71,6 +71,13 @@ export interface MetricasDashboard {
   };
   status: {
     cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null };
+    cloudAuth: {
+      autenticado: boolean;
+      identityEmail: string | null;
+      machineId: string | null;
+      ultimoErro: string | null;
+      revogada: boolean;
+    };
     smtp: boolean;
     sentry: boolean;
     apiKeyForte: boolean;
@@ -80,6 +87,15 @@ export interface MetricasDashboard {
     /** Versão do app (package.json). */
     appVersao: string;
   };
+  /** Máquinas com acesso à nuvem (painel de revogação). */
+  instalacoes: Array<{
+    machine_id: string;
+    hostname: string | null;
+    app_versao: string | null;
+    identity_email: string | null;
+    revoked: number;
+    last_seen: string | null;
+  }>;
 }
 
 /** Quantos itens aparecem em cada lista de atividade recente. */
@@ -89,7 +105,7 @@ const LIMITE_ATIVIDADE = 10;
  * Lê as métricas do DB. Função pura em relação a electron/global state —
  * recebe o db e config para permitir testes.
  */
-export function obterMetricas(db: ReturnType<typeof getDb>): Omit<MetricasDashboard, 'status'> {
+export function obterMetricas(db: ReturnType<typeof getDb>): Omit<MetricasDashboard, 'status' | 'instalacoes'> {
   const contadores = {
     alunos: (db.prepare('SELECT COUNT(*) AS n FROM alunos').get() as { n: number }).n,
     usuariosAtivos: (
@@ -176,7 +192,7 @@ export function obterMetricas(db: ReturnType<typeof getDb>): Omit<MetricasDashbo
   return { contadores, atividadeRecente };
 }
 
-function obter(_event: IpcMainInvokeEvent): ApiResult<MetricasDashboard> {
+async function obter(_event: IpcMainInvokeEvent): Promise<ApiResult<MetricasDashboard>> {
   const db = getDb();
   const base = obterMetricas(db);
 
@@ -197,6 +213,7 @@ function obter(_event: IpcMainInvokeEvent): ApiResult<MetricasDashboard> {
 
   const status: MetricasDashboard['status'] = {
     cloudSync: obterStatusCloud(),
+    cloudAuth: obterStatusAuth(),
     smtp: obterSmtpConfig() !== null,
     sentry,
     apiKeyForte,
@@ -205,9 +222,22 @@ function obter(_event: IpcMainInvokeEvent): ApiResult<MetricasDashboard> {
     appVersao,
   };
 
-  return { ok: true, data: { ...base, status } };
+  // Lista de máquinas (falha silenciosa se a nuvem estiver offline).
+  const instalacoes = await listarInstalacoes().catch(() => []);
+
+  return { ok: true, data: { ...base, status, instalacoes } };
+}
+
+async function revogar(
+  _event: IpcMainInvokeEvent,
+  machineId: string
+): Promise<ApiResult<true>> {
+  const res = await revogarInstalacao(machineId);
+  if (!res.ok) return { ok: false, error: res.erro ?? 'Falha ao revogar' };
+  return { ok: true, data: true };
 }
 
 export function registrarDashboardHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DASHBOARD_OBTER, requerAdmin(obter));
+  ipcMain.handle(IPC_CHANNELS.DASHBOARD_REVOGAR, requerAdmin(revogar));
 }

@@ -2,13 +2,41 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Modal } from '../components/Modal';
 
+/** Extrai o CN= de um Subject X.500 (ex: "CN=FULANO DE TAL:12345678901,O=ICP-Brasil"). */
+function extrairCN(subject: string): string {
+  const m = subject.match(/CN=([^,]+)/i);
+  if (!m) return subject;
+  return m[1].split(':')[0].trim();
+}
+
+/** Formata data ISO para dd/mm/aaaa. */
+function formatarData(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('pt-BR');
+  } catch {
+    return iso;
+  }
+}
+
 interface AssinaturaData {
   id: number;
   nome_signatario: string;
   cargo: string;
   imagem_path: string | null;
   certificado_path: string | null;
+  certificado_tipo: 'A1' | 'A3' | null;
+  certificado_a3_thumbprint: string | null;
   ativo: number;
+}
+
+interface CertA3 {
+  thumbprint: string;
+  subject: string;
+  issuer: string;
+  notBefore: string;
+  notAfter: string;
+  hasPrivateKey: boolean;
 }
 
 export function AssinaturaDigital() {
@@ -25,6 +53,14 @@ export function AssinaturaDigital() {
   const [uploadCert, setUploadingCert] = useState<string | false>(false);
   const [temCert, setTemCert] = useState(false);
   const [tipoCert, setTipoCert] = useState<'A1' | 'A3' | null>(null);
+  const [infoA3, setInfoA3] = useState<CertA3 | null>(null);
+
+  // Modal A3 (lista do Windows Certificate Store)
+  const [modalA3, setModalA3] = useState(false);
+  const [certsA3, setCertsA3] = useState<CertA3[]>([]);
+  const [carregandoCerts, setCarregandoCerts] = useState(false);
+  const [certA3Sel, setCertA3Sel] = useState<string | null>(null);
+  const [erroA3, setErroA3] = useState<string | null>(null);
 
   // Assinar XML
   const [modalAssinar, setModalAssinar] = useState(false);
@@ -37,12 +73,23 @@ export function AssinaturaDigital() {
     setCarregando(true);
     const res = await api.assinatura.obter();
     if (res.ok && res.data) {
-      setAssinatura(res.data);
-      setNome(res.data.nome_signatario);
-      setCargo(res.data.cargo);
-      setTemCert(!!res.data.certificado_path);
-      setTipoCert(res.data.certificado_path?.includes('A3') ? 'A3' : 'A1');
-      if (res.data.imagem_path) {
+      const data = res.data;
+      setAssinatura(data);
+      setNome(data.nome_signatario);
+      setCargo(data.cargo);
+      const tipo = data.certificado_tipo === 'A3' ? 'A3' : data.certificado_path ? 'A1' : null;
+      setTipoCert(tipo);
+      setTemCert(!!(tipo || data.certificado_path));
+      setInfoA3(null);
+      if (tipo === 'A3' && data.certificado_a3_thumbprint) {
+        // Busca dados do cert A3 atual no Windows Certificate Store
+        const lista = await api.assinatura.listarCertsA3();
+        if (lista.ok && lista.data) {
+          const atual = lista.data.find((c) => c.thumbprint.toUpperCase() === data.certificado_a3_thumbprint?.toUpperCase());
+          setInfoA3(atual ?? null);
+        }
+      }
+      if (data.imagem_path) {
         // Busca preview via IPC — NÃO usar require('fs') no renderer.
         const preview = await api.assinatura.previewImagem();
         setImgPreview(preview.ok && preview.data ? preview.data.dataUrl : null);
@@ -91,7 +138,7 @@ export function AssinaturaDigital() {
   async function assinarXml() {
     setErro(null);
     if (!xmlInput.trim()) { setErro('Cole o conteúdo XML a ser assinado'); return; }
-    if (!senhaPfx) { setErro('Digite a senha do certificado'); return; }
+    if (tipoCert !== 'A3' && !senhaPfx) { setErro('Digite a senha do certificado'); return; }
     setAssinando(true);
     const res = await api.assinatura.assinarXml(xmlInput, senhaPfx);
     setAssinando(false);
@@ -99,6 +146,40 @@ export function AssinaturaDigital() {
       setXmlResultado(res.data.xml);
     } else {
       setErro(res.error ?? 'Erro ao assinar XML');
+    }
+  }
+
+  async function abrirModalA3() {
+    setErro(null);
+    setSucesso(null);
+    setModalA3(true);
+    setCertA3Sel(null);
+    setErroA3(null);
+    setCertsA3([]);
+    setCarregandoCerts(true);
+    const res = await api.assinatura.listarCertsA3();
+    setCarregandoCerts(false);
+    if (res.ok && res.data) {
+      setCertsA3(res.data);
+      if (res.data.length === 0) {
+        setErroA3('Nenhum certificado encontrado no Windows Certificate Store. Conecte o token/SmartCard e instale o middleware do fabricante.');
+      }
+    } else {
+      setErroA3(res.error ?? 'Erro ao ler certificados');
+    }
+  }
+
+  async function confirmarA3() {
+    if (!certA3Sel) { setErroA3('Selecione um certificado'); return; }
+    setErro(null);
+    const res = await api.assinatura.salvarCertA3(certA3Sel);
+    if (res.ok) {
+      setModalA3(false);
+      setSucesso('Certificado A3 vinculado com sucesso! O PIN será solicitado pelo driver do token ao assinar.');
+      await carregar();
+      setTimeout(() => setSucesso(null), 5000);
+    } else {
+      setErro(res.error ?? 'Erro ao vincular certificado A3');
     }
   }
 
@@ -139,7 +220,11 @@ export function AssinaturaDigital() {
                 <span className="badge badge-pendente">❌ Não cadastrado</span>
               )}
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-                {temCert ? `Tipo: ${tipoCert || 'A1'}` : 'Importe A1 ou A3 para assinar documentos'}
+                {temCert
+                  ? (tipoCert === 'A3'
+                      ? (infoA3 ? `${extrairCN(infoA3.subject)} · válido até ${formatarData(infoA3.notAfter)}` : 'Token não conectado — reconecte e reimporte')
+                      : `Tipo: ${tipoCert || 'A1'}`)
+                  : 'Importe A1 ou A3 para assinar documentos'}
               </div>
             </div>
           </div>
@@ -175,7 +260,9 @@ export function AssinaturaDigital() {
           <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--surface-tint)', borderRadius: 8, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
             <span className="badge badge-ok">✅ Certificado carregado</span>
             <span style={{ color: 'var(--text-muted)' }}>
-              {assinatura?.certificado_path?.includes('A3') ? 'Tipo: A3 (Token)' : 'Tipo: A1 (Arquivo)'}
+              {tipoCert === 'A3'
+                ? `Tipo: A3 (Token)${infoA3 ? ' · ' + extrairCN(infoA3.subject) : ''}`
+                : (assinatura?.certificado_path?.includes('A3') ? 'Tipo: A3 (Token)' : 'Tipo: A1 (Arquivo)')}
             </span>
           </div>
         )}
@@ -211,11 +298,11 @@ export function AssinaturaDigital() {
             </p>
             <button
               className="btn-primary"
-              onClick={() => enviarCertificado('A3')}
+              onClick={abrirModalA3}
               disabled={!!uploadCert}
               style={{ width: '100%', fontSize: 13, padding: '8px 14px', background: '#22C55E' }}
             >
-              {uploadCert === 'A3' ? 'Selecione…' : temCert ? 'Trocar A3' : 'Importar A3'}
+              {temCert && tipoCert === 'A3' ? 'Trocar A3' : 'Importar A3'}
             </button>
           </div>
         </div>
@@ -271,17 +358,27 @@ export function AssinaturaDigital() {
 
           {!xmlResultado ? (
             <>
-              <div className="form-row">
-                <label>Senha do Certificado *</label>
-                <input
-                  type="password"
-                  value={senhaPfx}
-                  onChange={(e) => setSenhaPfx(e.target.value)}
-                  placeholder="Senha do arquivo .pfx"
-                  autoFocus
-                  autoComplete="off"
-                />
-              </div>
+              {tipoCert === 'A3' ? (
+                <div className={assinando ? 'alert alert-warning' : 'alert alert-warning'} style={{ marginBottom: 12 }}>
+                  {assinando ? (
+                    <>⏳ <strong>Aguardando PIN</strong> no driver do token. Digite o PIN na janela que apareceu e aguarde…</>
+                  ) : (
+                    <>Certificado <strong>A3 (Token)</strong>: a senha (PIN) será solicitada pelo <strong>driver do token</strong> ao assinar. Conecte o token/SmartCard antes de continuar.</>
+                  )}
+                </div>
+              ) : (
+                <div className="form-row">
+                  <label>Senha do Certificado *</label>
+                  <input
+                    type="password"
+                    value={senhaPfx}
+                    onChange={(e) => setSenhaPfx(e.target.value)}
+                    placeholder="Senha do arquivo .pfx"
+                    autoFocus
+                    autoComplete="off"
+                  />
+                </div>
+              )}
               <div className="form-row" style={{ marginBottom: 0 }}>
                 <label>Conteúdo XML *</label>
                 <textarea
@@ -314,6 +411,69 @@ export function AssinaturaDigital() {
                 Copiar XML Assinado
               </button>
             </>
+          )}
+        </Modal>
+      )}
+
+      {/* Modal Selecionar A3 (Windows Certificate Store) */}
+      {modalA3 && (
+        <Modal
+          title="Selecionar Certificado A3 (Windows Certificate Store)"
+          width={680}
+          onClose={() => setModalA3(false)}
+          footer={
+            <>
+              <button className="btn-ghost" onClick={() => setModalA3(false)}>Cancelar</button>
+              <button className="btn-primary" onClick={confirmarA3} disabled={!certA3Sel}>
+                Vincular certificado
+              </button>
+            </>
+          }
+        >
+          {erroA3 && <div className="alert alert-error">{erroA3}</div>}
+          {carregandoCerts ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>Lendo repositório do Windows…</div>
+          ) : certsA3.length === 0 ? (
+            <div className="alert alert-warning" style={{ marginBottom: 0 }}>
+              Nenhum certificado encontrado. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto…).
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {certsA3.map((c) => {
+                const sel = certA3Sel === c.thumbprint;
+                const expirado = new Date(c.notAfter) < new Date();
+                return (
+                  <label
+                    key={c.thumbprint}
+                    style={{
+                      display: 'flex', gap: 12, alignItems: 'flex-start', padding: 12,
+                      border: `2px solid ${sel ? '#22C55E' : 'var(--border)'}`, borderRadius: 10, cursor: 'pointer',
+                      opacity: expirado ? 0.55 : 1,
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="certA3"
+                      checked={sel}
+                      onChange={() => setCertA3Sel(c.thumbprint)}
+                      style={{ marginTop: 3 }}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, color: '#0F172A' }}>{extrairCN(c.subject)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        Emissor: {extrairCN(c.issuer)}
+                      </div>
+                      <div style={{ fontSize: 11, color: expirado ? '#DC2626' : 'var(--text-muted)', marginTop: 2 }}>
+                        Válido até: {formatarData(c.notAfter)} {expirado ? '· EXPIRADO' : ''}
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'monospace' }}>
+                        {c.thumbprint}
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
           )}
         </Modal>
       )}

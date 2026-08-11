@@ -1,11 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js';
+import { app } from 'electron';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { logger } from './utils/logger';
 
 // ============================================================
-// CONFIG EMBUTIDA — sempre ativo, sem configuração manual
+// CONFIG EMBUTIDA — sempre ativo, sem configuração manual.
+// A anon key é PÚBLICA por design (Supabase); a proteção real dos
+// dados vem do RLS exigir a role `authenticated` (ver supabase-rls-auth.sql).
+// Cada instalação do desktop cria sua própria identidade Supabase Auth
+// (random email/sena salvos em userData/cloud-auth.json) e usa o JWT
+// para acessar os dados. A anon key sozinha não serve para nada.
 // ============================================================
 const SUPABASE_URL = 'https://evapmgnwznybylbtjmco.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV2YXBtZ253em55YnlsYnRqbWNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI3MTU4MTcsImV4cCI6MjA5ODI5MTgxN30.NeljJ7Yk3fxb5ImuxJCy1oZxwCRw-2fI3jYZy-7KHnc';
@@ -18,12 +26,176 @@ let syncing = false;
 let ultimoSyncEm: string | null = null;
 let ultimoSyncOk: boolean | null = null;
 
+// ============================================================
+// AUTENTICAÇÃO POR INSTALAÇÃO
+// ============================================================
+export interface CloudAuthStatus {
+  autenticado: boolean;
+  identityEmail: string | null;
+  machineId: string | null;
+  ultimoErro: string | null;
+  revogada: boolean;
+}
+
+const authStatus: CloudAuthStatus = {
+  autenticado: false,
+  identityEmail: null,
+  machineId: null,
+  ultimoErro: null,
+  revogada: false,
+};
+
+const AUTH_FILENAME = 'cloud-auth.json';
+
+interface IdentityFile {
+  email: string;
+  password: string;
+  machineId: string;
+}
+
+function authFilePath(): string {
+  return path.join(app.getPath('userData'), AUTH_FILENAME);
+}
+
+function generateIdentity(): IdentityFile {
+  const id = randomUUID().replace(/-/g, '').slice(0, 16);
+  return {
+    email: `mch-${id}@nexa-class.local`,
+    password: randomBytes(24).toString('base64url'),
+    machineId: `mch-${id}`,
+  };
+}
+
+function loadIdentity(): IdentityFile | null {
+  try {
+    const p = authFilePath();
+    if (!fs.existsSync(p)) return null;
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (data && data.email && data.password && data.machineId) return data as IdentityFile;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveIdentity(id: IdentityFile): void {
+  try {
+    const p = authFilePath();
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(id, null, 2), { mode: 0o600 });
+  } catch (e: any) {
+    logger.warn({ err: e }, 'Falha ao persistir identidade de nuvem');
+  }
+}
+
+/** Cria identidade Supabase Auth na primeira execução; reusa a existida depois. */
+async function ensureIdentity(): Promise<IdentityFile | null> {
+  const existing = loadIdentity();
+  if (existing) return existing;
+  if (!client) return null;
+  const fresh = generateIdentity();
+  const { error } = await client.auth.signUp(fresh);
+  if (error) {
+    authStatus.ultimoErro = `Cadastro falhou: ${error.message}`;
+    logger.warn({ err: error.message }, 'Falha ao criar identidade Supabase');
+    return null;
+  }
+  saveIdentity(fresh);
+  logger.info({ email: fresh.email }, 'Identidade de nuvem criada');
+  return fresh;
+}
+
+async function signIn(identity: IdentityFile): Promise<boolean> {
+  if (!client) return false;
+  const { error } = await client.auth.signInWithPassword({
+    email: identity.email,
+    password: identity.password,
+  });
+  if (error) {
+    authStatus.autenticado = false;
+    const msg = error.message.toLowerCase();
+    if (msg.includes('invalid login') || msg.includes('credentials')) {
+      // Conta deletada pelo admin no Supabase → revogação hard.
+      authStatus.ultimoErro = 'Acesso revogado. Contate o administrador.';
+    } else {
+      authStatus.ultimoErro = `Login falhou: ${error.message}`;
+    }
+    logger.warn({ err: error.message }, 'signIn nuvem falhou');
+    return false;
+  }
+  authStatus.autenticado = true;
+  authStatus.identityEmail = identity.email;
+  authStatus.machineId = identity.machineId;
+  authStatus.ultimoErro = null;
+  return true;
+}
+
+/**
+ * Upsert da linha em `instalacoes` (atualiza last_seen + hostname + versão) e
+ * lê de volta o flag `revoked` para revogação soft. Preserva o valor existente
+ * de `revoked` pois não o enviamos no payload do upsert.
+ */
+async function registrarInstalacao(identity: IdentityFile): Promise<void> {
+  if (!client || !authStatus.autenticado) return;
+  try {
+    const { data, error } = await client
+      .from('instalacoes')
+      .upsert(
+        {
+          machine_id: identity.machineId,
+          hostname: os.hostname(),
+          app_versao: app.getVersion(),
+          identity_email: identity.email,
+          last_seen: new Date().toISOString(),
+        },
+        { onConflict: 'machine_id' }
+      )
+      .select()
+      .maybeSingle();
+    if (error) {
+      logger.warn({ err: error.message }, 'Falha ao registrar instalação');
+      return;
+    }
+    if (data && (data.revoked === 1 || data.revoked === true)) {
+      authStatus.revogada = true;
+    }
+  } catch (e: any) {
+    logger.warn({ err: e }, 'Erro ao atualizar instalacoes');
+  }
+}
+
 export function obterStatusCloud(): { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null } {
   return {
     ativo: client !== null,
     ultimoSyncEm,
     ultimoSyncOk,
   };
+}
+
+export function obterStatusAuth(): CloudAuthStatus {
+  return { ...authStatus };
+}
+
+/** Lista instalações para o painel admin (Dashboard). */
+export async function listarInstalacoes(): Promise<
+  Array<{ machine_id: string; hostname: string | null; app_versao: string | null; identity_email: string | null; revoked: number; last_seen: string | null }>
+> {
+  if (!client || !authStatus.autenticado) return [];
+  const { data, error } = await client
+    .from('instalacoes')
+    .select('machine_id, hostname, app_versao, identity_email, revoked, last_seen')
+    .order('last_seen', { ascending: false })
+    .limit(50);
+  if (error || !data) return [];
+  return data as any;
+}
+
+/** Revogação soft: marca revoked=1 em uma instalação (o app dela para de sincronizar). */
+export async function revogarInstalacao(machineId: string): Promise<{ ok: boolean; erro: string | null }> {
+  if (!client || !authStatus.autenticado) return { ok: false, erro: 'Nuvem não autenticada' };
+  const { error } = await client.from('instalacoes').update({ revoked: 1 }).eq('machine_id', machineId);
+  if (error) return { ok: false, erro: error.message };
+  return { ok: true, erro: null };
 }
 
 export function isCloudEnabled(): boolean {
@@ -42,16 +214,29 @@ export function saveConfig(): void {
   // No-op: config é embutida
 }
 
-export function initCloud(): void {
+/**
+ * Inicializa o client Supabase + autentica a instalação.
+ * Não bloqueia o boot em caso de falha de rede — o app segue em modo offline
+ * e tenta autenticar novamente no próximo ciclo de sync (15s).
+ */
+export async function initCloud(): Promise<void> {
   try {
     const WebSocket = require('ws');
     client = createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: true, detectSessionInUrl: false },
       realtime: { transport: WebSocket },
     });
-    logger.info('Supabase conectado (auto-config)');
+
+    const identity = await ensureIdentity();
+    if (!identity) return; // falha ao criar — retry no próximo sync
+    const ok = await signIn(identity);
+    if (ok) {
+      await registrarInstalacao(identity);
+      logger.info({ email: identity.email }, 'Supabase autenticado por instalação');
+    }
   } catch (e: any) {
-    logger.warn({ err: e }, 'Erro ao conectar ao Supabase');
-    client = null;
+    logger.warn({ err: e }, 'Erro ao inicializar Supabase (offline)');
+    client = client ?? null;
   }
 }
 
@@ -102,6 +287,19 @@ function compararTs(a: string, b: string): number {
 /** Sync bidirecional completo — resolve conflitos por updated_at */
 export async function syncBidirecional(getDb: () => any): Promise<void> {
   if (!client || syncing) return;
+
+  // Garante autenticação antes de sincronizar (auto-heal de sessões expiradas
+  // e boot offline). Se a instalação foi revogada (soft), não sincroniza.
+  if (!authStatus.autenticado) {
+    const identity = loadIdentity();
+    if (identity) {
+      const ok = await signIn(identity);
+      if (ok) await registrarInstalacao(identity);
+    }
+    if (!authStatus.autenticado) return;
+  }
+  if (authStatus.revogada) return;
+
   syncing = true;
 
   try {

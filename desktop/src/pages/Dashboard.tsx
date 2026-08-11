@@ -10,6 +10,7 @@ export function Dashboard() {
   const [metricas, setMetricas] = useState<MetricasDashboard | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const [revogandoId, setRevogandoId] = useState<string | null>(null);
 
   const carregar = async () => {
     setCarregando(true);
@@ -25,10 +26,28 @@ export function Dashboard() {
     }
   };
 
+  const revogar = async (machineId: string) => {
+    if (!confirm('Revogar esta máquina? Ela vai parar de sincronizar na próxima verificação.')) {
+      return;
+    }
+    setRevogandoId(machineId);
+    try {
+      const res = await api.auth.dashboard.revogar(machineId);
+      if (!res.ok) {
+        alert(res.error ?? 'Falha ao revogar');
+      } else {
+        await carregar();
+      }
+    } finally {
+      setRevogandoId(null);
+    }
+  };
+
   useEffect(() => {
     carregar();
-    // Atualiza a cada 30s enquanto a aba está aberta.
-    const id = setInterval(carregar, 30_000);
+    // Atualiza a cada 15s enquanto a aba está aberta — casando com o intervalo
+    // do sync bidirecional do cloud.ts (latência natural dos dados da nuvem).
+    const id = setInterval(carregar, 15_000);
     return () => clearInterval(id);
   }, []);
 
@@ -63,6 +82,10 @@ export function Dashboard() {
         </button>
       </div>
 
+      <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text-muted)' }}>
+        Atividade de todas as máquinas — atualiza automaticamente a cada ~15s (sync da nuvem).
+      </p>
+
       {erro && <div className="alert alert-error" style={{ marginBottom: 16 }}>{erro}</div>}
 
       {/* Cards superiores — contadores */}
@@ -84,27 +107,37 @@ export function Dashboard() {
       </div>
 
       {/* Atividade recente */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
-        <Painel titulo="Usuários ativos recentemente">
-          {metricas.atividadeRecente.usuarios.length === 0 ? (
-            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>Nenhum usuário.</p>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: 16,
+          marginBottom: 24,
+        }}
+      >
+        <Painel titulo="Alunos cadastrados recentemente">
+          {metricas.atividadeRecente.alunos.length === 0 ? (
+            <Vazio>Nenhum aluno cadastrado.</Vazio>
           ) : (
             <table className="table">
               <thead>
                 <tr>
-                  <th>Usuário</th>
-                  <th>Role</th>
-                  <th>Última atualização</th>
+                  <th>Aluno</th>
+                  <th>Curso</th>
+                  <th>Por</th>
+                  <th>Quando</th>
                 </tr>
               </thead>
               <tbody>
-                {metricas.atividadeRecente.usuarios.map((u) => (
-                  <tr key={u.username}>
-                    <td>{u.nome}</td>
+                {metricas.atividadeRecente.alunos.map((a, i) => (
+                  <tr key={i}>
                     <td>
-                      <code>{u.role}</code>
+                      <NovoBadge ts={a.created_at} /> {a.nome}
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{a.matricula}</div>
                     </td>
-                    <td>{u.updated_at ? formatarData(u.updated_at) : '—'}</td>
+                    <td>{a.curso ?? '—'}</td>
+                    <td>{a.cadastrado_por_nome ?? '—'}</td>
+                    <td>{a.created_at ? formatarData(a.created_at) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -114,9 +147,7 @@ export function Dashboard() {
 
         <Painel titulo="Declarações recentes">
           {metricas.atividadeRecente.declaracoes.length === 0 ? (
-            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-              Nenhuma declaração emitida.
-            </p>
+            <Vazio>Nenhuma declaração emitida.</Vazio>
           ) : (
             <table className="table">
               <thead>
@@ -129,7 +160,9 @@ export function Dashboard() {
               <tbody>
                 {metricas.atividadeRecente.declaracoes.map((d, i) => (
                   <tr key={i}>
-                    <td>{d.aluno_nome}</td>
+                    <td>
+                      <NovoBadge ts={d.emitido_em} /> {d.aluno_nome}
+                    </td>
                     <td>{d.emitido_por_nome}</td>
                     <td>{formatarData(d.emitido_em)}</td>
                   </tr>
@@ -137,6 +170,215 @@ export function Dashboard() {
               </tbody>
             </table>
           )}
+        </Painel>
+
+        <Painel titulo="Diplomas recentes">
+          {metricas.atividadeRecente.diplomas.length === 0 ? (
+            <Vazio>Nenhum diploma emitido.</Vazio>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Aluno</th>
+                  <th>Emitido por</th>
+                  <th>Quando</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.atividadeRecente.diplomas.map((d, i) => (
+                  <tr key={i}>
+                    <td>
+                      <NovoBadge ts={d.emitido_em} /> {d.aluno_nome}
+                    </td>
+                    <td>{d.emitido_por_nome}</td>
+                    <td>{formatarData(d.emitido_em)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+
+        <Painel titulo="Atas de colação recentes">
+          {metricas.atividadeRecente.atas.length === 0 ? (
+            <Vazio>Nenhuma ata gerada.</Vazio>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Aluno</th>
+                  <th>Quando</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.atividadeRecente.atas.map((d, i) => (
+                  <tr key={i}>
+                    <td>
+                      <NovoBadge ts={d.emitido_em} /> {d.aluno_nome}
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{d.aluno_matricula}</div>
+                    </td>
+                    <td>{d.emitido_em ? formatarData(d.emitido_em) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+
+        <Painel titulo="Cursos livres criados recentemente">
+          {metricas.atividadeRecente.cursosLivres.length === 0 ? (
+            <Vazio>Nenhum curso livre criado.</Vazio>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Curso</th>
+                  <th>CH</th>
+                  <th>Quando</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.atividadeRecente.cursosLivres.map((c, i) => (
+                  <tr key={i}>
+                    <td>
+                      <NovoBadge ts={c.created_at} /> {c.nome}
+                    </td>
+                    <td>{c.carga_horaria ?? '—'}</td>
+                    <td>{formatarData(c.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+
+        <Painel titulo="Matrículas em cursos livres">
+          {metricas.atividadeRecente.matriculasCursosLivres.length === 0 ? (
+            <Vazio>Nenhuma matrícula recente.</Vazio>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Aluno</th>
+                  <th>Curso</th>
+                  <th>Quando</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.atividadeRecente.matriculasCursosLivres.map((m, i) => (
+                  <tr key={i}>
+                    <td>
+                      <NovoBadge ts={m.created_at} /> {m.aluno_nome}
+                    </td>
+                    <td>{m.curso_nome}</td>
+                    <td>{formatarData(m.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+
+        <Painel titulo="Usuários ativos recentemente">
+          {metricas.atividadeRecente.usuarios.length === 0 ? (
+            <Vazio>Nenhum usuário.</Vazio>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Usuário</th>
+                  <th>Role</th>
+                  <th>Última atualização</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.atividadeRecente.usuarios.map((u) => (
+                  <tr key={u.username}>
+                    <td>
+                      <NovoBadge ts={u.updated_at} /> {u.nome}
+                    </td>
+                    <td>
+                      <code>{u.role}</code>
+                    </td>
+                    <td>{u.updated_at ? formatarData(u.updated_at) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Painel>
+      </div>
+
+      {/* Máquinas instaladas (painel de revogação) */}
+      <div style={{ marginBottom: 24 }}>
+        <Painel titulo="Máquinas com acesso à nuvem">
+          {metricas.instalacoes.length === 0 ? (
+            <Vazio>Nenhuma máquina registrada ainda (ou nuvem offline).</Vazio>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Máquina</th>
+                  <th>Hostname</th>
+                  <th>Versão</th>
+                  <th>Última atividade</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {metricas.instalacoes.map((m) => {
+                  const souEu = m.machine_id === metricas.status.cloudAuth.machineId;
+                  return (
+                    <tr key={m.machine_id}>
+                      <td>
+                        <code style={{ fontSize: 11 }}>{m.machine_id}</code>
+                        {souEu && (
+                          <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--accent)' }}>
+                            (este computador)
+                          </span>
+                        )}
+                      </td>
+                      <td>{m.hostname ?? '—'}</td>
+                      <td>{m.app_versao ?? '—'}</td>
+                      <td>{m.last_seen ? formatarData(m.last_seen) : '—'}</td>
+                      <td>
+                        {m.revoked === 1 ? (
+                          <span style={{ color: '#dc2626', fontWeight: 600 }}>Revogada</span>
+                        ) : (
+                          <span style={{ color: '#16a34a' }}>Ativa</span>
+                        )}
+                      </td>
+                      <td>
+                        {m.revoked === 1 ? null : (
+                          <button
+                            className="btn-ghost"
+                            disabled={revogandoId === m.machine_id}
+                            onClick={() => revogar(m.machine_id)}
+                            style={{ fontSize: 12, color: '#dc2626' }}
+                          >
+                            {revogandoId === m.machine_id ? 'Revogando…' : 'Revogar'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+          <p style={{ margin: '12px 0 0', fontSize: 11, color: 'var(--text-muted)' }}>
+            Revogação aqui é <strong>soft</strong> (a máquina para de sincronizar). Para bloqueio
+            imediato, delete o usuário em{' '}
+            <a
+              href="https://supabase.com/dashboard/project/evapmgnwznybylbtjmco/auth/users"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Supabase → Authentication → Users
+            </a>{' '}
+            (revogação hard).
+          </p>
         </Painel>
       </div>
 
@@ -154,6 +396,17 @@ export function Dashboard() {
                     }`
                   : 'Ativo, ainda não sincronizou'
                 : 'Inativo'
+            }
+          />
+          <ItemStatus
+            label="Autenticação da nuvem"
+            ok={metricas.status.cloudAuth.autenticado && !metricas.status.cloudAuth.revogada}
+            texto={
+              metricas.status.cloudAuth.revogada
+                ? '⚠️ Esta máquina foi revogada — sync desativado'
+                : metricas.status.cloudAuth.autenticado
+                  ? `Autenticada: ${metricas.status.cloudAuth.identityEmail ?? '—'}`
+                  : metricas.status.cloudAuth.ultimoErro ?? 'Não autenticada'
             }
           />
           <ItemStatus
@@ -215,6 +468,52 @@ function Painel({ titulo, children }: { titulo: string; children: React.ReactNod
       </h3>
       {children}
     </div>
+  );
+}
+
+function Vazio({ children }: { children: React.ReactNode }) {
+  return <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{children}</p>;
+}
+
+/** Janela de tempo para considerar um registro como "NOVO" (60s). */
+const JANELA_NOVO_MS = 60_000;
+
+/** Converte timestamp (ISO ou formato SQLite UTC) para milissegundos desde epoch. */
+function paraMs(ts: string | null): number | null {
+  if (!ts) return null;
+  // SQLite guarda datetime('now') em UTC sem sufixo; adiciona 'T' e 'Z'.
+  const normalizado = ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z';
+  const t = new Date(normalizado).getTime();
+  return Number.isNaN(t) ? null : t;
+}
+
+function ehNovo(ts: string | null): boolean {
+  const t = paraMs(ts);
+  if (t === null) return false;
+  return Date.now() - t < JANELA_NOVO_MS && Date.now() - t >= -5_000;
+}
+
+function NovoBadge({ ts }: { ts: string | null }) {
+  if (!ehNovo(ts)) return null;
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        marginRight: 6,
+        padding: '1px 6px',
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: 0.5,
+        color: '#fff',
+        background: '#16a34a',
+        borderRadius: 999,
+        verticalAlign: 'middle',
+        textTransform: 'uppercase',
+      }}
+      aria-label="Cadastrado há menos de 1 minuto"
+    >
+      Novo
+    </span>
   );
 }
 

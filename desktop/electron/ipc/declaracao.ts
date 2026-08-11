@@ -250,7 +250,10 @@ function gerarPdf(opts: {
   const assinatura = getAssinaturaAtiva();
   const nomeAss = assinatura?.nome_signatario || diretor;
   const cargoAss = assinatura?.cargo || 'Diretor Geral';
-  const temCertificado = !!(assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path));
+  const temCertificado = !!(
+    (assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path)) ||
+    (assinatura?.certificado_tipo === 'A3' && !!assinatura.certificado_a3_thumbprint)
+  );
   const temImagem = !semAssinatura && !!(assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path));
 
   doc.moveDown(1);

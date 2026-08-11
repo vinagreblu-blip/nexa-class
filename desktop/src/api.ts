@@ -42,9 +42,45 @@ export interface MetricasDashboard {
       aluno_matricula: string;
       emitido_por_nome: string;
     }>;
+    alunos: Array<{
+      nome: string;
+      matricula: string;
+      curso: string | null;
+      created_at: string | null;
+      cadastrado_por_nome: string | null;
+    }>;
+    diplomas: Array<{
+      emitido_em: string;
+      aluno_nome: string;
+      aluno_matricula: string;
+      emitido_por_nome: string;
+    }>;
+    atas: Array<{
+      emitido_em: string | null;
+      aluno_nome: string;
+      aluno_matricula: string;
+    }>;
+    cursosLivres: Array<{
+      nome: string;
+      carga_horaria: string | null;
+      created_at: string;
+    }>;
+    matriculasCursosLivres: Array<{
+      created_at: string;
+      curso_nome: string;
+      aluno_nome: string;
+      aluno_matricula: string;
+    }>;
   };
   status: {
     cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null };
+    cloudAuth: {
+      autenticado: boolean;
+      identityEmail: string | null;
+      machineId: string | null;
+      ultimoErro: string | null;
+      revogada: boolean;
+    };
     smtp: boolean;
     sentry: boolean;
     apiKeyForte: boolean;
@@ -52,6 +88,14 @@ export interface MetricasDashboard {
     userDataBytes: number;
     appVersao: string;
   };
+  instalacoes: Array<{
+    machine_id: string;
+    hostname: string | null;
+    app_versao: string | null;
+    identity_email: string | null;
+    revoked: number;
+    last_seen: string | null;
+  }>;
 }
 
 export interface DesktopApi {
@@ -68,6 +112,7 @@ export interface DesktopApi {
     }) => Promise<ApiResult<true>>;
     dashboard: {
       obter: () => Promise<ApiResult<MetricasDashboard>>;
+      revogar: (machineId: string) => Promise<ApiResult<true>>;
     };
   };
   smtp: {
@@ -169,9 +214,11 @@ export interface DesktopApi {
     xmlParaPdf: () => Promise<ApiResult<{ caminho: string }>>;
   };
   assinatura: {
-    obter: () => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number } | null>>;
-    salvar: (input: { nome_signatario: string; cargo: string }) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>>;
-    uploadCert: (tipo?: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; ativo: number }>>;
+    obter: () => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number } | null>>;
+    salvar: (input: { nome_signatario: string; cargo: string }) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
+    uploadCert: (tipo?: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
+    listarCertsA3: () => Promise<ApiResult<{ thumbprint: string; subject: string; issuer: string; notBefore: string; notAfter: string; hasPrivateKey: boolean }[]>>;
+    salvarCertA3: (thumbprint: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
     assinarXml: (xmlContent: string, senhaPfx: string) => Promise<ApiResult<{ xml: string }>>;
     previewImagem: () => Promise<ApiResult<{ dataUrl: string | null }>>;
   };

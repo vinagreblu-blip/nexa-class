@@ -222,8 +222,10 @@ app.whenReady().then(async () => {
   aplicarCsp();
 
   try {
-    // Conecta à nuvem primeiro
-    initCloud();
+    // Conecta à nuvem primeiro (cria identidade por instalação + signIn).
+    // Não bloqueia o boot por mais de alguns segundos; falhas de rede seguem
+    // offline e o sync periódico tenta autenticar novamente.
+    await initCloud();
 
     // Inicializa banco de dados local
     await initDatabase();

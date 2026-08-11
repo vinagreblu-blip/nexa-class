@@ -217,6 +217,8 @@ function createSchema(): void {
       cargo TEXT NOT NULL,
       imagem_path TEXT,
       certificado_path TEXT,
+      certificado_tipo TEXT,
+      certificado_a3_thumbprint TEXT,
       ativo INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -349,6 +351,13 @@ function migrateAlunos(): void {
   const colsAss = db.prepare('PRAGMA table_info(assinaturas)').all() as { name: string }[];
   if (colsAss.map((c) => c.name).includes('certificado_path') === false) {
     db.exec('ALTER TABLE assinaturas ADD COLUMN certificado_path TEXT');
+  }
+  // assinaturas: suporte a A3 via Windows Certificate Store (tipo + thumbprint)
+  if (colsAss.map((c) => c.name).includes('certificado_tipo') === false) {
+    db.exec("ALTER TABLE assinaturas ADD COLUMN certificado_tipo TEXT"); // 'A1' | 'A3'
+  }
+  if (colsAss.map((c) => c.name).includes('certificado_a3_thumbprint') === false) {
+    db.exec('ALTER TABLE assinaturas ADD COLUMN certificado_a3_thumbprint TEXT');
   }
 
   // historico_disciplinas: updated_at (necessário para sync entre máquinas)
