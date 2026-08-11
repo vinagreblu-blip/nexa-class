@@ -82,9 +82,10 @@ const api = {
       alunoId: number,
       semAssinatura = false,
       tipo?: 'generico' | 'historico' | 'diploma',
-      diplomaId?: number
+      diplomaId?: number,
+      senhaPfx?: string
     ): Promise<ApiResult<DeclaracaoEmitida>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura, tipo, diplomaId),
+      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura, tipo, diplomaId, senhaPfx),
     listar: (alunoId?: number): Promise<ApiResult<DeclaracaoRow[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_LISTAR, alunoId),
     excluir: (id: number, senha: string): Promise<ApiResult<{ webOk: boolean }>> =>
@@ -93,8 +94,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_BAIXAR, id),
   },
   diplomas: {
-    emitir: (alunoId: number, semAssinatura = false): Promise<ApiResult<any>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EMITIR, alunoId, semAssinatura),
+    emitir: (alunoId: number, semAssinatura = false, senhaPfx?: string): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EMITIR, alunoId, semAssinatura, senhaPfx),
     listar: (alunoId?: number): Promise<ApiResult<DiplomaRow[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_LISTAR, alunoId),
     excluir: (id: number, senha: string): Promise<ApiResult<any>> =>
@@ -130,6 +131,14 @@ const api = {
     desvincularAluno: (vinculoId: number): Promise<ApiResult<any>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CURSO_LIVRE_DESVINCULAR_ALUNO, vinculoId),
   },
+  certificados: {
+    gerar: (cursoLivreId: number, alunoId: number, senhaPfx?: string): Promise<ApiResult<{ id: number; pdfPath: string; codigo_verificacao: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CERTIFICADO_GERAR, cursoLivreId, alunoId, senhaPfx),
+    listar: (cursoLivreId: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CERTIFICADO_LISTAR, cursoLivreId),
+    baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CERTIFICADO_BAIXAR, id),
+  },
   historico: {
     listar: (alunoId: number): Promise<ApiResult<HistoricoDisciplina[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_LISTAR, alunoId),
@@ -139,10 +148,10 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_ATUALIZAR, id, input),
     excluir: (id: number): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_EXCLUIR, id),
-    gerarPdf: (alunoId: number, semAssinatura = false): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_PDF, alunoId, semAssinatura),
-    gerarXml: (alunoId: number): Promise<ApiResult<{ xmlPath: string }>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_XML, alunoId),
+    gerarPdf: (alunoId: number, semAssinatura = false, senhaPfx?: string): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_PDF, alunoId, semAssinatura, senhaPfx),
+    gerarXml: (alunoId: number, senhaPfx?: string): Promise<ApiResult<{ xmlPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_XML, alunoId, senhaPfx),
     mover: (id: number, direcao: 'up' | 'down'): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_MOVER, id, direcao),
   },

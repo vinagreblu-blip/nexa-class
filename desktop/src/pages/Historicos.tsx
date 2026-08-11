@@ -4,6 +4,7 @@ import type { Aluno, DeclaracaoRow, HistoricoDisciplina, HistoricoDisciplinaInpu
 import { FACULDADES, SEMESTRES } from './Alunos';
 import { formatarDisciplina } from '../utils/formatar';
 import { Modal, ConfirmDialog } from '../components/Modal';
+import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
 
 const TITULACOES = ['DOUTOR', 'DOUTORA', 'MESTRADO', 'MESTRADO/DOUTORADO', 'ESPECIALISTA', 'GRADUADO'] as const;
 const STATUS_DISC = ['AP', 'REP', 'CUMP', 'MAT', 'TRANC'] as const;
@@ -145,6 +146,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
   const [salvando, setSalvando] = useState(false);
   const [gerando, setGerando] = useState(false);
   const [gerandoXml, setGerandoXml] = useState(false);
+  const [modalSenha, setModalSenha] = useState<'pdf' | 'xml' | null>(null);
   const [excluirId, setExcluirId] = useState<number | null>(null);
   const [declaracoes, setDeclaracoes] = useState<DeclaracaoRow[]>([]);
   const formRef = useRef<HTMLDivElement>(null);
@@ -208,11 +210,12 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
     if (res.ok) await carregarDisc();
   }
 
-  async function gerarPdf(semAssinatura = false) {
+  async function gerarPdf(semAssinatura = false, senhaPfx?: string) {
     setErro(null);
     setSucesso(null);
     setGerando(true);
-    const res = await api.historico.gerarPdf(aluno.id, semAssinatura);
+    setModalSenha(null);
+    const res = await api.historico.gerarPdf(aluno.id, semAssinatura, senhaPfx);
     setGerando(false);
     if (res.ok && res.data) {
       setSucesso(
@@ -225,11 +228,12 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
     }
   }
 
-  async function gerarXml() {
+  async function gerarXml(senhaPfx?: string) {
     setErro(null);
     setSucesso(null);
     setGerandoXml(true);
-    const res = await api.historico.gerarXml(aluno.id);
+    setModalSenha(null);
+    const res = await api.historico.gerarXml(aluno.id, senhaPfx);
     setGerandoXml(false);
     if (res.ok && res.data) {
       setSucesso(`XML gerado em: ${res.data.xmlPath}`);
@@ -241,6 +245,7 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
   const periodos = Array.from(new Set(disciplinas.map((d) => d.periodo))).sort();
 
   return (
+    <>
     <Modal
       title={`Histórico Acadêmico — ${aluno.nome}`}
       width={920}
@@ -252,12 +257,12 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
           </button>
           <button
             className="btn-ghost"
-            onClick={gerarXml}
+            onClick={() => setModalSenha('xml')}
             disabled={gerandoXml || gerando || disciplinas.length === 0}
           >
             {gerandoXml ? 'Gerando…' : 'Gerar Histórico (XML)'}
           </button>
-          <button className="btn-primary" onClick={() => gerarPdf(false)} disabled={gerando || gerandoXml || disciplinas.length === 0}>
+          <button className="btn-primary" onClick={() => setModalSenha('pdf')} disabled={gerando || gerandoXml || disciplinas.length === 0}>
             {gerando ? 'Gerando…' : 'Gerar Histórico (PDF)'}
           </button>
           <button className="btn-ghost" onClick={() => gerarPdf(true)} disabled={gerando || gerandoXml || disciplinas.length === 0}>
@@ -452,6 +457,17 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
         />
       )}
     </Modal>
+    {modalSenha && !gerando && !gerandoXml && (
+      <ModalSenhaCertificado
+        documento={modalSenha === 'xml' ? 'Histórico (XML)' : 'Histórico (PDF)'}
+        onConfirm={(senha) => {
+          if (modalSenha === 'xml') void gerarXml(senha);
+          else void gerarPdf(false, senha);
+        }}
+        onClose={() => setModalSenha(null)}
+      />
+    )}
+    </>
   );
 }
 

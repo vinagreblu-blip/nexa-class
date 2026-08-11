@@ -207,7 +207,7 @@ Write-Output 'OK'
  * NÃO bloqueia o event loop do Electron (usa spawn) — essencial para não congelar a UI
  * enquanto o usuário digita o PIN do token A3.
  */
-function runPowerShellScriptAsync(
+export function runPowerShellScriptAsync(
   scriptBody: string,
   params: Record<string, string> = {},
   timeoutMs = 120000
@@ -258,7 +258,7 @@ function runPowerShellScriptAsync(
 }
 
 /** Traduz mensagens comuns de erro de token A3 para PT-BR. */
-function traduzirErroA3(msg: string): string {
+export function traduzirErroA3(msg: string): string {
   const m = msg.toLowerCase();
   if (m.includes('the smart card') || m.includes('cartao') || m.includes('card is not supported')) {
     return 'Token/SmartCard não detectado ou driver não instalado. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, etc.).';

@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import type { Aluno, DeclaracaoRow } from '../types';
 import { Modal } from '../components/Modal';
+import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
 
 interface DeclaracoesLabels {
   titulo: string;
@@ -45,6 +46,7 @@ export function Declaracoes({
   const [alunoSelecionado, setAlunoSelecionado] = useState<Aluno | null>(null);
   const [emitindo, setEmitindo] = useState(false);
   const [semAssinatura, setSemAssinatura] = useState(false);
+  const [modalSenha, setModalSenha] = useState(false);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [excluirAlvo, setExcluirAlvo] = useState<DeclaracaoRow | null>(null);
@@ -82,13 +84,14 @@ export function Declaracoes({
     setSeletorAberto(true);
   }
 
-  async function emitir() {
+  async function emitir(senhaPfx?: string) {
     if (!alunoSelecionado) return;
     setEmitindo(true);
     setErro(null);
     setSucesso(null);
+    setModalSenha(false);
     // Passa o tipo para o handler (default 'generico').
-    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo);
+    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo, undefined, senhaPfx);
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);
@@ -101,6 +104,12 @@ export function Declaracoes({
     } else {
       setErro(res.error ?? `Erro ao emitir ${L.docPlural.toLowerCase()}`);
     }
+  }
+
+  function iniciarEmitir() {
+    if (!alunoSelecionado) return;
+    if (semAssinatura) { void emitir(); return; }
+    setModalSenha(true);
   }
 
   function abrirExclusao(d: DeclaracaoRow) {
@@ -234,7 +243,7 @@ export function Declaracoes({
               <button className="btn-ghost" onClick={() => { setSeletorAberto(false); setSemAssinatura(false); }} disabled={emitindo}>
                 Cancelar
               </button>
-              <button className="btn-primary" onClick={emitir} disabled={emitindo || !alunoSelecionado}>
+              <button className="btn-primary" onClick={iniciarEmitir} disabled={emitindo || !alunoSelecionado}>
                 {emitindo ? 'Emitindo…' : semAssinatura ? 'Emitir PDF (SA)' : 'Emitir PDF'}
               </button>
             </>
@@ -330,6 +339,14 @@ export function Declaracoes({
             />
           </div>
         </Modal>
+      )}
+
+      {modalSenha && !emitindo && alunoSelecionado && (
+        <ModalSenhaCertificado
+          documento={L.docSingular}
+          onConfirm={(senha) => void emitir(senha)}
+          onClose={() => setModalSenha(false)}
+        />
       )}
     </div>
   );

@@ -304,6 +304,23 @@ function createSchema(): void {
       FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE
     );
     CREATE INDEX IF NOT EXISTS idx_atas_colacao_aluno ON atas_colacao(aluno_id);
+
+    CREATE TABLE IF NOT EXISTS certificados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      curso_livre_id INTEGER NOT NULL,
+      aluno_id INTEGER NOT NULL,
+      codigo_verificacao TEXT UNIQUE NOT NULL,
+      hash_conteudo TEXT NOT NULL,
+      emitido_por INTEGER NOT NULL,
+      emitido_em TEXT NOT NULL DEFAULT (datetime('now')),
+      pdf_caminho TEXT,
+      FOREIGN KEY (curso_livre_id) REFERENCES cursos_livres(id) ON DELETE CASCADE,
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
+      FOREIGN KEY (emitido_por) REFERENCES usuarios(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_certificados_aluno ON certificados(aluno_id);
+    CREATE INDEX IF NOT EXISTS idx_certificados_curso ON certificados(curso_livre_id);
+    CREATE INDEX IF NOT EXISTS idx_certificados_codigo ON certificados(codigo_verificacao);
   `);
 }
 

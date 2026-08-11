@@ -3,15 +3,17 @@ import { api } from '../api';
 import type { Aluno } from '../types';
 import { NovoAlunoModal } from '../components/NovoAlunoModal';
 import { ConfirmDialog } from '../components/Modal';
+import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
 
-type SubAba = 'menu' | 'livres' | 'extensao' | 'livres-alunos';
+type SubAba = 'menu' | 'livres' | 'extensao' | 'livres-alunos' | 'certificados';
 
 export function CursosLivres() {
   const [aba, setAba] = useState<SubAba>('menu');
 
-  if (aba === 'livres') return <CursosLivresInterno onVoltar={() => setAba('menu')} onAlunos={() => setAba('livres-alunos')} />;
+  if (aba === 'livres') return <CursosLivresInterno onVoltar={() => setAba('menu')} onAlunos={() => setAba('livres-alunos')} onCertificados={() => setAba('certificados')} />;
   if (aba === 'livres-alunos') return <AlunosInterno onVoltar={() => setAba('livres')} />;
   if (aba === 'extensao') return <CursosExtensaoInterno onVoltar={() => setAba('menu')} />;
+  if (aba === 'certificados') return <CertificadosInterno onVoltar={() => setAba('menu')} />;
 
   return (
     <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
@@ -56,13 +58,13 @@ function CardCurso({ cor, corClara, corBotao, titulo, descricao, onClick, icone 
 // ============================================================
 // PAINEL CURSOS LIVRES (3 cards)
 // ============================================================
-function CursosLivresInterno({ onVoltar, onAlunos }: { onVoltar: () => void; onAlunos: () => void }) {
+function CursosLivresInterno({ onVoltar, onAlunos, onCertificados }: { onVoltar: () => void; onAlunos: () => void; onCertificados: () => void }) {
   const cards = [
     { cor: '#2563EB', corClara: '#DBEAFE', titulo: 'Alunos', desc: 'Gerencie alunos, matrículas, histórico acadêmico e informações cadastrais.', onClick: onAlunos,
       icon: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></> },
     { cor: '#22C55E', corClara: '#DCFCE7', titulo: 'Cursos', desc: 'Cadastre cursos, módulos, disciplinas, conteúdos e configurações.', onClick: () => {},
       icon: <><path d="M22 10v6M2 10l10-5 10 5-10 5z" /><path d="M6 12v5c3 3 9 3 12 0v-5" /></> },
-    { cor: '#8B5CF6', corClara: '#EDE9FE', titulo: 'Certificados', desc: 'Emita, valide e acompanhe certificados digitais dos alunos.', onClick: () => {},
+    { cor: '#8B5CF6', corClara: '#EDE9FE', titulo: 'Certificados', desc: 'Emita, valide e acompanhe certificados digitais dos alunos.', onClick: onCertificados,
       icon: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="9" y1="15" x2="15" y2="15" /></> },
   ];
   return (
@@ -288,6 +290,190 @@ function CursosExtensaoInterno({ onVoltar }: { onVoltar: () => void }) {
       <button className="btn-ghost" style={{ marginBottom: 16, padding: '6px 14px', fontSize: 13 }} onClick={onVoltar}>← Voltar</button>
       <h1 style={{ margin: '0 0 8px', fontSize: 26, fontWeight: 700, color: 'var(--text)' }}>Cursos de Extensão</h1>
       <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14 }}>Gerencie os cursos de extensão e suas atividades.</p>
+    </div>
+  );
+}
+
+// ============================================================
+// CERTIFICADOS (Cursos Livres)
+// ============================================================
+interface CursoLivreItem {
+  id: number;
+  nome: string;
+  descricao: string | null;
+  carga_horaria: string | null;
+  data_inicio: string | null;
+  data_fim: string | null;
+}
+interface AlunoVinculado extends Aluno { vinculo_id: number }
+interface CertEmitido {
+  id: number;
+  aluno_id: number;
+  codigo_verificacao: string;
+  emitido_em: string;
+  pdf_caminho: string | null;
+  aluno_nome: string;
+  aluno_matricula: string;
+}
+
+function CertificadosInterno({ onVoltar }: { onVoltar: () => void }) {
+  const [cursos, setCursos] = useState<CursoLivreItem[]>([]);
+  const [cursoSel, setCursoSel] = useState<CursoLivreItem | null>(null);
+  const [alunos, setAlunos] = useState<AlunoVinculado[]>([]);
+  const [emitidos, setEmitidos] = useState<CertEmitido[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [emitindoId, setEmitindoId] = useState<number | null>(null);
+  const [senhaAlvo, setSenhaAlvo] = useState<AlunoVinculado | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function carregarCursos() {
+    setCarregando(true);
+    const res = await api.cursosLivres.listar();
+    if (res.ok && res.data) setCursos(res.data as CursoLivreItem[]);
+    setCarregando(false);
+  }
+  useEffect(() => { carregarCursos(); }, []);
+
+  async function selecionarCurso(c: CursoLivreItem) {
+    setCursoSel(c);
+    setErro(null);
+    const [ra, rc] = await Promise.all([
+      api.cursosLivres.listarAlunos(c.id),
+      api.certificados.listar(c.id),
+    ]);
+    if (ra.ok && ra.data) setAlunos(ra.data as AlunoVinculado[]);
+    if (rc.ok && rc.data) setEmitidos(rc.data as CertEmitido[]);
+  }
+
+  async function emitirCertificado(aluno: AlunoVinculado, senha: string) {
+    if (!cursoSel) return;
+    setEmitindoId(aluno.id);
+    setErro(null);
+    setSucesso(null);
+    setSenhaAlvo(null);
+    const res = await api.certificados.gerar(cursoSel.id, aluno.id, senha);
+    setEmitindoId(null);
+    if (res.ok && res.data) {
+      setSucesso(`Certificado gerado em: ${res.data.pdfPath}`);
+      setTimeout(() => setSucesso(null), 5000);
+      await selecionarCurso(cursoSel);
+    } else {
+      setErro(res.error ?? 'Erro ao emitir certificado');
+    }
+  }
+
+  async function baixar(c: CertEmitido) {
+    const res = await api.certificados.baixar(c.id);
+    if (res.ok && res.data) setSucesso(`Salvo em: ${res.data.salvoPath}`);
+    else setErro(res.error ?? 'Erro ao baixar');
+    setTimeout(() => { setSucesso(null); setErro(null); }, 4000);
+  }
+
+  return (
+    <div>
+      <button className="btn-ghost" style={{ marginBottom: 16, padding: '6px 14px', fontSize: 13 }} onClick={onVoltar}>← Voltar</button>
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ margin: '0 0 4px', fontSize: 24 }}>Certificados de Cursos Livres</h1>
+        <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 13 }}>
+          Emita certificados digitais (assinados com PAdES, A1 ou A3) com código de verificação e QR Code.
+        </p>
+      </div>
+
+      {sucesso && <div className="alert alert-success">{sucesso}</div>}
+      {erro && <div className="alert alert-error">{erro}</div>}
+
+      {!cursoSel ? (
+        carregando ? (
+          <div style={{ color: 'var(--text-muted)' }}>Carregando cursos…</div>
+        ) : cursos.length === 0 ? (
+          <div className="alert alert-warning">Nenhum curso livre cadastrado.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {cursos.map((c) => (
+              <div key={c.id} className="card" style={{ padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => selecionarCurso(c)}>
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{c.nome}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    CH: {c.carga_horaria || '—'} {c.data_inicio || c.data_fim ? `· ${c.data_inicio || '...'} a ${c.data_fim || '...'}` : ''}
+                  </div>
+                </div>
+                <span style={{ color: '#8B5CF6', fontWeight: 600, fontSize: 13 }}>Selecionar →</span>
+              </div>
+            ))}
+          </div>
+        )
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setCursoSel(null)}>← Trocar curso</button>
+            <h2 style={{ margin: 0, fontSize: 18 }}>{cursoSel.nome}</h2>
+          </div>
+
+          <div className="card" style={{ padding: 18, marginBottom: 18 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Alunos vinculados</h3>
+            {alunos.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Nenhum aluno vinculado a este curso.</div>
+            ) : (
+              <table className="table" style={{ fontSize: 13 }}>
+                <thead>
+                  <tr><th>Aluno</th><th>Matrícula</th><th style={{ width: 200 }}></th></tr>
+                </thead>
+                <tbody>
+                  {alunos.map((a) => (
+                    <tr key={a.id}>
+                      <td>{a.nome}</td>
+                      <td>{a.matricula}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          className="btn-primary"
+                          style={{ padding: '5px 12px', fontSize: 12 }}
+                          disabled={emitindoId === a.id}
+                          onClick={() => setSenhaAlvo(a)}
+                        >
+                          {emitindoId === a.id ? 'Emitindo…' : '+ Emitir certificado'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 18 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Certificados emitidos</h3>
+            {emitidos.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Nenhum certificado emitido para este curso.</div>
+            ) : (
+              <table className="table" style={{ fontSize: 13 }}>
+                <thead>
+                  <tr><th>Aluno</th><th>Emitido em</th><th style={{ width: 120 }}></th></tr>
+                </thead>
+                <tbody>
+                  {emitidos.map((c) => (
+                    <tr key={c.id}>
+                      <td>{c.aluno_nome} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({c.aluno_matricula})</span></td>
+                      <td>{new Date(c.emitido_em).toLocaleDateString('pt-BR')}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => baixar(c)}>Baixar</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
+      )}
+
+      {senhaAlvo && emitindoId == null && (
+        <ModalSenhaCertificado
+          documento="Certificado"
+          onConfirm={(senha) => void emitirCertificado(senhaAlvo, senha)}
+          onClose={() => setSenhaAlvo(null)}
+        />
+      )}
     </div>
   );
 }

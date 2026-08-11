@@ -313,4 +313,7 @@ export const IPC_CHANNELS = {
   CURSO_LIVRE_LISTAR_ALUNOS: 'curso-livre:listar-alunos',
   CURSO_LIVRE_VINCULAR_ALUNO: 'curso-livre:vincular-aluno',
   CURSO_LIVRE_DESVINCULAR_ALUNO: 'curso-livre:desvincular-aluno',
+  CERTIFICADO_GERAR: 'certificado:gerar',
+  CERTIFICADO_LISTAR: 'certificado:listar',
+  CERTIFICADO_BAIXAR: 'certificado:baixar',
 } as const;

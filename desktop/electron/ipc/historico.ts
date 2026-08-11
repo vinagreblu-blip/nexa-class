@@ -16,7 +16,8 @@ import { renderHtmlFatecePdf } from '../fatece-historico-html';
 import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
 import { renderHtmlDoisDeJulhoPdf } from '../dois-de-julho-historico-html';
 import { getSessao, requerAuth } from './auth';
-import { getAssinaturaAtiva } from './assinatura';
+import { getAssinaturaAtiva, assinarXml } from './assinatura';
+import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { formatarDataHoraBrasilia } from '../utils';
@@ -202,7 +203,8 @@ function fmtNum(n: number): string {
 async function gerarPdf(
   event: IpcMainInvokeEvent,
   alunoId: number,
-  semAssinatura = false
+  semAssinatura = false,
+  senhaPfx?: string
 ): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -325,6 +327,13 @@ async function gerarPdf(
     await renderHistoricoEngMecPdf(renderOpts);
   } else {
     await renderHistoricoPdf(renderOpts);
+  }
+
+  // Assinatura digital PAdES (A1/A3) — automática quando há certificado ativo.
+  const assinado = await assinarPdfSeConfigurado(destino.filePath, { semAssinatura, senha: senhaPfx, razao: 'Histórico Escolar' });
+  if (!assinado.ok) {
+    try { fs.unlinkSync(destino.filePath); } catch { /* noop */ }
+    return { ok: false, error: assinado.error ?? 'Falha ao assinar o histórico.' };
   }
 
   return { ok: true, data: { pdfPath: destino.filePath, enviadoWeb } };
@@ -1175,7 +1184,8 @@ function escapeXml(s: string): string {
 
 async function gerarXmlHistorico(
   event: IpcMainInvokeEvent,
-  alunoId: number
+  alunoId: number,
+  senhaPfx?: string
 ): Promise<ApiResult<{ xmlPath: string }>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -1283,7 +1293,22 @@ ${conteudoPeriodos}  </periodos>
     return { ok: false, error: 'Operação cancelada' };
   }
 
-  fs.writeFileSync(destino.filePath, xml, 'utf8');
+  // XMLDSig: assina o XML quando há certificado ativo (A1 = senha; A3 = PIN pelo driver).
+  let xmlFinal = xml;
+  const ass = getAssinaturaAtiva();
+  const temCert =
+    ass &&
+    ((ass.certificado_tipo === 'A3' && !!ass.certificado_a3_thumbprint) ||
+      (ass.certificado_path && fs.existsSync(ass.certificado_path)));
+  if (temCert) {
+    const assinado = await assinarXml(xml, senhaPfx || '');
+    if (!assinado.ok || !assinado.xml) {
+      return { ok: false, error: assinado.error ?? 'Falha ao assinar o XML.' };
+    }
+    xmlFinal = assinado.xml;
+  }
+
+  fs.writeFileSync(destino.filePath, xmlFinal, 'utf8');
   return { ok: true, data: { xmlPath: destino.filePath } };
 }
 

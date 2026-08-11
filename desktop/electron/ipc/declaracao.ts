@@ -11,6 +11,7 @@ import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult, Declaracao, DeclaracaoEmitida, TipoDeclaracao } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
+import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarHashConteudo, gerarQrPng, formatarDataHoraBrasilia } from '../utils';
@@ -78,7 +79,7 @@ function gerarPdf(opts: {
   tipo?: TipoDeclaracao;
   /** Para tipo='diploma': código e data do diploma referenciado. */
   diplomaReferenciado?: { codigo: string; emitidoEm: string };
-}): void {
+}): Promise<void> {
   const {
     aluno,
     codigo,
@@ -324,6 +325,7 @@ function gerarPdf(opts: {
     .text(`Escaneie o QR Code para validar este documento em qualquer dispositivo.`, { align: 'left' });
 
   doc.end();
+  return new Promise((resolve) => stream.on('finish', () => resolve()));
 }
 
 async function emitir(
@@ -331,7 +333,8 @@ async function emitir(
   alunoId: number,
   semAssinatura = false,
   tipo: TipoDeclaracao = 'generico',
-  diplomaId?: number
+  diplomaId?: number,
+  senhaPfx?: string
 ): Promise<ApiResult<DeclaracaoEmitida>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -459,6 +462,14 @@ async function emitir(
     tipo,
     diplomaReferenciado,
   });
+
+  // Assinatura digital PAdES (A1/A3) — automática quando há certificado ativo.
+  const assinado = await assinarPdfSeConfigurado(destino.filePath, { semAssinatura, senha: senhaPfx, razao: 'Declaração' });
+  if (!assinado.ok) {
+    try { fs.unlinkSync(destino.filePath); } catch { /* noop */ }
+    db.prepare('DELETE FROM declaracoes WHERE id = ?').run(declaracao.id);
+    return { ok: false, error: assinado.error ?? 'Falha ao assinar a declaração.' };
+  }
 
   // Salva cópia interna para re-download
   try {

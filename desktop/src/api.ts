@@ -143,14 +143,15 @@ export interface DesktopApi {
       alunoId: number,
       semAssinatura?: boolean,
       tipo?: 'generico' | 'historico' | 'diploma',
-      diplomaId?: number
+      diplomaId?: number,
+      senhaPfx?: string
     ) => Promise<ApiResult<DeclaracaoEmitida>>;
     listar: (alunoId?: number) => Promise<ApiResult<DeclaracaoRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<{ webOk: boolean }>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
   };
   diplomas: {
-    emitir: (alunoId: number, semAssinatura?: boolean) => Promise<ApiResult<DiplomaRow>>;
+    emitir: (alunoId: number, semAssinatura?: boolean, senhaPfx?: string) => Promise<ApiResult<DiplomaRow>>;
     listar: (alunoId?: number) => Promise<ApiResult<DiplomaRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<true>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
@@ -171,13 +172,18 @@ export interface DesktopApi {
     vincularAluno: (cursoLivreId: number, alunoId: number) => Promise<ApiResult<true>>;
     desvincularAluno: (vinculoId: number) => Promise<ApiResult<true>>;
   };
+  certificados: {
+    gerar: (cursoLivreId: number, alunoId: number, senhaPfx?: string) => Promise<ApiResult<{ id: number; pdfPath: string; codigo_verificacao: string }>>;
+    listar: (cursoLivreId: number) => Promise<ApiResult<any[]>>;
+    baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+  };
   historico: {
     listar: (alunoId: number) => Promise<ApiResult<HistoricoDisciplina[]>>;
     criar: (alunoId: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;
     atualizar: (id: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;
     excluir: (id: number) => Promise<ApiResult<true>>;
-    gerarPdf: (alunoId: number, semAssinatura?: boolean) => Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>>;
-    gerarXml: (alunoId: number) => Promise<ApiResult<{ xmlPath: string }>>;
+    gerarPdf: (alunoId: number, semAssinatura?: boolean, senhaPfx?: string) => Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>>;
+    gerarXml: (alunoId: number, senhaPfx?: string) => Promise<ApiResult<{ xmlPath: string }>>;
     mover: (id: number, direcao: 'up' | 'down') => Promise<ApiResult<true>>;
   };
   docentes: {

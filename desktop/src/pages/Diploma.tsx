@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import type { Aluno, DiplomaRow } from '../types';
 import { Modal } from '../components/Modal';
+import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
 
 interface DiplomaLabels {
   titulo: string;
@@ -40,6 +41,7 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
   const [senhaConfirmacao, setSenhaConfirmacao] = useState('');
   const [erroExcluir, setErroExcluir] = useState<string | null>(null);
   const [excluindo, setExcluindo] = useState(false);
+  const [modalSenha, setModalSenha] = useState(false);
 
   async function carregar() {
     setCarregando(true);
@@ -69,12 +71,13 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
     setSeletorAberto(true);
   }
 
-  async function emitir() {
+  async function emitir(senhaPfx?: string) {
     if (!alunoSelecionado) return;
     setEmitindo(true);
     setErro(null);
     setSucesso(null);
-    const res = await api.diplomas.emitir(alunoSelecionado.id, semAssinatura);
+    setModalSenha(false);
+    const res = await api.diplomas.emitir(alunoSelecionado.id, semAssinatura, senhaPfx);
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);
@@ -84,6 +87,12 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
     } else {
       setErro(res.error ?? `Erro ao emitir ${L.docPlural.toLowerCase()}`);
     }
+  }
+
+  function iniciarEmitir() {
+    if (!alunoSelecionado) return;
+    if (semAssinatura) { void emitir(); return; }
+    setModalSenha(true);
   }
 
   async function baixar(d: DiplomaRow) {
@@ -192,7 +201,7 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
               <button className="btn-ghost" onClick={() => { setSeletorAberto(false); setSemAssinatura(false); }} disabled={emitindo}>
                 Cancelar
               </button>
-              <button className="btn-primary" onClick={emitir} disabled={emitindo || !alunoSelecionado}>
+              <button className="btn-primary" onClick={iniciarEmitir} disabled={emitindo || !alunoSelecionado}>
                 {emitindo ? 'Emitindo…' : semAssinatura ? 'Emitir PDF (SA)' : 'Emitir PDF'}
               </button>
             </>
@@ -262,6 +271,14 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
           />
           {erroExcluir && <div className="alert alert-error" style={{ marginTop: 8 }}>{erroExcluir}</div>}
         </Modal>
+      )}
+
+      {modalSenha && !emitindo && alunoSelecionado && (
+        <ModalSenhaCertificado
+          documento={L.docSingular}
+          onConfirm={(senha) => void emitir(senha)}
+          onClose={() => setModalSenha(false)}
+        />
       )}
     </div>
   );

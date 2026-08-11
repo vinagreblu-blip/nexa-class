@@ -11,6 +11,7 @@ import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
+import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
 import { validarSenhaMaster } from '../utils/regras';
 import { montarNomePdf } from '../utils/sistema';
@@ -219,7 +220,8 @@ function gerarPdf(opts: DiplomaOpts): Promise<void> {
 async function emitir(
   event: IpcMainInvokeEvent,
   alunoId: number,
-  semAssinatura = false
+  semAssinatura = false,
+  senhaPfx?: string
 ): Promise<ApiResult<{ id: number; codigo_verificacao: string; hash_conteudo: string; enviado_web: number; pdfPath: string; enviadoWeb: boolean }>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -303,6 +305,14 @@ async function emitir(
     faculdade: fac,
     semAssinatura,
   });
+
+  // Assinatura digital PAdES (A1/A3) — automática quando há certificado ativo.
+  const assinado = await assinarPdfSeConfigurado(destino.filePath, { semAssinatura, senha: senhaPfx, razao: 'Diploma de Conclusão' });
+  if (!assinado.ok) {
+    try { fs.unlinkSync(destino.filePath); } catch { /* noop */ }
+    db.prepare('DELETE FROM diplomas WHERE id = ?').run(diplomaId);
+    return { ok: false, error: assinado.error ?? 'Falha ao assinar o diploma.' };
+  }
 
   try {
     fs.copyFileSync(destino.filePath, caminhoInterno);

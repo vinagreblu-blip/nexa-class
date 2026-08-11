@@ -162,6 +162,35 @@ export function iniciarServicoVerificacao(): http.Server | null {
         } catch { /* ignora */ }
       }
 
+      // Fallback 2: procura na tabela certificados (Cursos Livres)
+      if (!row) {
+        try {
+          const r = db
+            .prepare(
+              `SELECT ce.codigo_verificacao, ce.hash_conteudo, ce.emitido_em,
+                      a.nome as aluno_nome, a.matricula as aluno_matricula,
+                      cl.nome as curso_nome
+               FROM certificados ce
+               JOIN alunos a ON a.id = ce.aluno_id
+               JOIN cursos_livres cl ON cl.id = ce.curso_livre_id
+               WHERE ce.codigo_verificacao = ?`
+            )
+            .get(codigo) as any;
+          if (r) {
+            row = {
+              codigo_verificacao: r.codigo_verificacao,
+              hash_conteudo: r.hash_conteudo,
+              dados_aluno_json: JSON.stringify({
+                nome: r.aluno_nome,
+                matricula: r.aluno_matricula,
+                curso: 'Certificado: ' + r.curso_nome,
+              }),
+              emitido_em: r.emitido_em,
+            };
+          }
+        } catch { /* tabela pode não existir */ }
+      }
+
       const html = row ? paginaValido(row) : paginaInvalido(codigo);
       res.writeHead(row ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);

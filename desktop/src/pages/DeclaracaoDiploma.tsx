@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { DiplomaRow } from '../types';
+import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
 
 /**
  * Página "Declaração de Autenticidade de Diploma".
@@ -18,6 +19,7 @@ export function DeclaracaoDiploma() {
   const [erro, setErro] = useState<string | null>(null);
   const [emitindoId, setEmitindoId] = useState<number | null>(null);
   const [semAssinatura, setSemAssinatura] = useState(false);
+  const [modalSenhaDiploma, setModalSenhaDiploma] = useState<DiplomaRow | null>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -30,12 +32,13 @@ export function DeclaracaoDiploma() {
     carregar();
   }, []);
 
-  async function emitirDeclaracao(d: DiplomaRow, sa: boolean) {
+  async function emitirDeclaracao(d: DiplomaRow, sa: boolean, senhaPfx?: string) {
     setEmitindoId(d.id);
     setErro(null);
     setSucesso(null);
+    setModalSenhaDiploma(null);
     // Chamada ao handler de declaração com tipo='diploma' e diplomaId.
-    const res = await api.declaracoes.emitir(d.aluno_id, sa, 'diploma', d.id);
+    const res = await api.declaracoes.emitir(d.aluno_id, sa, 'diploma', d.id, senhaPfx);
     setEmitindoId(null);
     if (res.ok && res.data) {
       setSucesso(
@@ -47,6 +50,11 @@ export function DeclaracaoDiploma() {
     } else {
       setErro(res.error ?? 'Erro ao emitir declaração');
     }
+  }
+
+  function iniciarEmissao(d: DiplomaRow) {
+    if (semAssinatura) { void emitirDeclaracao(d, true); return; }
+    setModalSenhaDiploma(d);
   }
 
   return (
@@ -121,7 +129,7 @@ export function DeclaracaoDiploma() {
                 <td>
                   <button
                     className="btn-primary btn-sm"
-                    onClick={() => emitirDeclaracao(d, semAssinatura)}
+                    onClick={() => iniciarEmissao(d)}
                     disabled={emitindoId === d.id}
                   >
                     {emitindoId === d.id
@@ -136,6 +144,14 @@ export function DeclaracaoDiploma() {
           </tbody>
         </table>
       </div>
+
+      {modalSenhaDiploma && emitindoId == null && (
+        <ModalSenhaCertificado
+          documento="Declaração de Diploma"
+          onConfirm={(senha) => void emitirDeclaracao(modalSenhaDiploma, false, senha)}
+          onClose={() => setModalSenhaDiploma(null)}
+        />
+      )}
     </div>
   );
 }
