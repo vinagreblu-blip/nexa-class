@@ -35,9 +35,28 @@ jobs:
       - name: Build desktop (Vite + TS do electron)
         run: npm -w desktop run build
 
-      - name: Empacotar e publicar instalador
+      - name: Empacotar instalador
+        # Sem --publish: o upload do electron-builder é flaky para arquivos
+        # grandes (~140 MB). O publish é feito no próximo passo via `gh`, que
+        # é mais confiável e permite retry/destravar releases incompletos.
         working-directory: desktop
+        run: npx electron-builder
+
+      - name: Publicar release (upload robusto)
         env:
-          # Token nativo do Actions — suficiente para repo público.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --publish always
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          repo="${GITHUB_REPOSITORY}"
+          # Deleta release anterior caso exista (ex.: re-run com upload incompleto).
+          gh release delete "$tag" --repo "$repo" --yes || echo "release anterior nao existia (ok)"
+          # Cria release limpo e sobe os 3 assets de uma vez.
+          gh release create "$tag" \
+            --repo "$repo" \
+            --title "${tag#v}" \
+            --generate-notes \
+            desktop/release/NEXA-CLASS-Setup.exe \
+            desktop/release/latest.yml \
+            desktop/release/NEXA-CLASS-Setup.exe.blockmap
