@@ -24,9 +24,14 @@ import { runPowerShellScriptAsync } from './ipc/assinatura';
 const PS_CMS_A3 = `
 param([string]$Thumbprint, [string]$DataFile, [string]$OutFile)
 $ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Security
 
-$cert = Get-Item -Path ('Cert:\\CurrentUser\\My\\' + $Thumbprint) -ErrorAction Stop
+$cert = $null
+foreach ($p in @(('Cert:\\CurrentUser\\My\\' + $Thumbprint), ('Cert:\\LocalMachine\\My\\' + $Thumbprint))) {
+  try { $c = Get-Item -Path $p -ErrorAction Stop; if ($c) { $cert = $c; break } } catch {}
+}
+if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
 $rsaKey = $cert.GetRSAPrivateKey()
 if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel. Conecte o token/SmartCard e tente novamente.' }
 

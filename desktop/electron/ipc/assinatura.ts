@@ -143,31 +143,48 @@ async function uploadCert(
 // - Assinatura: .NET SignedXml chama a chave do token (o driver pede o PIN)
 // ---------------------------------------------------------------------------
 
-// PowerShell: lista certificados com chave privada no repositório do usuário.
+// PowerShell: lista certificados com chave privada no repositório do usuário E da máquina.
+// Escreve o JSON num arquivo UTF-8 (evita o bug de codepage do stdout do PS 5.1 ao usar
+// Node — quebra o JSON.parse quando há acentos, comum em certificados ICP-Brasil).
 const PS_LISTAR_A3 = `
+param([string]$OutFile)
 $ErrorActionPreference = 'Stop'
-$certs = Get-ChildItem -Path 'Cert:\\CurrentUser\\My' -ErrorAction SilentlyContinue |
-  Where-Object { $_.HasPrivateKey } |
-  ForEach-Object {
-    [pscustomobject]@{
-      Thumbprint    = $_.Thumbprint
-      Subject       = $_.Subject
-      Issuer        = $_.Issuer
-      NotBefore     = $_.NotBefore.ToString('o')
-      NotAfter      = $_.NotAfter.ToString('o')
-      HasPrivateKey = $_.HasPrivateKey
-    }
-  }
-[pscustomobject]@{ Certs = @($certs) } | ConvertTo-Json -Compress -Depth 5
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+$certs = @()
+foreach ($storePath in @('Cert:\\CurrentUser\\My', 'Cert:\\LocalMachine\\My')) {
+  try {
+    Get-ChildItem -Path $storePath -ErrorAction SilentlyContinue |
+      Where-Object { $_.HasPrivateKey } |
+      ForEach-Object {
+        $certs += [pscustomobject]@{
+          Thumbprint    = $_.Thumbprint
+          Subject       = $_.Subject
+          Issuer        = $_.Issuer
+          NotBefore     = $_.NotBefore.ToString('o')
+          NotAfter      = $_.NotAfter.ToString('o')
+          HasPrivateKey = $_.HasPrivateKey
+        }
+      }
+  } catch {}
+}
+$unique = @($certs | Sort-Object Thumbprint -Unique)
+$json = [pscustomobject]@{ Certs = @($unique) } | ConvertTo-Json -Compress -Depth 5
+[System.IO.File]::WriteAllText($OutFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+Write-Output 'OK'
 `.trim();
 
 // PowerShell: assina o XML (enveloped, C14N, SHA-256) com a chave do token.
 const PS_ASSINAR_A3 = `
 param([string]$Thumbprint, [string]$InFile, [string]$OutFile)
 $ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Security
 
-$cert = Get-Item -Path ('Cert:\\CurrentUser\\My\\' + $Thumbprint) -ErrorAction Stop
+$cert = $null
+foreach ($p in @(('Cert:\\CurrentUser\\My\\' + $Thumbprint), ('Cert:\\LocalMachine\\My\\' + $Thumbprint))) {
+  try { $c = Get-Item -Path $p -ErrorAction Stop; if ($c) { $cert = $c; break } } catch {}
+}
+if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
 $rsaKey = $cert.GetRSAPrivateKey()
 if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel. Conecte o token/SmartCard e tente novamente.' }
 
@@ -202,6 +219,13 @@ $doc.DocumentElement.AppendChild($doc.ImportNode($sig, $true)) | Out-Null
 Write-Output 'OK'
 `.trim();
 
+/** Resolve o caminho completo do powershell.exe (mais robusto no app empacotado). */
+function resolverPowerShell(): string {
+  const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows';
+  const full = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  return fs.existsSync(full) ? full : 'powershell.exe';
+}
+
 /**
  * Executa um script PowerShell a partir de um arquivo .ps1 temporário (evita escaping).
  * NÃO bloqueia o event loop do Electron (usa spawn) — essencial para não congelar a UI
@@ -218,7 +242,7 @@ export function runPowerShellScriptAsync(
     const paramArgs: string[] = [];
     for (const [k, v] of Object.entries(params)) paramArgs.push(`-${k}`, v);
 
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...paramArgs], {
+    const child = spawn(resolverPowerShell(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...paramArgs], {
       windowsHide: true,
     });
 
@@ -245,7 +269,7 @@ export function runPowerShellScriptAsync(
       if (settled) return;
       settled = true;
       cleanup();
-      reject(err);
+      reject(new Error('Não foi possível iniciar o PowerShell: ' + (err?.message ?? String(err))));
     });
     child.on('close', (code) => {
       if (settled) return;
@@ -274,15 +298,22 @@ export function traduzirErroA3(msg: string): string {
 
 /** Lista certificados A3 disponíveis no Windows Certificate Store. */
 async function listarCertsA3(_event: IpcMainInvokeEvent): Promise<ApiResult<CertA3Info[]>> {
+  const outFile = path.join(os.tmpdir(), `nexa_certs_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
   try {
-    const stdout = (await runPowerShellScriptAsync(PS_LISTAR_A3, {}, 30000)).trim();
-    if (!stdout) return { ok: true, data: [] };
-    const parsed = JSON.parse(stdout) as { Certs?: CertA3Info[] };
+    await runPowerShellScriptAsync(PS_LISTAR_A3, { OutFile: outFile }, 30000);
+    if (!fs.existsSync(outFile)) {
+      return { ok: false, error: 'O PowerShell não gravou a lista de certificados.' };
+    }
+    const content = fs.readFileSync(outFile, 'utf8').trim();
+    if (!content) return { ok: true, data: [] };
+    const parsed = JSON.parse(content) as { Certs?: CertA3Info[] };
     const lista = Array.isArray(parsed.Certs) ? parsed.Certs : [];
     return { ok: true, data: lista };
   } catch (e: any) {
     const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
     return { ok: false, error: 'Não foi possível ler o Windows Certificate Store: ' + msg };
+  } finally {
+    try { fs.unlinkSync(outFile); } catch { /* noop */ }
   }
 }
 
