@@ -8,6 +8,7 @@ import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
+import { logger } from '../utils/logger';
 // uploadFileToCloud removido: NÃO subir .pfx (chave privada ICP-Brasil) nem assinaturas
 // para a nuvem — expõe material criptográfico sensível em storage compartilhado.
 // Cada máquina cadastra seu próprio certificado localmente.
@@ -143,28 +144,36 @@ async function uploadCert(
 // - Assinatura: .NET SignedXml chama a chave do token (o driver pede o PIN)
 // ---------------------------------------------------------------------------
 
-// PowerShell: lista certificados com chave privada no repositório do usuário E da máquina.
-// Escreve o JSON num arquivo UTF-8 (evita o bug de codepage do stdout do PS 5.1 ao usar
-// Node — quebra o JSON.parse quando há acentos, comum em certificados ICP-Brasil).
+// PowerShell: lista certificados com chave privada via X509Store (.NET) — NÃO usa o
+// provider "Cert:" do PowerShell, que pode travar quando há token/SmartCard conectado
+// (invoca o CSP do fabricante p/ enumerar). O X509Store.Open(ReadOnly) só lê os objetos,
+// sem acionar o CSP. JSON gravado em arquivo UTF-8 (evita bug de codepage do stdout).
 const PS_LISTAR_A3 = `
 param([string]$OutFile)
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $certs = @()
-foreach ($storePath in @('Cert:\\CurrentUser\\My', 'Cert:\\LocalMachine\\My')) {
+$locs = @(
+  ([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser),
+  ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+)
+foreach ($loc in $locs) {
   try {
-    Get-ChildItem -Path $storePath -ErrorAction SilentlyContinue |
-      Where-Object { $_.HasPrivateKey } |
-      ForEach-Object {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) {
+      if ($c.HasPrivateKey) {
         $certs += [pscustomobject]@{
-          Thumbprint    = $_.Thumbprint
-          Subject       = $_.Subject
-          Issuer        = $_.Issuer
-          NotBefore     = $_.NotBefore.ToString('o')
-          NotAfter      = $_.NotAfter.ToString('o')
-          HasPrivateKey = $_.HasPrivateKey
+          Thumbprint    = $c.Thumbprint
+          Subject       = $c.Subject
+          Issuer        = $c.Issuer
+          NotBefore     = $c.NotBefore.ToString('o')
+          NotAfter      = $c.NotAfter.ToString('o')
+          HasPrivateKey = $c.HasPrivateKey
         }
       }
+    }
+    $store.Close()
   } catch {}
 }
 $unique = @($certs | Sort-Object Thumbprint -Unique)
@@ -180,9 +189,17 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Security
 
+# Busca o cert por thumbprint no CurrentUser e LocalMachine (X509Store, sem usar o provider Cert:).
 $cert = $null
-foreach ($p in @(('Cert:\\CurrentUser\\My\\' + $Thumbprint), ('Cert:\\LocalMachine\\My\\' + $Thumbprint))) {
-  try { $c = Get-Item -Path $p -ErrorAction Stop; if ($c) { $cert = $c; break } } catch {}
+$locs = @(([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser), ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine))
+foreach ($loc in $locs) {
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $cert = $c; break } }
+    $store.Close()
+  } catch {}
+  if ($null -ne $cert) { break }
 }
 if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
 $rsaKey = $cert.GetRSAPrivateKey()
@@ -300,18 +317,28 @@ export function traduzirErroA3(msg: string): string {
 async function listarCertsA3(_event: IpcMainInvokeEvent): Promise<ApiResult<CertA3Info[]>> {
   const outFile = path.join(os.tmpdir(), `nexa_certs_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
   try {
-    await runPowerShellScriptAsync(PS_LISTAR_A3, { OutFile: outFile }, 30000);
+    logger.info({ outFile }, 'listarCertsA3: iniciando leitura X509Store');
+    await runPowerShellScriptAsync(PS_LISTAR_A3, { OutFile: outFile }, 25000);
     if (!fs.existsSync(outFile)) {
+      logger.warn({ outFile }, 'listarCertsA3: PowerShell não gravou a lista');
       return { ok: false, error: 'O PowerShell não gravou a lista de certificados.' };
     }
     const content = fs.readFileSync(outFile, 'utf8').trim();
-    if (!content) return { ok: true, data: [] };
+    if (!content) {
+      logger.info('listarCertsA3: lista vazia');
+      return { ok: true, data: [] };
+    }
     const parsed = JSON.parse(content) as { Certs?: CertA3Info[] };
     const lista = Array.isArray(parsed.Certs) ? parsed.Certs : [];
+    logger.info({ total: lista.length }, 'listarCertsA3: leitura concluída');
     return { ok: true, data: lista };
   } catch (e: any) {
     const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
-    return { ok: false, error: 'Não foi possível ler o Windows Certificate Store: ' + msg };
+    logger.error({ err: msg }, 'listarCertsA3: falha ao ler o Windows Certificate Store');
+    const dica = msg.toLowerCase().includes('tempo esgotado')
+      ? ' Tempo esgotado — pode ser o driver do token travando a leitura; reconecte o pendrive e tente novamente.'
+      : '';
+    return { ok: false, error: 'Não foi possível ler o Windows Certificate Store: ' + msg + dica };
   } finally {
     try { fs.unlinkSync(outFile); } catch { /* noop */ }
   }

@@ -157,15 +157,26 @@ export function AssinaturaDigital() {
     setErroA3(null);
     setCertsA3([]);
     setCarregandoCerts(true);
-    const res = await api.assinatura.listarCertsA3();
-    setCarregandoCerts(false);
-    if (res.ok && res.data) {
-      setCertsA3(res.data);
-      if (res.data.length === 0) {
-        setErroA3('Nenhum certificado encontrado no Windows Certificate Store. Conecte o token/SmartCard e instale o middleware do fabricante.');
+    try {
+      // Timeout client-side: garante que o modal nunca fique preso em "carregando".
+      const res = await Promise.race([
+        api.assinatura.listarCertsA3(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('tempo esgotado (30s) — o driver do token pode estar travando a leitura')), 30000)
+        ),
+      ]);
+      if (res.ok && res.data) {
+        setCertsA3(res.data);
+        if (res.data.length === 0) {
+          setErroA3('Nenhum certificado encontrado no Windows Certificate Store. Confirme se o token/pendrive está conectado e se o driver do fabricante (Safenet/Pronova/Gemalto) está instalado.');
+        }
+      } else {
+        setErroA3(res.error ?? 'Erro ao ler certificados');
       }
-    } else {
-      setErroA3(res.error ?? 'Erro ao ler certificados');
+    } catch (e: any) {
+      setErroA3('Não foi possível ler o repositório do Windows: ' + (e?.message ?? 'erro desconhecido') + '. Se o token está conectado, tente reconectá-lo e instalar/atualizar o driver do fabricante.');
+    } finally {
+      setCarregandoCerts(false);
     }
   }
 

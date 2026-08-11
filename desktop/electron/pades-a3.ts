@@ -27,9 +27,17 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Security
 
+# Busca o cert por thumbprint via X509Store (sem o provider Cert:, que trava em token).
 $cert = $null
-foreach ($p in @(('Cert:\\CurrentUser\\My\\' + $Thumbprint), ('Cert:\\LocalMachine\\My\\' + $Thumbprint))) {
-  try { $c = Get-Item -Path $p -ErrorAction Stop; if ($c) { $cert = $c; break } } catch {}
+$locs = @(([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser), ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine))
+foreach ($loc in $locs) {
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $cert = $c; break } }
+    $store.Close()
+  } catch {}
+  if ($null -ne $cert) { break }
 }
 if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
 $rsaKey = $cert.GetRSAPrivateKey()
