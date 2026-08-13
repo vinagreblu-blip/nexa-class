@@ -137,6 +137,13 @@ function criarJanela(): void {
     }
   });
 
+  // Recuperação de tela branca: se o processo do renderer travar/crashar (GPU,
+  // OOM, erro fatal), recarrega a janela em vez de deixar uma tela em branco.
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    logger.error({ reason: details?.reason }, 'render-process-gone: recarregando janela');
+    try { mainWindow?.webContents.reload(); } catch { /* ignora */ }
+  });
+
   if (isDev && !isE2E) {
     mainWindow.loadURL('http://localhost:5174');
   } else {

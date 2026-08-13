@@ -328,8 +328,21 @@ async function listarCertsA3(_event: IpcMainInvokeEvent): Promise<ApiResult<Cert
       logger.info('listarCertsA3: lista vazia');
       return { ok: true, data: [] };
     }
-    const parsed = JSON.parse(content) as { Certs?: CertA3Info[] };
-    const lista = Array.isArray(parsed.Certs) ? parsed.Certs : [];
+    const parsed = JSON.parse(content) as { Certs?: any };
+    // O PowerShell (ConvertTo-Json) emite chaves PascalCase (Subject, Issuer...) e,
+    // com um único certificado, serializa como objeto em vez de array. Normalizamos
+    // tudo para camelCase (contrato do CertA3Info) e garantimos um array.
+    const rawCerts = Array.isArray(parsed.Certs)
+      ? parsed.Certs
+      : (parsed.Certs && typeof parsed.Certs === 'object' ? [parsed.Certs] : []);
+    const lista: CertA3Info[] = rawCerts.map((c: any) => ({
+      thumbprint: String(c?.Thumbprint ?? c?.thumbprint ?? ''),
+      subject: String(c?.Subject ?? c?.subject ?? ''),
+      issuer: String(c?.Issuer ?? c?.issuer ?? ''),
+      notBefore: String(c?.NotBefore ?? c?.notBefore ?? ''),
+      notAfter: String(c?.NotAfter ?? c?.notAfter ?? ''),
+      hasPrivateKey: Boolean(c?.HasPrivateKey ?? c?.hasPrivateKey ?? false),
+    }));
     logger.info({ total: lista.length }, 'listarCertsA3: leitura concluída');
     return { ok: true, data: lista };
   } catch (e: any) {

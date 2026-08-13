@@ -3,7 +3,8 @@ import { api } from '../api';
 import { Modal } from '../components/Modal';
 
 /** Extrai o CN= de um Subject X.500 (ex: "CN=FULANO DE TAL:12345678901,O=ICP-Brasil"). */
-function extrairCN(subject: string): string {
+function extrairCN(subject?: string | null): string {
+  if (!subject) return '—';
   const m = subject.match(/CN=([^,]+)/i);
   if (!m) return subject;
   return m[1].split(':')[0].trim();
@@ -82,11 +83,22 @@ export function AssinaturaDigital() {
       setTemCert(!!(tipo || data.certificado_path));
       setInfoA3(null);
       if (tipo === 'A3' && data.certificado_a3_thumbprint) {
-        // Busca dados do cert A3 atual no Windows Certificate Store
-        const lista = await api.assinatura.listarCertsA3();
-        if (lista.ok && lista.data) {
-          const atual = lista.data.find((c) => c.thumbprint.toUpperCase() === data.certificado_a3_thumbprint?.toUpperCase());
-          setInfoA3(atual ?? null);
+        // Busca dados do cert A3 atual no Windows Certificate Store.
+        // Protegido com try/catch + timeout (igual ao abrirModalA3) para não
+        // quebrar o carregamento da tela se o driver do token travar a leitura.
+        try {
+          const lista = await Promise.race([
+            api.assinatura.listarCertsA3(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('tempo esgotado')), 30000)
+            ),
+          ]);
+          if (lista.ok && lista.data) {
+            const atual = lista.data.find((c) => c.thumbprint.toUpperCase() === data.certificado_a3_thumbprint?.toUpperCase());
+            setInfoA3(atual ?? null);
+          }
+        } catch {
+          // Token desconectado/driver travado — mantém infoA3 null (status mostra "reconecte").
         }
       }
       if (data.imagem_path) {
