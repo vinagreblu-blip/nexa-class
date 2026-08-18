@@ -191,6 +191,10 @@ Start-Process "C:\Program Files\NEXA CLASS\NEXA CLASS.exe"
 `%APPDATA%/NEXA CLASS/senha-master.txt` (plaintext + hash). O admin lê a senha
 nesse arquivo e a usa para operações críticas. Sem hash público no repo.
 
+**Em desenvolvimento (app não empacotado):** a senha master é `master-dev`
+(hash público de conveniência em `desktop/electron/config.ts`, mesmo padrão da
+API key default).
+
 **Para rotacionar** (recomendado trimestralmente):
 
 1. Gerar novo hash:
@@ -202,6 +206,13 @@ nesse arquivo e a usa para operações críticas. Sem hash público no repo.
    setx SENHA_EXCLUSAO_DECLARACAO_HASH "novo-hash-gerado"
    ```
 3. Reiniciar o app — a env tem precedência sobre o arquivo persistido.
+
+**Senha master perdida (recovery):** a senha não é recuperável do repo nem do
+hash — apenas rotacionada. Em deploy multi-máquina, usar o script oficial:
+`node scripts\gerar-senha-master.js` (pede a nova senha, gera o hash e imprime
+o `setx` pronto). Aplicar o `setx ... /M` em **todas** as máquinas (PowerShell
+admin) e reiniciar o app — o env tem precedência sobre tudo, inclusive sobre o
+`senha-master.txt` local de cada máquina.
 
 > ⚠️ Não commitar o plaintext da senha. Apenas o hash (e mesmo assim, prefira
 > usar a env em deploy controlado).

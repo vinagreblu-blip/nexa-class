@@ -93,10 +93,11 @@ let senhaMasterHashCache: string | null = null;
  *  2. userData/senha-master.txt contendo o hash + plaintext (admin lê a senha)
  *  3. Gera senha aleatória forte, persiste hash + plaintext e usa
  *
- * Em dev: usa o hash legacy público (conveniência, senha "master-dev").
+ * Em dev: usa hash público de conveniência — a senha dev é "master-dev".
+ * (Produção nunca usa este valor: o getter abaixo ignora-o quando packaged.)
  */
 export const SENHA_MASTER_DEV_HASH =
-  '$2a$10$nhrugU7YCD/.p3x7HgNTEeRKpIRZAAX0OVW0Qz0Bg1BPGxyxrYZpq';
+  '$2a$10$5xuZDBeE244Ab6998XmaZun4jFopFNzFvsOJf3mycKqp8XCBlFREq';
 
 function resolveSenhaMasterHash(): string {
   if (senhaMasterHashCache) return senhaMasterHashCache;
