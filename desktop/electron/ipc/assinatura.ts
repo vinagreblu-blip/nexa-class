@@ -268,7 +268,13 @@ if ($keyAlg -eq 'ECC') {
 $ref = New-Object System.Security.Cryptography.Xml.Reference
 $ref.Uri = ''
 $ref.DigestMethod = 'http://www.w3.org/2001/04/xmlenc#sha256'
-$ref.AddTransform((New-Object System.Security.Cryptography.Xml.EnvelopedSignatureTransform))
+# No .NET Framework o transform enveloped chama-se XmlDsigEnvelopedSignatureTransform;
+# no .NET Core/5+ e apenas EnvelopedSignatureTransform. Resolve pelo assembly do
+# proprio SignedXml (garante o assembly certo mesmo se Add-Type parcial falhar).
+$envT = [System.Security.Cryptography.Xml.SignedXml].Assembly.GetType('System.Security.Cryptography.Xml.XmlDsigEnvelopedSignatureTransform', $false)
+if ($null -eq $envT) { $envT = [System.Security.Cryptography.Xml.SignedXml].Assembly.GetType('System.Security.Cryptography.Xml.EnvelopedSignatureTransform', $false) }
+if ($null -eq $envT) { throw 'Transform enveloped (XMLDSig) nao encontrado no .NET instalado.' }
+$ref.AddTransform([Activator]::CreateInstance($envT))
 $ref.AddTransform((New-Object System.Security.Cryptography.Xml.XmlDsigC14NTransform))
 $signedXml.AddReference($ref)
 
