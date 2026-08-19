@@ -21,8 +21,7 @@ WORKDIR /app
 
 # Copia apenas manifests para cache eficiente de npm ci.
 COPY package.json package-lock.json* ./
-COPY verificacao-web/package.json ./verificacao-web/
-COPY verificacao-web/package-lock.json* ./verificacao-web/
+COPY verificacao-web/package*.json ./verificacao-web/
 
 # Instala deps do workspace web (incluindo devDeps para o build do TS).
 RUN npm ci --workspace verificacao-web --include-workspace-root || npm install --workspace verificacao-web
@@ -39,8 +38,7 @@ WORKDIR /app
 
 # Instala apenas deps de produção.
 COPY package.json package-lock.json* ./
-COPY verificacao-web/package.json ./verificacao-web/
-COPY verificacao-web/package-lock.json* ./verificacao-web/
+COPY verificacao-web/package*.json ./verificacao-web/
 RUN npm ci --workspace verificacao-web --omit=dev --include-workspace-root || npm install --workspace verificacao-web --omit=dev
 
 # Copia build compilado.
