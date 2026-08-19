@@ -40,7 +40,11 @@ foreach ($loc in $locs) {
   if ($null -ne $cert) { break }
 }
 if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
-$rsaKey = $cert.GetRSAPrivateKey()
+# GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao). Em .NET antigo,
+# chamamos a extensao de forma estatica e, se nao existir, usamos $cert.PrivateKey.
+$rsaKey = $null
+try { $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert) } catch { $rsaKey = $null }
+if ($null -eq $rsaKey) { $rsaKey = $cert.PrivateKey }
 if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel. Conecte o token/SmartCard e tente novamente.' }
 
 $data = [System.IO.File]::ReadAllBytes($DataFile)
