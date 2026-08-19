@@ -223,7 +223,8 @@ export interface DesktopApi {
     obter: () => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number } | null>>;
     salvar: (input: { nome_signatario: string; cargo: string }) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
     uploadCert: (tipo?: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
-    listarCertsA3: () => Promise<ApiResult<{ thumbprint: string; subject: string; issuer: string; notBefore: string; notAfter: string; hasPrivateKey: boolean; keyAcessivel: boolean }[]>>;
+    listarCertsA3: () => Promise<ApiResult<{ thumbprint: string; subject: string; issuer: string; notBefore: string; notAfter: string; hasPrivateKey: boolean; keyAcessivel: boolean; algorithm: string; store: string }[]>>;
+    testarA3: () => Promise<ApiResult<{ encontrado: boolean; certificados: { store: string; algorithm: string; keyAcessivel: boolean }[]; assinou: boolean; erro?: string }>>;
     salvarCertA3: (thumbprint: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
     assinarXml: (xmlContent: string, senhaPfx: string) => Promise<ApiResult<{ xml: string }>>;
     previewImagem: () => Promise<ApiResult<{ dataUrl: string | null }>>;

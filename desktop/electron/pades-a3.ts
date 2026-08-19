@@ -45,10 +45,12 @@ if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio 
 $cert = $null
 $rsaKey = $null
 foreach ($cand in $candidatos) {
-  # GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao) — chamada estatica;
-  # em .NET antigo cai no $cand.PrivateKey. Qualquer falha tenta o proximo candidato.
+  # Abre a chave privada (RSA OU ECDsa — certificados ICP-Brasil novos podem ser ECC).
+  # A chave so e um gate de acessibilidade: o CmsSigner abaixo assina com o cert.
   try {
-    $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand)
+    $k = $null
+    try { $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand) } catch { $k = $null }
+    if ($null -eq $k) { try { $k = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cand) } catch { $k = $null } }
     if ($null -eq $k) { $k = $cand.PrivateKey }
     if ($null -ne $k) { $cert = $cand; $rsaKey = $k; break }
   } catch {}

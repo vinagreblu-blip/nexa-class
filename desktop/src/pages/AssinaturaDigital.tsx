@@ -39,6 +39,15 @@ interface CertA3 {
   notAfter: string;
   hasPrivateKey: boolean;
   keyAcessivel: boolean;
+  algorithm: string;
+  store: string;
+}
+
+interface TesteA3Resultado {
+  encontrado: boolean;
+  certificados: { store: string; algorithm: string; keyAcessivel: boolean }[];
+  assinou: boolean;
+  erro?: string;
 }
 
 export function AssinaturaDigital() {
@@ -63,6 +72,11 @@ export function AssinaturaDigital() {
   const [carregandoCerts, setCarregandoCerts] = useState(false);
   const [certA3Sel, setCertA3Sel] = useState<string | null>(null);
   const [erroA3, setErroA3] = useState<string | null>(null);
+
+  // Teste de assinatura A3
+  const [testando, setTestando] = useState(false);
+  const [testeResultado, setTesteResultado] = useState<TesteA3Resultado | null>(null);
+  const [testeErro, setTesteErro] = useState<string | null>(null);
 
   // Assinar XML
   const [modalAssinar, setModalAssinar] = useState(false);
@@ -207,6 +221,20 @@ export function AssinaturaDigital() {
     }
   }
 
+  async function testarAssinaturaA3() {
+    setErro(null);
+    setTesteResultado(null);
+    setTesteErro(null);
+    setTestando(true);
+    const res = await api.assinatura.testarA3();
+    setTestando(false);
+    if (res.ok && res.data) {
+      setTesteResultado(res.data);
+    } else {
+      setTesteErro(res.error ?? 'Erro ao executar o teste de assinatura');
+    }
+  }
+
   return (
     <div style={{ maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
@@ -334,6 +362,58 @@ export function AssinaturaDigital() {
             </button>
           </div>
         </div>
+
+        {/* Teste de assinatura A3 (sem emitir documento) */}
+        {tipoCert === 'A3' && (
+          <div style={{ marginTop: 16, padding: 14, border: '2px dashed var(--border)', borderRadius: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 13 }}>
+                <strong>Testar assinatura do token</strong>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  Verifica o certificado vinculado e assina um payload de teste (o driver do token pede o PIN). Não emite documento.
+                </div>
+              </div>
+              <button className="btn-primary" onClick={testarAssinaturaA3} disabled={testando} style={{ fontSize: 13, padding: '8px 14px', whiteSpace: 'nowrap' }}>
+                {testando ? 'Testando… (aguarde o PIN)' : 'Testar assinatura'}
+              </button>
+            </div>
+
+            {testeErro && (
+              <div className="alert alert-error" style={{ marginTop: 12, marginBottom: 0 }}>{testeErro}</div>
+            )}
+
+            {testeResultado && (
+              <div style={{ marginTop: 12 }}>
+                {testeResultado.assinou ? (
+                  <div className="alert alert-success" style={{ marginBottom: 8 }}>
+                    ✅ <strong>Assinatura de teste concluída</strong> — o token assina normalmente. A emissão de documentos deve funcionar.
+                  </div>
+                ) : !testeResultado.encontrado ? (
+                  <div className="alert alert-error" style={{ marginBottom: 8 }}>
+                    ❌ Certificado vinculado <strong>não encontrado</strong> no repositório do Windows. Reimporte o A3 (botão acima).
+                  </div>
+                ) : testeResultado.certificados.every((c) => !c.keyAcessivel) ? (
+                  <div className="alert alert-error" style={{ marginBottom: 8 }}>
+                    ❌ Certificado encontrado, mas a <strong>chave privada não abre</strong> — token desconectado ou middleware do fabricante com problema. Verifique o utilitário do middleware (ícone perto do relógio) e reconecte o token.
+                  </div>
+                ) : (
+                  <div className="alert alert-error" style={{ marginBottom: 8 }}>
+                    ❌ A chave abre, mas a <strong>assinatura de teste falhou</strong>: {testeResultado.erro || 'erro desconhecido (PIN cancelado ou recusado?)'}
+                  </div>
+                )}
+                {testeResultado.certificados.length > 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    {testeResultado.certificados.map((c, i) => (
+                      <div key={i}>
+                        Cópia em <strong>{c.store}</strong> · algoritmo <strong>{c.algorithm}</strong> · chave {c.keyAcessivel ? 'acessível' : 'inacessível'}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Assinar XML */}
@@ -472,7 +552,7 @@ export function AssinaturaDigital() {
                 const expirado = new Date(c.notAfter) < new Date();
                 return (
                   <label
-                    key={c.thumbprint}
+                    key={`${c.store}-${c.thumbprint}`}
                     style={{
                       display: 'flex', gap: 12, alignItems: 'flex-start', padding: 12,
                       border: `2px solid ${sel ? '#22C55E' : 'var(--border)'}`, borderRadius: 10, cursor: 'pointer',
@@ -490,6 +570,9 @@ export function AssinaturaDigital() {
                       <div style={{ fontWeight: 600, fontSize: 13, color: '#0F172A' }}>{extrairCN(c.subject)}</div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                         Emissor: {extrairCN(c.issuer)}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        Algoritmo: {c.algorithm || 'RSA'} · Repositório: {c.store === 'LocalMachine' ? 'LocalMachine (máquina)' : 'CurrentUser (usuário)'}
                       </div>
                       <div style={{ fontSize: 11, color: expirado ? '#DC2626' : 'var(--text-muted)', marginTop: 2 }}>
                         Válido até: {formatarData(c.notAfter)} {expirado ? '· EXPIRADO' : ''}

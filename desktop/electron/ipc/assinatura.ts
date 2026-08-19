@@ -34,6 +34,20 @@ export interface CertA3Info {
   hasPrivateKey: boolean;
   /** true se a chave privada realmente abre (token conectado + middleware instalado). */
   keyAcessivel: boolean;
+  /** Algoritmo da chave: 'RSA' | 'ECC'. */
+  algorithm: string;
+  /** Repositório onde a cópia foi encontrada: 'CurrentUser' | 'LocalMachine'. */
+  store: string;
+}
+
+/** Resultado do teste de assinatura A3 (botão "Testar assinatura"). */
+export interface TesteA3Resultado {
+  encontrado: boolean;
+  certificados: { store: string; algorithm: string; keyAcessivel: boolean }[];
+  /** true se a assinatura de teste foi concluída (PIN aceito pelo driver). */
+  assinou: boolean;
+  /** Mensagem de erro da assinatura de teste, se houver. */
+  erro?: string;
 }
 
 function obter(_event: IpcMainInvokeEvent): ApiResult<Assinatura | null> {
@@ -150,27 +164,28 @@ async function uploadCert(
 // provider "Cert:" do PowerShell, que pode travar quando há token/SmartCard conectado
 // (invoca o CSP do fabricante p/ enumerar). O X509Store.Open(ReadOnly) só lê os objetos,
 // sem acionar o CSP. JSON gravado em arquivo UTF-8 (evita bug de codepage do stdout).
+// Inclui Store (CurrentUser/LocalMachine), Algorithm (RSA/ECC) e KeyAcessivel (testa
+// abrir a chave via RSA OU ECDsa, sem pedir PIN — só adquire o contexto do CSP/KSP).
 const PS_LISTAR_A3 = `
 param([string]$OutFile)
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $certs = @()
-$locs = @(
-  ([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser),
-  ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
-)
-foreach ($loc in $locs) {
+$locs = @('CurrentUser', 'LocalMachine')
+foreach ($locName in $locs) {
+  $loc = [System.Security.Cryptography.X509Certificates.StoreLocation]::$locName
   try {
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
     foreach ($c in $store.Certificates) {
       if ($c.HasPrivateKey) {
-        # Testa se a chave privada realmente abre (sem pedir PIN — apenas adquire o
-        # contexto do CSP/KSP). Certificado listado sem chave acessivel = token
-        # desconectado ou middleware do fabricante ausente — avisa na importacao.
+        $algName = 'RSA'
+        try { $oidName = $c.PublicKey.Oid.FriendlyName; if ($oidName -match 'ecc|ecdsa') { $algName = 'ECC' } } catch {}
         $keyOk = $false
         try {
-          $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
+          $k = $null
+          try { $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c) } catch { $k = $null }
+          if ($null -eq $k) { try { $k = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) } catch { $k = $null } }
           if ($null -eq $k) { $k = $c.PrivateKey }
           if ($null -ne $k) { $keyOk = $true; try { $k.Dispose() } catch {} }
         } catch { $keyOk = $false }
@@ -182,13 +197,15 @@ foreach ($loc in $locs) {
           NotAfter      = $c.NotAfter.ToString('o')
           HasPrivateKey = $c.HasPrivateKey
           KeyAcessivel  = $keyOk
+          Algorithm     = $algName
+          Store         = $locName
         }
       }
     }
     $store.Close()
   } catch {}
 }
-$unique = @($certs | Sort-Object Thumbprint -Unique)
+$unique = @($certs | Sort-Object Thumbprint, Store -Unique)
 $json = [pscustomobject]@{ Certs = @($unique) } | ConvertTo-Json -Compress -Depth 5
 [System.IO.File]::WriteAllText($OutFile, $json, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output 'OK'
@@ -217,17 +234,22 @@ foreach ($loc in $locs) {
 }
 if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine). Reimporte o certificado A3 em Assinatura Digital.' }
 $cert = $null
-$rsaKey = $null
+$signKey = $null
+$keyAlg = 'RSA'
 foreach ($cand in $candidatos) {
-  # GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao) — chamada estatica;
-  # em .NET antigo cai no $cand.PrivateKey. Qualquer falha tenta o proximo candidato.
+  # Abre a chave privada (RSA OU ECDsa — certificados ICP-Brasil novos podem ser ECC).
+  # Metodos de extensao do .NET 4.6+ chamados de forma estatica; fallback $cand.PrivateKey.
   try {
-    $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand)
-    if ($null -eq $k) { $k = $cand.PrivateKey }
-    if ($null -ne $k) { $cert = $cand; $rsaKey = $k; break }
+    $k = $null
+    try { $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand) } catch { $k = $null }
+    if ($null -ne $k) { $keyAlg = 'RSA' } else {
+      try { $k = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cand) } catch { $k = $null }
+      if ($null -ne $k) { $keyAlg = 'ECC' } else { $k = $cand.PrivateKey }
+    }
+    if ($null -ne $k) { $cert = $cand; $signKey = $k; break }
   } catch {}
 }
-if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel: o certificado foi encontrado, mas o Windows nao conseguiu abrir a chave do token. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata...).' }
+if ($null -eq $signKey) { throw 'Chave privada nao acessivel: o certificado foi encontrado, mas o Windows nao conseguiu abrir a chave do token. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata...).' }
 
 $xmlIn = [System.IO.File]::ReadAllText($InFile, [System.Text.Encoding]::UTF8)
 $doc = New-Object System.Xml.XmlDocument
@@ -235,9 +257,13 @@ $doc.PreserveWhitespace = $true
 $doc.LoadXml($xmlIn)
 
 $signedXml = New-Object System.Security.Cryptography.Xml.SignedXml($doc)
-$signedXml.SigningKey = $rsaKey
+$signedXml.SigningKey = $signKey
 $signedXml.SignedInfo.CanonicalizationMethod = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
-$signedXml.SignedInfo.SignatureMethod = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256'
+if ($keyAlg -eq 'ECC') {
+  $signedXml.SignedInfo.SignatureMethod = 'http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256'
+} else {
+  $signedXml.SignedInfo.SignatureMethod = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256'
+}
 
 $ref = New-Object System.Security.Cryptography.Xml.Reference
 $ref.Uri = ''
@@ -257,6 +283,66 @@ $sig = $signedXml.GetXml()
 $doc.DocumentElement.AppendChild($doc.ImportNode($sig, $true)) | Out-Null
 
 [System.IO.File]::WriteAllText($OutFile, $doc.OuterXml, (New-Object System.Text.UTF8Encoding($false)))
+Write-Output 'OK'
+`.trim();
+
+// PowerShell: teste de assinatura A3 SEM emitir documento. Fase 1 diagnostica
+// (acha o cert, algoritmo, repositorio e se a chave abre — sem pedir PIN); fase 2,
+// se ha chave acessivel, assina um payload minimo via SignedCms (o driver pede o
+// PIN). Resultado em JSON estruturado (erros da fase 2 nao abortam o exit code).
+const PS_TESTAR_A3 = `
+param([string]$Thumbprint, [string]$OutFile)
+$ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+Add-Type -AssemblyName System.Security
+
+$result = [ordered]@{ Encontrado = $false; Certs = @(); Assinou = $false; Erro = '' }
+$candidatos = @()
+$infos = @()
+$locs = @('CurrentUser', 'LocalMachine')
+foreach ($locName in $locs) {
+  $loc = [System.Security.Cryptography.X509Certificates.StoreLocation]::$locName
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) {
+      if ($c.Thumbprint -ieq $Thumbprint) {
+        $algName = 'RSA'
+        try { $oidName = $c.PublicKey.Oid.FriendlyName; if ($oidName -match 'ecc|ecdsa') { $algName = 'ECC' } } catch {}
+        $k = $null
+        try { $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c) } catch { $k = $null }
+        if ($null -eq $k) { try { $k = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) } catch { $k = $null } }
+        if ($null -eq $k) { $k = $c.PrivateKey }
+        $keyOk = $null -ne $k
+        if ($keyOk) { try { $k.Dispose() } catch {} }
+        $infos += [pscustomobject]@{ Store = $locName; Algorithm = $algName; KeyAcessivel = $keyOk }
+        if ($keyOk) { $candidatos += $c }
+      }
+    }
+    $store.Close()
+  } catch {}
+}
+$result.Certs = @($infos)
+if ($infos.Count -gt 0) { $result.Encontrado = $true }
+
+if ($candidatos.Count -gt 0) {
+  try {
+    $cert = $candidatos[0]
+    $data = [System.Text.Encoding]::UTF8.GetBytes('nexa-teste-assinatura')
+    $content = New-Object System.Security.Cryptography.Pkcs.ContentInfo -ArgumentList (,[byte[]]$data)
+    $cms = New-Object System.Security.Cryptography.Pkcs.SignedCms -ArgumentList $content, $true
+    $signer = New-Object System.Security.Cryptography.Pkcs.CmsSigner($cert)
+    $signer.DigestAlgorithm = New-Object System.Security.Cryptography.Oid('2.16.840.1.101.3.4.2.1')
+    $signer.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
+    $cms.ComputeSignature($signer, $false)
+    if ($cms.Encode().Length -gt 0) { $result.Assinou = $true }
+  } catch {
+    $result.Erro = $_.Exception.Message
+  }
+}
+
+$json = [pscustomobject]$result | ConvertTo-Json -Compress -Depth 5
+[System.IO.File]::WriteAllText($OutFile, $json, (New-Object System.Text.UTF8Encoding($false)))
 Write-Output 'OK'
 `.trim();
 
@@ -370,6 +456,8 @@ async function listarCertsA3(_event: IpcMainInvokeEvent): Promise<ApiResult<Cert
       notAfter: String(c?.NotAfter ?? c?.notAfter ?? ''),
       hasPrivateKey: Boolean(c?.HasPrivateKey ?? c?.hasPrivateKey ?? false),
       keyAcessivel: Boolean(c?.KeyAcessivel ?? c?.keyAcessivel ?? false),
+      algorithm: String(c?.Algorithm ?? c?.algorithm ?? 'RSA'),
+      store: String(c?.Store ?? c?.store ?? 'CurrentUser'),
     }));
     logger.info({ total: lista.length }, 'listarCertsA3: leitura concluída');
     return { ok: true, data: lista };
@@ -400,6 +488,46 @@ function salvarCertA3(_event: IpcMainInvokeEvent, thumbprint: string): ApiResult
     .run('A3', thumbprint.toUpperCase(), ass.id);
   const row = db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(ass.id) as Assinatura;
   return { ok: true, data: row };
+}
+
+/**
+ * Testa a assinatura A3 SEM emitir documento: diagnostica o certificado vinculado
+ * (repositório, algoritmo, chave acessível) e, se a chave abrir, assina um payload
+ * mínimo via SignedCms — o driver do token pede o PIN, exatamente como na emissão.
+ */
+async function testarA3(_event: IpcMainInvokeEvent): Promise<ApiResult<TesteA3Resultado>> {
+  const ass = getAssinaturaAtiva();
+  if (!ass || ass.certificado_tipo !== 'A3' || !ass.certificado_a3_thumbprint) {
+    return { ok: false, error: 'Nenhum certificado A3 vinculado. Importe o certificado A3 primeiro.' };
+  }
+  const outFile = path.join(os.tmpdir(), `nexa_teste_a3_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
+  try {
+    await runPowerShellScriptAsync(
+      PS_TESTAR_A3,
+      { Thumbprint: ass.certificado_a3_thumbprint, OutFile: outFile },
+      120000
+    );
+    if (!fs.existsSync(outFile)) {
+      return { ok: false, error: 'O teste não produziu resultado. Tente novamente.' };
+    }
+    const parsed = JSON.parse(fs.readFileSync(outFile, 'utf8')) as any;
+    const resultado: TesteA3Resultado = {
+      encontrado: Boolean(parsed?.Encontrado ?? false),
+      certificados: (Array.isArray(parsed?.Certs) ? parsed.Certs : (parsed?.Certs ? [parsed.Certs] : [])).map((c: any) => ({
+        store: String(c?.Store ?? 'CurrentUser'),
+        algorithm: String(c?.Algorithm ?? 'RSA'),
+        keyAcessivel: Boolean(c?.KeyAcessivel ?? false),
+      })),
+      assinou: Boolean(parsed?.Assinou ?? false),
+      erro: parsed?.Erro ? String(parsed.Erro) : undefined,
+    };
+    return { ok: true, data: resultado };
+  } catch (e: any) {
+    const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
+    return { ok: false, error: traduzirErroA3(msg) };
+  } finally {
+    try { fs.unlinkSync(outFile); } catch { /* noop */ }
+  }
 }
 
 /** Pré-visualização da imagem da assinatura como dataURL (evita require('fs') no renderer). */
@@ -551,6 +679,7 @@ export function registrarAssinaturaHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT, requerAuth(uploadCert));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_LISTAR_CERTS_A3, requerAuth(listarCertsA3));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_SALVAR_CERT_A3, requerAuth(salvarCertA3));
+  ipcMain.handle(IPC_CHANNELS.ASSINATURA_TESTAR_A3, requerAuth(testarA3));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_ASSINAR_XML, requerAuth(assinarXmlHandler));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_PREVIEW_IMAGEM, requerAuth(previewImagem));
 }

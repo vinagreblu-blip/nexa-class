@@ -292,6 +292,7 @@ export const IPC_CHANNELS = {
   ASSINATURA_UPLOAD_CERT: 'assinatura:upload-cert',
   ASSINATURA_LISTAR_CERTS_A3: 'assinatura:listar-certs-a3',
   ASSINATURA_SALVAR_CERT_A3: 'assinatura:salvar-cert-a3',
+  ASSINATURA_TESTAR_A3: 'assinatura:testar-a3',
   ASSINATURA_ASSINAR_XML: 'assinatura:assinar-xml',
   ASSINATURA_PREVIEW_IMAGEM: 'assinatura:preview-imagem',
   CLOUD_STATUS: 'cloud:status',

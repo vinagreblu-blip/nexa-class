@@ -212,8 +212,10 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_SALVAR, input),
     uploadCert: (tipo?: string): Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT, tipo),
-    listarCertsA3: (): Promise<ApiResult<{ thumbprint: string; subject: string; issuer: string; notBefore: string; notAfter: string; hasPrivateKey: boolean; keyAcessivel: boolean }[]>> =>
+    listarCertsA3: (): Promise<ApiResult<{ thumbprint: string; subject: string; issuer: string; notBefore: string; notAfter: string; hasPrivateKey: boolean; keyAcessivel: boolean; algorithm: string; store: string }[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_LISTAR_CERTS_A3),
+    testarA3: (): Promise<ApiResult<{ encontrado: boolean; certificados: { store: string; algorithm: string; keyAcessivel: boolean }[]; assinou: boolean; erro?: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TESTAR_A3),
     salvarCertA3: (thumbprint: string): Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_SALVAR_CERT_A3, thumbprint),
     assinarXml: (xmlContent: string, senhaPfx: string): Promise<ApiResult<{ xml: string }>> =>
