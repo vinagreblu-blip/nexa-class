@@ -284,6 +284,47 @@ $x509.AddCertificate($cert)
 $keyInfo.AddClause($x509)
 $signedXml.KeyInfo = $keyInfo
 
+if ($keyAlg -eq 'ECC') {
+  # O SignedXml do .NET Framework NAO traz SignatureDescription para ecdsa-sha256
+  # (suporte nativo so no .NET Core 3+), o que gera "O SignatureDescription nao
+  # pôde ser criado para o algoritmo de assinatura fornecido". Registra um
+  # customizado: ECDsa cuja saida SignHash e r||s — exatamente o formato que o
+  # XMLDSig ECDSA (RFC 4051) exige.
+  if (-not ('ECDsaP1363SignatureDescription' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System.Security.Cryptography;
+
+public class ECDsaP1363SignatureFormatter : AsymmetricSignatureFormatter {
+    private ECDsa _key;
+    public override void SetKey(AsymmetricAlgorithm key) { _key = (ECDsa)key; }
+    public override void SetHashAlgorithm(string name) { }
+    public override byte[] CreateSignature(byte[] hash) {
+        // .NET Framework so traz SignHash(byte[]) (sem HashAlgorithmName — isso e
+        // .NET Core). Basta: ECDSA assina os bytes do digest SHA-256 direto (r||s).
+        return _key.SignHash(hash);
+    }
+}
+public class ECDsaP1363SignatureDeformatter : AsymmetricSignatureDeformatter {
+    private ECDsa _key;
+    public override void SetKey(AsymmetricAlgorithm key) { _key = (ECDsa)key; }
+    public override void SetHashAlgorithm(string name) { }
+    public override bool VerifySignature(byte[] hash, byte[] signature) {
+        return _key.VerifyHash(hash, signature);
+    }
+}
+public class ECDsaP1363SignatureDescription : SignatureDescription {
+    public ECDsaP1363SignatureDescription() {
+        KeyAlgorithm = typeof(ECDsa).AssemblyQualifiedName;
+        DigestAlgorithm = "SHA256";
+        FormatterAlgorithm = typeof(ECDsaP1363SignatureFormatter).AssemblyQualifiedName;
+        DeformatterAlgorithm = typeof(ECDsaP1363SignatureDeformatter).AssemblyQualifiedName;
+    }
+}
+'@
+  }
+  [System.Security.Cryptography.CryptoConfig]::AddAlgorithm([ECDsaP1363SignatureDescription], 'http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256')
+}
+
 $signedXml.ComputeSignature()
 $sig = $signedXml.GetXml()
 $doc.DocumentElement.AppendChild($doc.ImportNode($sig, $true)) | Out-Null
