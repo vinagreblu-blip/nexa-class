@@ -18,49 +18,7 @@ import { gerarHashConteudo, gerarQrPng, formatarDataHoraBrasilia } from '../util
 import { validarExclusaoDeclaracao } from '../utils/regras';
 import { montarNomePdf } from '../utils/sistema';
 import { logger } from '../utils/logger';
-
-async function registrarNoWeb(
-  codigo: string,
-  hash: string,
-  aluno: Aluno,
-  emitidoEm: string
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const url = `${CONFIG.VERIFICACAO_BASE_URL.replace(/\/$/, '')}/api/declaracoes`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': CONFIG.VERIFICACAO_API_KEY,
-      },
-      body: JSON.stringify({
-        codigo_verificacao: codigo,
-        hash_conteudo: hash,
-        dados_aluno: {
-          nome: aluno.nome,
-          matricula: aluno.matricula,
-          curso: aluno.curso ?? null,
-          cpf: aluno.cpf ?? null,
-        },
-        emitido_em: emitidoEm,
-      }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    if (!resp.ok) {
-      const texto = await resp.text().catch(() => '');
-      return { ok: false, error: `Serviço web retornou ${resp.status}: ${texto}` };
-    }
-    return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Falha ao contatar o serviço de verificação' };
-  }
-}
+import { registrarDeclaracaoWeb, removerDeclaracaoWeb } from '../web-registro';
 
 function gerarPdf(opts: {
   aluno: Aluno;
@@ -389,7 +347,12 @@ async function emitir(
     .prepare('SELECT * FROM declaracoes WHERE id = ?')
     .get(info.lastInsertRowid) as Declaracao;
 
-  const webResult = await registrarNoWeb(codigo, hash, aluno, agora);
+  const webResult = await registrarDeclaracaoWeb({
+    codigo_verificacao: codigo,
+    hash_conteudo: hash,
+    aluno,
+    emitidoEm: agora,
+  });
   if (webResult.ok) {
     db.prepare('UPDATE declaracoes SET enviado_web = 1 WHERE id = ?').run(declaracao.id);
     declaracao.enviado_web = 1;
@@ -417,7 +380,7 @@ async function emitir(
 
   if (destino.canceled || !destino.filePath) {
     db.prepare('DELETE FROM declaracoes WHERE id = ?').run(declaracao.id);
-    if (webResult.ok) removerDoWeb(codigo).catch(() => {});
+    if (webResult.ok) removerDeclaracaoWeb(codigo).catch(() => {});
     return { ok: false, error: 'Operação cancelada pelo usuário' };
   };
 
@@ -515,23 +478,6 @@ function listar(_event: IpcMainInvokeEvent, alunoId?: number): ApiResult<any[]> 
   return { ok: true, data: rows };
 }
 
-async function removerDoWeb(codigo: string): Promise<boolean> {
-  try {
-    const url = `${CONFIG.VERIFICACAO_BASE_URL.replace(/\/$/, '')}/api/declaracoes/${encodeURIComponent(codigo)}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const resp = await fetch(url, {
-      method: 'DELETE',
-      headers: { 'x-api-key': CONFIG.VERIFICACAO_API_KEY },
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    return resp.ok;
-  } catch {
-    return false;
-  }
-}
-
 async function excluir(
   _event: IpcMainInvokeEvent,
   id: number,
@@ -555,7 +501,7 @@ async function excluir(
 
   db.prepare('DELETE FROM declaracoes WHERE id = ?').run(id);
 
-  const webOk = await removerDoWeb(decl.codigo_verificacao);
+  const webOk = await removerDeclaracaoWeb(decl.codigo_verificacao);
 
   return { ok: true, data: { webOk } };
 }

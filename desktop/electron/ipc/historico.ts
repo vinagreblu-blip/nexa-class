@@ -6,7 +6,6 @@ import { randomUUID, createHash } from 'node:crypto';
 import QRCode from 'qrcode';
 import PDFDocument from 'pdfkit';
 import { getDb } from '../database';
-import { CONFIG } from '../config';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult, HistoricoDisciplina, HistoricoDisciplinaInput } from '../types';
 import { getFaculdadeInfo } from '../faculdades';
@@ -18,9 +17,11 @@ import { renderHtmlDoisDeJulhoPdf } from '../dois-de-julho-historico-html';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva, assinarXml } from './assinatura';
 import { assinarPdfSeConfigurado } from '../pades';
-import { gerarUrlValidacao } from '../qr-validador';
+import { gerarUrlValidacao, textoInstrucaoQr } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { formatarDataHoraBrasilia } from '../utils';
+import { logger } from '../utils/logger';
+import { registrarDeclaracaoWeb } from '../web-registro';
 
 // Normaliza nomes de disciplinas/docentes para formato título
 function formatarNome(s: string): string {
@@ -44,39 +45,6 @@ function formatarData(s: string | null | undefined): string {
 function gerarHashConteudo(aluno: Aluno, emitidoEm: string): string {
   const payload = [aluno.id, aluno.matricula, aluno.nome, aluno.curso ?? '', aluno.faculdade ?? '', emitidoEm].join('|');
   return createHash('sha256').update(payload, 'utf8').digest('hex');
-}
-
-async function registrarNoWeb(
-  codigo: string,
-  hash: string,
-  aluno: Aluno,
-  emitidoEm: string
-): Promise<boolean> {
-  try {
-    const url = `${CONFIG.VERIFICACAO_BASE_URL.replace(/\/$/, '')}/api/declaracoes`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': CONFIG.VERIFICACAO_API_KEY },
-      body: JSON.stringify({
-        codigo_verificacao: codigo,
-        hash_conteudo: hash,
-        dados_aluno: {
-          nome: aluno.nome,
-          matricula: aluno.matricula,
-          curso: aluno.curso ?? null,
-          cpf: aluno.cpf ?? null,
-        },
-        emitido_em: emitidoEm,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    return resp.ok;
-  } catch {
-    return false;
-  }
 }
 
 async function gerarQrPng(url: string): Promise<Buffer> {
@@ -246,7 +214,11 @@ async function gerarPdf(
   const codigo = randomUUID();
   const emitidoEm = new Date().toISOString();
   const hash = gerarHashConteudo(aluno, emitidoEm);
-  const enviadoWeb = await registrarNoWeb(codigo, hash, aluno, emitidoEm);
+  const webResult = await registrarDeclaracaoWeb({ codigo_verificacao: codigo, hash_conteudo: hash, aluno, emitidoEm });
+  if (!webResult.ok) {
+    logger.warn({ alunoId: aluno.id, erro: webResult.error }, 'Falha ao registrar histórico no serviço web');
+  }
+  const enviadoWeb = webResult.ok;
   const urlVerificacao = gerarUrlValidacao({
     n: aluno.nome,
     m: aluno.matricula || String(aluno.id),
@@ -387,7 +359,7 @@ const COLUNAS = [
 ];
 
 function renderHistoricoPdf(opts: RenderOpts): Promise<void> {
-  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm } = opts;
+  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm, urlVerificacao } = opts;
 
   const doc = new PDFDocument({ size: 'A4', margin: MARGEM, layout: 'portrait' });
   const stream = fs.createWriteStream(destinoPath);
@@ -605,13 +577,12 @@ function renderHistoricoPdf(opts: RenderOpts): Promise<void> {
       /* ignora */
     }
     doc.font(F_REG()).fontSize(7).fillColor('#000000');
-    doc.text(
-      `Código de verificação: ${codigoVerificacao}`,
+    doc.text(`Código de verificação: ${codigoVerificacao}`,
       MARGEM,
       estado.y + qrSize + 2,
       { width: utilizavel, align: 'center' }
     );
-    doc.text(`Escaneie o QR Code para validar em qualquer dispositivo.`, MARGEM, doc.y, { width: utilizavel, align: 'center' });
+    doc.text(textoInstrucaoQr(urlVerificacao), MARGEM, doc.y, { width: utilizavel, align: 'center' });
   }
 
   // ===== EMISSÃO (horário de Brasília) =====
@@ -646,7 +617,7 @@ const OBSERVACOES_ENG_MEC =
   'Declaro que o aluno acima mencionado cursou com aprovação todas as disciplinas obrigatórias, integralizou a carga horária total exigida e demais exigências para conclusão do Curso de Bacharelado em Engenharia de Produção Mecânica, conforme grade curricular do curso.';
 
 function renderHistoricoEngMecPdf(opts: RenderOpts): Promise<void> {
-  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm } = opts;
+  const { aluno, disciplinas, faculdade, cursoInfo, destinoPath, codigoVerificacao, qrBuffer, semAssinatura, emitidoEm, urlVerificacao } = opts;
 
   const MARG = 40;
   const doc = new PDFDocument({ size: 'A4', margin: MARG, layout: 'portrait' });
@@ -960,7 +931,7 @@ function renderHistoricoEngMecPdf(opts: RenderOpts): Promise<void> {
     } catch { /* ignora */ }
     doc.font(F_REG()).fontSize(7).fillColor('#000000');
     doc.text(`Código de verificação: ${codigoVerificacao}`, MARG, y + qrSize + 2, { width: utilizavel, align: 'center' });
-    doc.text('Escaneie o QR Code para validar em qualquer dispositivo.', MARG, doc.y, { width: utilizavel, align: 'center' });
+    doc.text(textoInstrucaoQr(urlVerificacao), MARG, doc.y, { width: utilizavel, align: 'center' });
     y = doc.y + 4;
   }
 

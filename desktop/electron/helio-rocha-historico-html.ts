@@ -4,6 +4,7 @@ import type { CursoInfo, FaculdadeInfo } from './faculdades';
 import { getAssinaturaAtiva } from './ipc/assinatura';
 import { formatarDataHoraBrasilia } from './utils';
 import { renderizarHtmlParaPdf } from './faciip-historico-html';
+import { textoInstrucaoQr } from './qr-validador';
 
 export const STYLE_CSS = `
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -616,7 +617,7 @@ function renderVerificacao(codigoVerificacao: string, qrDataUrl: string | null, 
   return `<div class="verificacao">
     ${verImg}
     <p>Código de verificação: ${esc(codigoVerificacao)}</p>
-    <p>Escaneie o QR Code para validar em qualquer dispositivo.</p>
+    <p>${esc(textoInstrucaoQr())}</p>
     <p>Emitido em ${esc(formatarDataHoraBrasilia(emitidoEm))} (horário de Brasília)</p>
   </div>`;
 }

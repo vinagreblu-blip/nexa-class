@@ -33,3 +33,30 @@ export function gerarUrlValidacao(dados: DadosValidacao): string {
   return `${base}/v/${encodeURIComponent(codigo)}`;
 }
 
+/**
+ * Instrução exibida junto ao QR nos PDFs. Quando a URL base é um endereço
+ * privado (RFC1918/loopback/link-local, típico do fallback LAN), o QR só
+ * funciona na mesma rede — o texto não deve prometer "qualquer dispositivo".
+ */
+export function textoInstrucaoQr(url?: string): string {
+  let u: URL;
+  try {
+    u = new URL(url ?? getBaseUrl());
+  } catch {
+    return 'Escaneie o QR Code para validar este documento.';
+  }
+  const host = u.hostname.toLowerCase();
+  const ehPrivado =
+    host === 'localhost' ||
+    host.endsWith('.local') ||
+    host.endsWith('.lan') ||
+    /^127\./.test(host) ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  return ehPrivado
+    ? 'Escaneie o QR Code para validar em dispositivos conectados à mesma rede.'
+    : 'Escaneie o QR Code para validar em qualquer dispositivo.';
+}
+
