@@ -38,6 +38,7 @@ interface CertA3 {
   notBefore: string;
   notAfter: string;
   hasPrivateKey: boolean;
+  keyAcessivel: boolean;
 }
 
 export function AssinaturaDigital() {
@@ -245,7 +246,11 @@ export function AssinaturaDigital() {
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
                 {temCert
                   ? (tipoCert === 'A3'
-                      ? (infoA3 ? `${extrairCN(infoA3.subject)} · válido até ${formatarData(infoA3.notAfter)}` : 'Token não conectado — reconecte e reimporte')
+                      ? (infoA3
+                          ? (infoA3.keyAcessivel
+                              ? `${extrairCN(infoA3.subject)} · válido até ${formatarData(infoA3.notAfter)}`
+                              : `${extrairCN(infoA3.subject)} · chave inacessível — instale o middleware do token`)
+                          : 'Token não conectado — reconecte e reimporte')
                       : `Tipo: ${tipoCert || 'A1'}`)
                   : 'Importe A1 ou A3 para assinar documentos'}
               </div>
@@ -370,7 +375,7 @@ export function AssinaturaDigital() {
             <>
               <button className="btn-ghost" onClick={() => setModalAssinar(false)}>Fechar</button>
               {!xmlResultado && (
-                <button className="btn-primary" onClick={assinarXml} disabled={assinando || !xmlInput.trim() || !senhaPfx}>
+                <button className="btn-primary" onClick={assinarXml} disabled={assinando || !xmlInput.trim() || (tipoCert !== 'A3' && !senhaPfx)}>
                   {assinando ? 'Assinando…' : 'Assinar XML'}
                 </button>
               )}
@@ -489,6 +494,11 @@ export function AssinaturaDigital() {
                       <div style={{ fontSize: 11, color: expirado ? '#DC2626' : 'var(--text-muted)', marginTop: 2 }}>
                         Válido até: {formatarData(c.notAfter)} {expirado ? '· EXPIRADO' : ''}
                       </div>
+                      {!c.keyAcessivel && (
+                        <div style={{ fontSize: 11, color: '#DC2626', marginTop: 2, fontWeight: 600 }}>
+                          ⚠ Chave não acessível — token desconectado ou middleware do fabricante não instalado
+                        </div>
+                      )}
                       <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2, fontFamily: 'monospace' }}>
                         {c.thumbprint}
                       </div>

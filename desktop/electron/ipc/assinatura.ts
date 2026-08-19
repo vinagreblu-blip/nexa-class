@@ -32,6 +32,8 @@ export interface CertA3Info {
   notBefore: string; // ISO 8601
   notAfter: string; // ISO 8601
   hasPrivateKey: boolean;
+  /** true se a chave privada realmente abre (token conectado + middleware instalado). */
+  keyAcessivel: boolean;
 }
 
 function obter(_event: IpcMainInvokeEvent): ApiResult<Assinatura | null> {
@@ -163,6 +165,15 @@ foreach ($loc in $locs) {
     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
     foreach ($c in $store.Certificates) {
       if ($c.HasPrivateKey) {
+        # Testa se a chave privada realmente abre (sem pedir PIN — apenas adquire o
+        # contexto do CSP/KSP). Certificado listado sem chave acessivel = token
+        # desconectado ou middleware do fabricante ausente — avisa na importacao.
+        $keyOk = $false
+        try {
+          $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c)
+          if ($null -eq $k) { $k = $c.PrivateKey }
+          if ($null -ne $k) { $keyOk = $true; try { $k.Dispose() } catch {} }
+        } catch { $keyOk = $false }
         $certs += [pscustomobject]@{
           Thumbprint    = $c.Thumbprint
           Subject       = $c.Subject
@@ -170,6 +181,7 @@ foreach ($loc in $locs) {
           NotBefore     = $c.NotBefore.ToString('o')
           NotAfter      = $c.NotAfter.ToString('o')
           HasPrivateKey = $c.HasPrivateKey
+          KeyAcessivel  = $keyOk
         }
       }
     }
@@ -189,25 +201,33 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Security
 
-# Busca o cert por thumbprint no CurrentUser e LocalMachine (X509Store, sem usar o provider Cert:).
-$cert = $null
+# Busca TODOS os certificados com o thumbprint (CurrentUser E LocalMachine, via
+# X509Store — sem o provider Cert:, que trava em token) e usa o primeiro cuja
+# chave privada realmente ABRE. Uma copia sem chave acessivel (ex.: importada
+# sem o middleware do token) nao pode bloquear a copia boa do outro repositorio.
+$candidatos = @()
 $locs = @(([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser), ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine))
 foreach ($loc in $locs) {
   try {
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $cert = $c; break } }
+    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $candidatos += $c } }
     $store.Close()
   } catch {}
-  if ($null -ne $cert) { break }
 }
-if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
-# GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao). Em .NET antigo,
-# chamamos a extensao de forma estatica e, se nao existir, usamos $cert.PrivateKey.
+if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine). Reimporte o certificado A3 em Assinatura Digital.' }
+$cert = $null
 $rsaKey = $null
-try { $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert) } catch { $rsaKey = $null }
-if ($null -eq $rsaKey) { $rsaKey = $cert.PrivateKey }
-if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel. Conecte o token/SmartCard e tente novamente.' }
+foreach ($cand in $candidatos) {
+  # GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao) — chamada estatica;
+  # em .NET antigo cai no $cand.PrivateKey. Qualquer falha tenta o proximo candidato.
+  try {
+    $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand)
+    if ($null -eq $k) { $k = $cand.PrivateKey }
+    if ($null -ne $k) { $cert = $cand; $rsaKey = $k; break }
+  } catch {}
+}
+if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel: o certificado foi encontrado, mas o Windows nao conseguiu abrir a chave do token. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata...).' }
 
 $xmlIn = [System.IO.File]::ReadAllText($InFile, [System.Text.Encoding]::UTF8)
 $doc = New-Object System.Xml.XmlDocument
@@ -311,6 +331,9 @@ export function traduzirErroA3(msg: string): string {
   if (m.includes('pin') || m.includes('cancelled by the user') || m.includes('cancel')) {
     return 'Operação cancelada ou PIN inválido. Tente novamente e informe o PIN do token quando solicitado.';
   }
+  if (m.includes('chave privada nao acessivel') || m.includes('nao conseguiu abrir a chave')) {
+    return 'Chave privada do token inacessível: o certificado foi encontrado, mas o driver não abriu a chave. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata…).';
+  }
   if (m.includes('cannot find subitem') || m.includes('nao encontrado')) {
     return 'Certificado não encontrado no repositório do Windows. Reimporte o certificado A3.';
   }
@@ -346,6 +369,7 @@ async function listarCertsA3(_event: IpcMainInvokeEvent): Promise<ApiResult<Cert
       notBefore: String(c?.NotBefore ?? c?.notBefore ?? ''),
       notAfter: String(c?.NotAfter ?? c?.notAfter ?? ''),
       hasPrivateKey: Boolean(c?.HasPrivateKey ?? c?.hasPrivateKey ?? false),
+      keyAcessivel: Boolean(c?.KeyAcessivel ?? c?.keyAcessivel ?? false),
     }));
     logger.info({ total: lista.length }, 'listarCertsA3: leitura concluída');
     return { ok: true, data: lista };

@@ -27,25 +27,33 @@ $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 Add-Type -AssemblyName System.Security
 
-# Busca o cert por thumbprint via X509Store (sem o provider Cert:, que trava em token).
-$cert = $null
+# Busca TODOS os certificados com o thumbprint (CurrentUser E LocalMachine, via
+# X509Store — sem o provider Cert:, que trava em token) e usa o primeiro cuja
+# chave privada realmente ABRE. Uma copia sem chave acessivel (ex.: importada
+# sem o middleware do token) nao pode bloquear a copia boa do outro repositorio.
+$candidatos = @()
 $locs = @(([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser), ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine))
 foreach ($loc in $locs) {
   try {
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
     $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $cert = $c; break } }
+    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $candidatos += $c } }
     $store.Close()
   } catch {}
-  if ($null -ne $cert) { break }
 }
-if ($null -eq $cert) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
-# GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao). Em .NET antigo,
-# chamamos a extensao de forma estatica e, se nao existir, usamos $cert.PrivateKey.
+if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine). Reimporte o certificado A3 em Assinatura Digital.' }
+$cert = $null
 $rsaKey = $null
-try { $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert) } catch { $rsaKey = $null }
-if ($null -eq $rsaKey) { $rsaKey = $cert.PrivateKey }
-if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel. Conecte o token/SmartCard e tente novamente.' }
+foreach ($cand in $candidatos) {
+  # GetRSAPrivateKey() so existe no .NET 4.6+ (metodo de extensao) — chamada estatica;
+  # em .NET antigo cai no $cand.PrivateKey. Qualquer falha tenta o proximo candidato.
+  try {
+    $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand)
+    if ($null -eq $k) { $k = $cand.PrivateKey }
+    if ($null -ne $k) { $cert = $cand; $rsaKey = $k; break }
+  } catch {}
+}
+if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel: o certificado foi encontrado, mas o Windows nao conseguiu abrir a chave do token. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata...).' }
 
 $data = [System.IO.File]::ReadAllBytes($DataFile)
 $content = New-Object System.Security.Cryptography.Pkcs.ContentInfo -ArgumentList (,[byte[]]$data)
