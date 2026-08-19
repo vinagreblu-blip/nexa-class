@@ -3,7 +3,7 @@
 #
 # Como usar:
 #  1. Crie conta no Render e conecte seu repositório GitHub.
-#  2. New → Blueprint → selecione este repo. Render detecta render.yaml.
+#  2. New → Blueprint → selecione este repo. Render detecta render.yaml (raiz).
 #  3. Configure as env vars em Dashboard → Environment:
 #       API_KEY       — gerar com `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 #       NODE_ENV      — production (default do blueprint)
@@ -14,13 +14,15 @@
 #
 # Free tier: 750h/mês suficiente para 6 máquinas com uso intermitente.
 # Pode "adormecer" após 15min sem tráfego — primeiro request demora ~30s.
-
+#
+# Nota: o Dockerfile vive em verificacao-web/ mas o contexto de build é a RAIZ
+# do repo (ele copia package.json/package-lock.json raiz para npm workspaces).
 services:
   - type: web
     name: nexa-verificacao
     runtime: docker
     plan: free
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./verificacao-web/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     autoDeploy: true

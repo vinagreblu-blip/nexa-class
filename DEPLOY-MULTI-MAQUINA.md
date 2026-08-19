@@ -52,7 +52,7 @@ Guia passo a passo para configurar o sistema em **6 máquinas Windows** que **n�
 1. **Criar conta** em https://render.com com seu GitHub
 2. **New +** → **Blueprint**
 3. **Selecionar** o repo `vinagreblu-blip/nexa-class`
-4. Render detecta `verificacao-web/render.yaml` automaticamente
+4. Render detecta o `render.yaml` da raiz do repo automaticamente
 5. **Configurar variáveis de ambiente** (Dashboard → Environment):
    - `API_KEY` — gerar com:
      ```bash
