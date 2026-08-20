@@ -42,6 +42,8 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
   const [erroExcluir, setErroExcluir] = useState<string | null>(null);
   const [excluindo, setExcluindo] = useState(false);
   const [modalSenha, setModalSenha] = useState(false);
+  const [gerandoXmlId, setGerandoXmlId] = useState<number | null>(null);
+  const [modalXmlAlvo, setModalXmlAlvo] = useState<DiplomaRow | null>(null);
 
   async function carregar() {
     setCarregando(true);
@@ -102,6 +104,26 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
     } else {
       setErro(res.error ?? 'Erro ao baixar');
     }
+  }
+
+  async function gerarXml(d: DiplomaRow, senhaPfx?: string) {
+    setGerandoXmlId(d.id);
+    setErro(null);
+    setSucesso(null);
+    setModalXmlAlvo(null);
+    const res = await api.diplomas.gerarXml(d.id, senhaPfx);
+    setGerandoXmlId(null);
+    if (res.ok && res.data) {
+      setSucesso(`XML do diploma gerado em: ${res.data.xmlPath}`);
+    } else if (res.error !== 'Operação cancelada') {
+      setErro(res.error ?? 'Erro ao gerar XML');
+    }
+  }
+
+  function iniciarGerarXml(d: DiplomaRow) {
+    setErro(null);
+    setSucesso(null);
+    setModalXmlAlvo(d);
   }
 
   function abrirExclusao(d: DiplomaRow) {
@@ -178,6 +200,14 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
                 <td style={{ display: 'flex', gap: 6 }}>
                   <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => baixar(d)}>
                     Baixar
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    style={{ padding: '4px 10px', fontSize: 12 }}
+                    onClick={() => iniciarGerarXml(d)}
+                    disabled={gerandoXmlId === d.id}
+                  >
+                    {gerandoXmlId === d.id ? 'Gerando…' : 'Gerar XML'}
                   </button>
                   {podeExcluir && (
                     <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 12, color: '#dc2626' }} onClick={() => abrirExclusao(d)}>
@@ -278,6 +308,14 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
           documento={L.docSingular}
           onConfirm={(senha) => void emitir(senha)}
           onClose={() => setModalSenha(false)}
+        />
+      )}
+
+      {modalXmlAlvo && gerandoXmlId === null && (
+        <ModalSenhaCertificado
+          documento={`Diploma (XML) — ${modalXmlAlvo.aluno_nome}`}
+          onConfirm={(senha) => void gerarXml(modalXmlAlvo, senha)}
+          onClose={() => setModalXmlAlvo(null)}
         />
       )}
     </div>

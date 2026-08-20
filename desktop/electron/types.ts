@@ -302,6 +302,7 @@ export const IPC_CHANNELS = {
   DIPLOMA_LISTAR: 'diploma:listar',
   DIPLOMA_EXCLUIR: 'diploma:excluir',
   DIPLOMA_BAIXAR: 'diploma:baixar',
+  DIPLOMA_GERAR_XML: 'diploma:gerar-xml',
   ATA_COLACAO_LISTAR_CONCLUINTES: 'ata-colacao:listar-concluintes',
   ATA_COLACAO_OBTER: 'ata-colacao:obter',
   ATA_COLACAO_SALVAR: 'ata-colacao:salvar',

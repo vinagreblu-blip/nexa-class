@@ -10,11 +10,11 @@ import { getFaculdadeInfo } from '../faculdades';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
-import { getAssinaturaAtiva } from './assinatura';
+import { getAssinaturaAtiva, assinarXml } from './assinatura';
 import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
 import { validarSenhaMaster } from '../utils/regras';
-import { montarNomePdf } from '../utils/sistema';
+import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarHashConteudo, gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
 
@@ -399,9 +399,158 @@ async function baixar(
   return { ok: true, data: { salvoPath: res.filePath } };
 }
 
+function escapeXml(s: string): string {
+  return (s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function formatarDataXml(s: string | null | undefined): string {
+  if (!s) return '';
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return s;
+}
+
+async function gerarXmlDiploma(
+  event: IpcMainInvokeEvent,
+  diplomaId: number,
+  senhaPfx?: string
+): Promise<ApiResult<{ xmlPath: string }>> {
+  const sessao = getSessao();
+  if (!sessao) return { ok: false, error: 'Não autenticado' };
+
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT d.*, a.nome AS aluno_nome, a.matricula AS aluno_matricula, a.cpf AS aluno_cpf,
+              a.rg AS aluno_rg, a.orgao_emissor AS aluno_orgao_emissor, a.sexo AS aluno_sexo,
+              a.data_nascimento AS aluno_data_nascimento, a.naturalidade AS aluno_naturalidade,
+              a.nacionalidade AS aluno_nacionalidade, a.curso AS aluno_curso, a.turno AS aluno_turno,
+              a.faculdade AS aluno_faculdade, a.forma_ingresso AS aluno_forma_ingresso,
+              a.ano_conclusao AS aluno_ano_conclusao, a.data_colacao AS aluno_data_colacao,
+              u.nome AS emitido_por_nome
+       FROM diplomas d
+       JOIN alunos a ON a.id = d.aluno_id
+       JOIN usuarios u ON u.id = d.emitido_por
+       WHERE d.id = ?`
+    )
+    .get(diplomaId) as any | undefined;
+  if (!row) return { ok: false, error: 'Diploma não encontrado' };
+
+  const aluno = {
+    id: row.aluno_id,
+    nome: row.aluno_nome,
+    matricula: row.aluno_matricula,
+    cpf: row.aluno_cpf,
+    rg: row.aluno_rg,
+    orgao_emissor: row.aluno_orgao_emissor,
+    sexo: row.aluno_sexo,
+    data_nascimento: row.aluno_data_nascimento,
+    naturalidade: row.aluno_naturalidade,
+    nacionalidade: row.aluno_nacionalidade,
+    curso: row.aluno_curso,
+    turno: row.aluno_turno,
+    faculdade: row.aluno_faculdade,
+    forma_ingresso: row.aluno_forma_ingresso,
+    ano_conclusao: row.aluno_ano_conclusao,
+    data_colacao: row.aluno_data_colacao,
+  } as Aluno;
+
+  const fac = getFaculdadeInfo(aluno.faculdade);
+  const cursoInfo = aluno.curso && fac.cursos[aluno.curso] ? fac.cursos[aluno.curso] : null;
+  const cursoNome = cursoInfo?.nome || aluno.curso || '';
+  const e = escapeXml;
+
+  const discRows = db.prepare('SELECT ch FROM historico_disciplinas WHERE aluno_id = ?').all(aluno.id) as { ch: string | null }[];
+  const cargaHorariaTotal = discRows.reduce((s, d) => {
+    const n = parseInt((d.ch ?? '').replace(/\D/g, '') || '0', 10);
+    return s + (isNaN(n) ? 0 : n);
+  }, 0);
+
+  const dataConclusao = aluno.ano_conclusao && aluno.ano_conclusao !== 'Cursando' ? formatarDataXml(aluno.ano_conclusao) : '';
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<diploma xmlns="https://nexa-class.edu/diploma">
+  <cabecalho>
+    <sistema>NEXA CLASS</sistema>
+    <geradoEm>${new Date().toISOString()}</geradoEm>
+    <instituicao>${e(fac.nome)}</instituicao>
+    <cnpj>${e(fac.cnpj ?? '')}</cnpj>
+  </cabecalho>
+  <aluno>
+    <nome>${e(aluno.nome)}</nome>
+    <matricula>${e(aluno.matricula)}</matricula>
+    <cpf>${e(aluno.cpf || '')}</cpf>
+    <rg>${e(aluno.rg || '')}</rg>
+    <orgaoEmissor>${e(aluno.orgao_emissor || '')}</orgaoEmissor>
+    <sexo>${e(aluno.sexo || '')}</sexo>
+    <dataNascimento>${e(formatarDataXml(aluno.data_nascimento))}</dataNascimento>
+    <naturalidade>${e(aluno.naturalidade || '')}</naturalidade>
+    <nacionalidade>${e(aluno.nacionalidade || '')}</nacionalidade>
+  </aluno>
+  <curso>
+    <nome>${e(cursoNome)}</nome>
+    <codEmec>${e(cursoInfo?.codEmec || '')}</codEmec>
+    <turno>${e(cursoInfo?.turno || aluno.turno || '')}</turno>
+    <regulatorio>${e(cursoInfo?.regulatory || '')}</regulatorio>
+  </curso>
+  <conclusao>
+    <cargaHorariaTotal>${cargaHorariaTotal}</cargaHorariaTotal>
+    <formaIngresso>${e(aluno.forma_ingresso || 'Vestibular')}</formaIngresso>
+    <dataConclusao>${e(dataConclusao)}</dataConclusao>
+    <dataColacao>${e(formatarDataXml(aluno.data_colacao))}</dataColacao>
+    <titulo>Bacharelado</titulo>
+  </conclusao>
+  <verificacao>
+    <codigo>${e(row.codigo_verificacao)}</codigo>
+    <hash>${e(row.hash_conteudo)}</hash>
+    <emitidoEm>${e(row.emitido_em)}</emitidoEm>
+    <emitidoPor>${e(row.emitido_por_nome)}</emitidoPor>
+  </verificacao>
+</diploma>
+`;
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const nomeArquivo = montarNomeArquivo('diploma', aluno.nome, aluno.matricula || String(aluno.id), diplomaId, 'xml');
+  const destino = win
+    ? await dialog.showSaveDialog(win, {
+        title: 'Salvar Diploma XML',
+        defaultPath: nomeArquivo,
+        filters: [{ name: 'XML', extensions: ['xml'] }],
+      })
+    : { canceled: true, filePath: '' };
+
+  if (destino.canceled || !destino.filePath) {
+    return { ok: false, error: 'Operação cancelada' };
+  }
+
+  // XMLDSig: assina o XML quando há certificado ativo (A1 = senha; A3 = PIN pelo driver).
+  let xmlFinal = xml;
+  const ass = getAssinaturaAtiva();
+  const temCert =
+    ass &&
+    ((ass.certificado_tipo === 'A3' && !!ass.certificado_a3_thumbprint) ||
+      (ass.certificado_path && fs.existsSync(ass.certificado_path)));
+  if (temCert) {
+    const assinado = await assinarXml(xml, senhaPfx || '');
+    if (!assinado.ok || !assinado.xml) {
+      return { ok: false, error: assinado.error ?? 'Falha ao assinar o XML.' };
+    }
+    xmlFinal = assinado.xml;
+  }
+
+  fs.writeFileSync(destino.filePath, xmlFinal, 'utf8');
+  return { ok: true, data: { xmlPath: destino.filePath } };
+}
+
 export function registrarDiplomaHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMA_EMITIR, requerAuth(emitir));
   ipcMain.handle(IPC_CHANNELS.DIPLOMA_LISTAR, requerAuth(listar));
   ipcMain.handle(IPC_CHANNELS.DIPLOMA_EXCLUIR, requerAuth(excluir));
   ipcMain.handle(IPC_CHANNELS.DIPLOMA_BAIXAR, requerAuth(baixar));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMA_GERAR_XML, requerAuth(gerarXmlDiploma));
 }

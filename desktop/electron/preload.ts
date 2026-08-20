@@ -102,6 +102,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EXCLUIR, id, senha),
     baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_BAIXAR, id),
+    gerarXml: (id: number, senhaPfx?: string): Promise<ApiResult<{ xmlPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_GERAR_XML, id, senhaPfx),
   },
   ataColacao: {
     listarConcluintes: (busca?: string): Promise<ApiResult<any[]>> =>

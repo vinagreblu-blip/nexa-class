@@ -155,6 +155,7 @@ export interface DesktopApi {
     listar: (alunoId?: number) => Promise<ApiResult<DiplomaRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<true>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+    gerarXml: (id: number, senhaPfx?: string) => Promise<ApiResult<{ xmlPath: string }>>;
   };
   ataColacao: {
     listarConcluintes: (busca?: string) => Promise<ApiResult<AtaColacaoConcluinte[]>>;
