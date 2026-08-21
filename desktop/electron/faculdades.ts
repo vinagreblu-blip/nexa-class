@@ -119,7 +119,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     },
   },
   FACIIP: {
-    nome: 'FACIIP - FACULDADE DE CIÊNCIAS INTEGRADAS IPITANGA',
+    nome: 'FACIIP - FACULDADES INTEGRADAS IPITANGA',
     cnpj: '',
     email: 'contato@faciip.com.br',
     telefone: '(71) 9 2003-7875',
