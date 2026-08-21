@@ -214,8 +214,27 @@ async function gerarPdf(
   const codigo = randomUUID();
   const emitidoEm = new Date().toISOString();
   const hash = gerarHashConteudo(aluno, emitidoEm);
+
+  // Registra o código localmente (mesmo padrão de declaracoes/diplomas/certificados)
+  // para que o QR funcione no serviço de verificação embutido mesmo se o
+  // registro no serviço web falhar.
+  let historicoId: number;
+  try {
+    const info = db
+      .prepare(
+        `INSERT INTO historicos (aluno_id, codigo_verificacao, hash_conteudo, emitido_por, pdf_caminho)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(aluno.id, codigo, hash, sessao.usuario.id, destino.filePath);
+    historicoId = Number(info.lastInsertRowid);
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? 'Erro ao registrar histórico' };
+  }
+
   const webResult = await registrarDeclaracaoWeb({ codigo_verificacao: codigo, hash_conteudo: hash, aluno, emitidoEm });
-  if (!webResult.ok) {
+  if (webResult.ok) {
+    db.prepare('UPDATE historicos SET enviado_web = 1 WHERE id = ?').run(historicoId);
+  } else {
     logger.warn({ alunoId: aluno.id, erro: webResult.error }, 'Falha ao registrar histórico no serviço web');
   }
   const enviadoWeb = webResult.ok;

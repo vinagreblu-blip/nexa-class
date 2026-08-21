@@ -321,6 +321,21 @@ function createSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_certificados_aluno ON certificados(aluno_id);
     CREATE INDEX IF NOT EXISTS idx_certificados_curso ON certificados(curso_livre_id);
     CREATE INDEX IF NOT EXISTS idx_certificados_codigo ON certificados(codigo_verificacao);
+
+    CREATE TABLE IF NOT EXISTS historicos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aluno_id INTEGER NOT NULL,
+      codigo_verificacao TEXT UNIQUE NOT NULL,
+      hash_conteudo TEXT NOT NULL,
+      emitido_por INTEGER NOT NULL,
+      emitido_em TEXT NOT NULL DEFAULT (datetime('now')),
+      enviado_web INTEGER NOT NULL DEFAULT 0,
+      pdf_caminho TEXT,
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id) ON DELETE CASCADE,
+      FOREIGN KEY (emitido_por) REFERENCES usuarios(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_historicos_aluno ON historicos(aluno_id);
+    CREATE INDEX IF NOT EXISTS idx_historicos_codigo ON historicos(codigo_verificacao);
   `);
 }
 

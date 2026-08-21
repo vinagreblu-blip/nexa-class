@@ -219,6 +219,34 @@ export function iniciarServicoVerificacao(): http.Server | null {
         } catch { /* tabela pode não existir */ }
       }
 
+      // Fallback 4: procura na tabela historicos (Histórico Acadêmico)
+      if (!row) {
+        try {
+          const r = db
+            .prepare(
+              `SELECT h.codigo_verificacao, h.hash_conteudo, h.emitido_em,
+                      a.nome as aluno_nome, a.matricula as aluno_matricula,
+                      a.curso as aluno_curso
+               FROM historicos h
+               JOIN alunos a ON a.id = h.aluno_id
+               WHERE h.codigo_verificacao = ?`
+            )
+            .get(codigo) as any;
+          if (r) {
+            row = {
+              codigo_verificacao: r.codigo_verificacao,
+              hash_conteudo: r.hash_conteudo,
+              dados_aluno_json: JSON.stringify({
+                nome: r.aluno_nome,
+                matricula: r.aluno_matricula,
+                curso: 'Histórico Acadêmico' + (r.aluno_curso ? ': ' + r.aluno_curso : ''),
+              }),
+              emitido_em: r.emitido_em,
+            };
+          }
+        } catch { /* tabela pode não existir */ }
+      }
+
       const html = row ? paginaValido(row) : paginaInvalido(codigo);
       res.writeHead(row ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
