@@ -191,6 +191,34 @@ export function iniciarServicoVerificacao(): http.Server | null {
         } catch { /* tabela pode não existir */ }
       }
 
+      // Fallback 3: procura na tabela diplomas (QR no verso do diploma)
+      if (!row) {
+        try {
+          const r = db
+            .prepare(
+              `SELECT d.codigo_verificacao, d.hash_conteudo, d.emitido_em,
+                      a.nome as aluno_nome, a.matricula as aluno_matricula,
+                      a.curso as aluno_curso
+               FROM diplomas d
+               JOIN alunos a ON a.id = d.aluno_id
+               WHERE d.codigo_verificacao = ?`
+            )
+            .get(codigo) as any;
+          if (r) {
+            row = {
+              codigo_verificacao: r.codigo_verificacao,
+              hash_conteudo: r.hash_conteudo,
+              dados_aluno_json: JSON.stringify({
+                nome: r.aluno_nome,
+                matricula: r.aluno_matricula,
+                curso: 'Diploma: ' + (r.aluno_curso || 'Curso de Graduação'),
+              }),
+              emitido_em: r.emitido_em,
+            };
+          }
+        } catch { /* tabela pode não existir */ }
+      }
+
       const html = row ? paginaValido(row) : paginaInvalido(codigo);
       res.writeHead(row ? 200 : 404, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);

@@ -25,7 +25,7 @@ import { registrarAuthHandlers } from './ipc/auth';
 import { registrarAlunosHandlers } from './ipc/alunos';
 import { registrarUsuariosHandlers } from './ipc/usuarios';
 import { registrarDeclaracaoHandlers } from './ipc/declaracao';
-import { registrarDiplomaHandlers } from './ipc/diploma';
+import { registrarDiplomaHandlers, reenviarDiplomasPendentesWeb } from './ipc/diploma';
 import { registrarAtaColacaoHandlers } from './ipc/ata-colacao';
 import { registrarCursosLivresHandlers } from './ipc/cursos-livres';
 import { registrarCertificadosHandlers } from './ipc/certificados';
@@ -248,6 +248,9 @@ app.whenReady().then(async () => {
   // Sync bidirecional após 5s (não bloqueia o login inicial)
   setTimeout(() => {
     syncBidirecional(() => getDb()).catch(() => {});
+    // Reenvia diplomas cujo QR ainda não foi registrado no serviço de
+    // verificação web (emissões offline ou de versões antigas).
+    reenviarDiplomasPendentesWeb().catch(() => {});
   }, 5000);
   } catch (e: any) {
     // Antes: falha silenciosa deixava o app abrir em estado quebrado.

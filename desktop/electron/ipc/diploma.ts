@@ -13,6 +13,8 @@ import { getAssinaturaAtiva, assinarXml } from './assinatura';
 import { gerarPdf } from './diploma-pdf';
 import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
+import { registrarDeclaracaoWeb, removerDeclaracaoWeb } from '../web-registro';
+import { logger } from '../utils/logger';
 import { validarSenhaMaster } from '../utils/regras';
 import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
 import { gerarHashConteudo, gerarQrPng } from '../utils';
@@ -69,6 +71,19 @@ async function emitir(
     return { ok: false, error: 'Operação cancelada pelo usuário' };
   }
 
+  // Registra o código no serviço de verificação web para o QR do diploma validar.
+  // Falha não bloqueia a emissão — o retry do boot reenvia pendentes.
+  const webResult = await registrarDeclaracaoWeb({
+    codigo_verificacao: codigo,
+    hash_conteudo: hash,
+    aluno,
+    emitidoEm: agora,
+  });
+  if (!webResult.ok) {
+    logger.warn({ diplomaId, erro: webResult.error }, 'Falha ao enviar diploma para web');
+  }
+  const enviadoWeb = webResult.ok ? 1 : 0;
+
   const urlVerificacao = gerarUrlValidacao({
     n: aluno.nome,
     m: aluno.matricula || String(aluno.id),
@@ -114,6 +129,7 @@ async function emitir(
   if (!assinado.ok) {
     try { fs.unlinkSync(destino.filePath); } catch { /* noop */ }
     db.prepare('DELETE FROM diplomas WHERE id = ?').run(diplomaId);
+    if (enviadoWeb) removerDeclaracaoWeb(codigo).catch(() => {});
     return { ok: false, error: assinado.error ?? 'Falha ao assinar o diploma.' };
   }
 
@@ -122,15 +138,21 @@ async function emitir(
     db.prepare('UPDATE diplomas SET pdf_caminho = ? WHERE id = ?').run(caminhoInterno, diplomaId);
   } catch { /* ignora */ }
 
+  if (enviadoWeb) {
+    try {
+      db.prepare('UPDATE diplomas SET enviado_web = 1 WHERE id = ?').run(diplomaId);
+    } catch { /* ignora */ }
+  }
+
   return {
     ok: true,
     data: {
       id: diplomaId,
       codigo_verificacao: codigo,
       hash_conteudo: hash,
-      enviado_web: 0,
+      enviado_web: enviadoWeb,
       pdfPath: destino.filePath,
-      enviadoWeb: false,
+      enviadoWeb: !!enviadoWeb,
     },
   };
 }
@@ -163,9 +185,15 @@ async function excluir(
     return { ok: false, error: 'Senha de exclusão incorreta' };
   }
   const db = getDb();
-  const dip = db.prepare('SELECT id FROM diplomas WHERE id = ?').get(id);
+  const dip = db.prepare('SELECT id, codigo_verificacao FROM diplomas WHERE id = ?').get(id) as
+    | { id: number; codigo_verificacao: string }
+    | undefined;
   if (!dip) return { ok: false, error: 'Diploma não encontrado' };
   db.prepare('DELETE FROM diplomas WHERE id = ?').run(id);
+  // Remove também do serviço de verificação web — diploma excluído não deve
+  // mais validar como autêntico ao escanear o QR (best-effort).
+  const webOk = await removerDeclaracaoWeb(dip.codigo_verificacao);
+  if (!webOk) logger.warn({ diplomaId: id }, 'Diploma excluído localmente, mas código permanece no serviço web');
   return { ok: true, data: { ok: true } };
 }
 
@@ -348,6 +376,50 @@ async function gerarXmlDiploma(
 
   fs.writeFileSync(destino.filePath, xmlFinal, 'utf8');
   return { ok: true, data: { xmlPath: destino.filePath } };
+}
+
+/**
+ * Reenvia ao serviço de verificação web os diplomas ainda não registrados
+ * (enviado_web = 0) — cobre emissões feitas offline e as versões anteriores,
+ * em que o QR do diploma nunca era registrado. Chamada no boot do app.
+ */
+export async function reenviarDiplomasPendentesWeb(): Promise<void> {
+  const db = getDb();
+  let pendentes: any[] = [];
+  try {
+    pendentes = db
+      .prepare(
+        `SELECT d.id, d.codigo_verificacao, d.hash_conteudo, d.emitido_em,
+                a.id AS aluno_id, a.nome AS aluno_nome, a.matricula AS aluno_matricula
+         FROM diplomas d
+         JOIN alunos a ON a.id = d.aluno_id
+         WHERE d.enviado_web = 0`
+      )
+      .all();
+  } catch {
+    return;
+  }
+  if (!pendentes.length) return;
+
+  logger.info({ total: pendentes.length }, 'Reenviando diplomas pendentes para o serviço web');
+  let okCount = 0;
+  for (const d of pendentes) {
+    try {
+      const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(d.aluno_id) as Aluno | undefined;
+      if (!aluno) continue;
+      const r = await registrarDeclaracaoWeb({
+        codigo_verificacao: d.codigo_verificacao,
+        hash_conteudo: d.hash_conteudo,
+        aluno,
+        emitidoEm: d.emitido_em,
+      });
+      if (r.ok) {
+        db.prepare('UPDATE diplomas SET enviado_web = 1 WHERE id = ?').run(d.id);
+        okCount++;
+      }
+    } catch { /* tenta o próximo no próximo boot */ }
+  }
+  logger.info({ ok: okCount, total: pendentes.length }, 'Reenvio de diplomas pendentes concluído');
 }
 
 export function registrarDiplomaHandlers(): void {
