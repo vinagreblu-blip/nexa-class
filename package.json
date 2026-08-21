@@ -1,6 +1,6 @@
 {
   "name": "nexa",
-  "version": "1.2.10",
+  "version": "1.2.11",
   "private": true,
   "description": "NEXA CLASS - Network for Education and Academic Excellence Class. Sistema desktop para cadastro de alunos, usuarios e emissao de declaracoes de autenticidade com QR Code",
   "license": "MIT",
