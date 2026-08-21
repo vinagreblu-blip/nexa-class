@@ -3,7 +3,6 @@ import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
-import PDFDocument from 'pdfkit';
 import { getDb } from '../database';
 import { CONFIG } from '../config';
 import { getFaculdadeInfo } from '../faculdades';
@@ -11,211 +10,12 @@ import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva, assinarXml } from './assinatura';
+import { gerarPdf } from './diploma-pdf';
 import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
 import { validarSenhaMaster } from '../utils/regras';
 import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
-import { getImageSize, getPngContentBounds } from '../image-size';
-import { gerarHashConteudo, gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
-
-interface DiplomaOpts {
-  aluno: Aluno;
-  codigo: string;
-  hash: string;
-  qrBuffer: Buffer;
-  emitidoEm: string;
-  destinoPath: string;
-  cursoTexto: string;
-  cargaHorariaTotal: number;
-  faculdadeNome: string;
-  diretor: string;
-  faculdade: ReturnType<typeof getFaculdadeInfo>;
-  semAssinatura?: boolean;
-}
-
-function gerarPdf(opts: DiplomaOpts): Promise<void> {
-  const { aluno, codigo, hash, qrBuffer, emitidoEm, destinoPath, cursoTexto, cargaHorariaTotal, faculdadeNome, diretor, faculdade, semAssinatura } = opts;
-
-  const doc = new PDFDocument({ size: 'A4', margin: 60 });
-  const stream = fs.createWriteStream(destinoPath);
-  stream.on('error', () => {});
-  doc.pipe(stream);
-
-  const largura = doc.page.width;
-  const dateFmt = formatarDataExtensoBrasilia(emitidoEm);
-
-  // ===== CABEÇALHO =====
-  const logoExiste = faculdade.logoPath && fs.existsSync(faculdade.logoPath);
-  if (logoExiste) {
-    const logoW = 70;
-    const gap = 8;
-    try {
-      doc.image(faculdade.logoPath!, 60, 50, { width: logoW });
-    } catch { /* ignora */ }
-    const textoX = 60 + logoW + gap;
-    const textoWidth = largura - 60 - textoX;
-    doc.fillColor('#000000');
-    doc.font('Helvetica-Bold').fontSize(13);
-    doc.text(faculdade.nome, textoX, 50, { width: textoWidth, align: 'left' });
-    let yy = doc.y + 1;
-    doc.font('Helvetica').fontSize(8);
-    if (faculdade.cnpj) {
-      doc.text(`CNPJ ${faculdade.cnpj}`, textoX, yy, { width: textoWidth });
-      yy = doc.y;
-    }
-    if (faculdade.endereco) {
-      doc.text(`ENDEREÇO: ${faculdade.endereco}`, textoX, yy, { width: textoWidth });
-      yy = doc.y;
-    }
-    doc.y = Math.max(yy, 50 + logoW);
-  } else {
-    doc.fillColor('#000000');
-    doc.font('Helvetica-Bold').fontSize(16);
-    doc.text(faculdade.nome, 60, 50, { width: largura - 120, align: 'center' });
-    doc.y += 10;
-  }
-
-  // Linha separadora
-  doc.y += 6;
-  doc.moveTo(60, doc.y).lineTo(largura - 60, doc.y).lineWidth(1).strokeColor('#000000').stroke();
-  doc.y += 20;
-
-  // ===== TÍTULO =====
-  doc.font('Helvetica-Bold').fontSize(26).fillColor('#000000');
-  doc.text('DIPLOMA', { align: 'center' });
-  doc.moveDown(0.3);
-  doc.font('Helvetica').fontSize(11).fillColor('#444444');
-  doc.text('de conclusão de curso de graduação', { align: 'center' });
-  doc.moveDown(1.5);
-
-  // ===== TEXTO PRINCIPAL =====
-  doc.fillColor('#000000').fontSize(12).font('Helvetica');
-  doc.text(
-    `O Diretor da ${faculdadeNome}, no uso de suas atribuições legais, confere o presente diploma de`,
-    { align: 'center', lineGap: 3 }
-  );
-
-  // Nome do aluno em destaque
-  doc.moveDown(0.5);
-  doc.font('Helvetica-Bold').fontSize(16).fillColor('#000000');
-  doc.text(aluno.nome, { align: 'center' });
-  doc.moveDown(0.3);
-
-  // Dados do curso
-  doc.font('Helvetica').fontSize(12).fillColor('#000000');
-  doc.text(
-    `concluiu o curso de ${cursoTexto}, com carga horária total de ${cargaHorariaTotal.toLocaleString('pt-BR')} horas/aula,` +
-    ` tendo cumprido todos os requisitos acadêmicos necessários para a obtenção do título.`,
-    { align: 'justify', lineGap: 3 }
-  );
-
-  doc.moveDown(0.6);
-  doc.text(
-    `Em reconhecimento ao mérito e à dedicação demonstrados ao longo do curso, outorgamos-lhe o presente diploma ` +
-    `para gozo de todos os direitos e prerrogativas a ele inerentes.`,
-    { align: 'justify', lineGap: 3 }
-  );
-
-  // ===== DADOS DO ALUNO =====
-  doc.moveDown(1.5);
-  const dadosY = doc.y;
-  doc.font('Helvetica-Bold').fontSize(9).fillColor('#666666');
-  doc.text('MATRÍCULA', 60, dadosY);
-  doc.font('Helvetica').fontSize(11).fillColor('#000000');
-  doc.text(aluno.matricula, 60, dadosY + 13);
-
-  doc.font('Helvetica-Bold').fontSize(9).fillColor('#666666');
-  doc.text('CPF', 250, dadosY);
-  doc.font('Helvetica').fontSize(11).fillColor('#000000');
-  doc.text(aluno.cpf || '—', 250, dadosY + 13);
-
-  if (aluno.data_nascimento) {
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#666666');
-    doc.text('NASCIMENTO', 380, dadosY);
-    doc.font('Helvetica').fontSize(11).fillColor('#000000');
-    doc.text(aluno.data_nascimento, 380, dadosY + 13);
-  }
-  doc.y = dadosY + 35;
-
-  // Data de conclusão por extenso
-  doc.moveDown(0.5);
-  doc.font('Helvetica').fontSize(11).fillColor('#000000');
-  doc.text(
-    `${faculdadeNome}, aos ${dateFmt}.`,
-    { align: 'center' }
-  );
-
-  // ===== ASSINATURA =====
-  doc.moveDown(1.5);
-  const centro = largura / 2;
-  const assinatura = getAssinaturaAtiva();
-  const nomeAss = assinatura?.nome_signatario || diretor;
-  const cargoAss = assinatura?.cargo || 'Diretor Geral';
-  const temCertificado = !!(
-    (assinatura?.certificado_path && fs.existsSync(assinatura.certificado_path)) ||
-    (assinatura?.certificado_tipo === 'A3' && !!assinatura.certificado_a3_thumbprint)
-  );
-  const temImagem = !semAssinatura && !!(assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path));
-
-  let assH = 0;
-  const assW = 238;
-  if (assinatura?.imagem_path && fs.existsSync(assinatura.imagem_path)) {
-    try {
-      const dim = getImageSize(assinatura.imagem_path);
-      assH = (dim.height / dim.width) * assW;
-    } catch { /* ignora */ }
-  }
-  const linhaAss = doc.y + assH;
-  if (temImagem) {
-    try {
-      const dim = getImageSize(assinatura!.imagem_path!);
-      const bounds = getPngContentBounds(assinatura!.imagem_path!);
-      const baselineFrac = bounds ? bounds.baseline / dim.height : 1;
-      const imageTop = linhaAss - baselineFrac * assH + 2.835;
-      doc.image(assinatura!.imagem_path!, centro - assW / 2, imageTop, { width: assW });
-    } catch { /* ignora */ }
-  }
-  doc.y = linhaAss;
-
-  doc.moveTo(centro - 130, doc.y).lineTo(centro + 130, doc.y).lineWidth(0.7).strokeColor('#000000').stroke();
-  doc.font('Helvetica-Bold').fontSize(10).fillColor('#000000');
-  doc.text(nomeAss, centro - 130, doc.y + 3, { width: 260, align: 'center' });
-  doc.font('Helvetica').fontSize(9).fillColor('#444444');
-  doc.text(cargoAss, centro - 130, doc.y, { width: 260, align: 'center' });
-  if (temCertificado) {
-    doc.font('Helvetica').fontSize(7).fillColor('#666666');
-    doc.text('Assinado digitalmente com certificado ICP-Brasil', centro - 130, doc.y, { width: 260, align: 'center' });
-  }
-
-  // ===== QR CODE + VERIFICAÇÃO =====
-  doc.moveDown(1.5);
-  const qrSize = 90;
-  const qrX = largura - 60 - qrSize;
-  const qrY = doc.y;
-  doc.image(qrBuffer, qrX, qrY, { width: qrSize, height: qrSize });
-  doc.font('Helvetica').fontSize(7).fillColor('#666666');
-  doc.text('Escaneie para verificar', qrX, qrY + qrSize + 2, { width: qrSize, align: 'center' });
-
-  // Código de verificação
-  doc.font('Helvetica-Bold').fontSize(8).fillColor('#666666');
-  doc.text('CÓDIGO DE VERIFICAÇÃO', 60, qrY + 5);
-  doc.font('Courier').fontSize(9).fillColor('#000000');
-  doc.text(codigo.substring(0, 36), 60, qrY + 18, { width: 250 });
-
-  // Hash
-  doc.moveDown(2);
-  doc.moveTo(60, doc.y).lineTo(largura - 60, doc.y).strokeColor('#cccccc').lineWidth(0.5).stroke();
-  doc.moveDown(0.3);
-  doc.font('Helvetica').fontSize(7).fillColor('#888888');
-  doc.text(`Hash: ${hash.substring(0, 48)}...`, 60, doc.y);
-  doc.text('Documento válido em todo território nacional.', 60, doc.y);
-
-  return new Promise<void>((resolve, reject) => {
-    stream.on('finish', resolve);
-    stream.on('error', reject);
-    doc.end();
-  });
-}
+import { gerarHashConteudo, gerarQrPng } from '../utils';
 
 async function emitir(
   event: IpcMainInvokeEvent,
@@ -299,10 +99,13 @@ async function emitir(
     emitidoEm: agora,
     destinoPath: destino.filePath,
     cursoTexto,
+    cursoRegulatory: cursoInfo?.regulatory,
     cargaHorariaTotal,
     faculdadeNome,
     diretor,
+    emitidoPorNome: sessao.usuario.nome,
     faculdade: fac,
+    assinatura: getAssinaturaAtiva(),
     semAssinatura,
   });
 

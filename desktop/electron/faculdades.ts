@@ -19,6 +19,7 @@ export interface FaculdadeInfo {
   enade: string;
   registroRtd: string;
   logoPath: string | null;
+  corDiploma: string;
   cursos: Record<string, CursoInfo>;
 }
 
@@ -33,6 +34,7 @@ const SEM_LOGO: Partial<FaculdadeInfo> = {
   enade: '',
   registroRtd: '',
   logoPath: null,
+  corDiploma: '#A8842C',
   cursos: {},
 };
 
@@ -51,6 +53,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     enade: 'Aluno dispensado de acordo com o Calendário Trienal',
     registroRtd: '',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-helio-rocha.png'),
+    corDiploma: '#A8842C',
     cursos: {
       Administração: {
         nome: 'Bacharelado em Administração',
@@ -129,6 +132,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     registroRtd:
       'Registro de Títulos e Documentos, sob o Nº 965, Registrado no Livro A-1 Sob o Nº 113 do Registro de Pessoas Jurídicas em 13/05/1996',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-faciip.png'),
+    corDiploma: '#6D7FA6',
     cursos: {
       'Administração': {
         nome: 'Administração',
@@ -200,6 +204,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     enade: 'Aluno dispensado de acordo com o Calendário Trienal',
     registroRtd: '',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-fatece.png'),
+    corDiploma: '#D94800',
     cursos: {
       'Administração': { nome: 'Bacharelado em Administração', codEmec: '1261187', turno: 'Noturno', regulatory: 'Autorização do Curso: Portaria nº 254 de 17 de março de 2015, DOU de 18 de março de 2015.' },
       'Pedagogia': { nome: 'Licenciatura em Pedagogia', codEmec: '105812', turno: 'Noturno', regulatory: 'Autorização do Curso: Portaria nº 3.530 de 29 de outubro de 2004, DOU de 01 de novembro de 2004.' },
@@ -209,6 +214,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
   FACEI: {
     ...SEM_LOGO,
     nome: 'FACEI - FACULDADE DE CIÊNCIAS EMPRESARIAIS',
+    corDiploma: '#D94800',
   } as FaculdadeInfo,
   '2 de Julho': {
     nome: 'Faculdade 2 de Julho',
@@ -224,6 +230,7 @@ export const FACULDADES_INFO: Record<string, FaculdadeInfo> = {
     registroRtd:
       'Autorização. Portaria nº 2.032 de 15/07/2002, D.O.U de 16/07/2002. Renovação de Reconhecimento Portaria nº 207 de 25/06/2020, publicada D.O.U nº 128, em 07/07/2020.',
     logoPath: path.join(__dirname, '..', 'resources', 'logo-2-de-julho.png'),
+    corDiploma: '#6D7FA6',
     cursos: {
       'Direito': {
         nome: 'Bacharelado em Direito',
