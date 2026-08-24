@@ -1,5 +1,5 @@
 import type { IpcMainInvokeEvent} from 'electron';
-import { ipcMain, dialog, BrowserWindow } from 'electron';
+import { ipcMain, dialog, BrowserWindow, app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -12,7 +12,7 @@ import { getFaculdadeInfo } from '../faculdades';
 import { renderHtmlFaciipPdf } from '../faciip-historico-html';
 import { renderHtmlHelioRochaPdf } from '../helio-rocha-historico-html';
 import { renderHtmlFatecePdf } from '../fatece-historico-html';
-import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
+import { montarNomePdf, montarNomeArquivo, gravarArquivoSeguro } from '../utils/sistema';
 import { renderHtmlDoisDeJulhoPdf } from '../dois-de-julho-historico-html';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva, assinarXml } from './assinatura';
@@ -1176,7 +1176,7 @@ async function gerarXmlHistorico(
   event: IpcMainInvokeEvent,
   alunoId: number,
   senhaPfx?: string
-): Promise<ApiResult<{ xmlPath: string }>> {
+): Promise<ApiResult<{ xmlPath: string; aviso?: string }>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
 
@@ -1298,8 +1298,28 @@ ${conteudoPeriodos}  </periodos>
     xmlFinal = assinado.xml;
   }
 
-  fs.writeFileSync(destino.filePath, xmlFinal, 'utf8');
-  return { ok: true, data: { xmlPath: destino.filePath } };
+  const gravado = gravarArquivoSeguro(
+    destino.filePath,
+    xmlFinal,
+    path.join(app.getPath('userData'), 'xml'),
+    nomeArquivo
+  );
+  if (!gravado.ok) {
+    logger.warn({ destino: destino.filePath, erro: gravado.erro }, 'Falha ao gravar XML do histórico');
+    return { ok: false, error: gravado.erro };
+  }
+  if (gravado.usouFallback) {
+    logger.warn({ destino: destino.filePath, fallback: gravado.caminho }, 'Pasta de destino bloqueada — XML do histórico salvo em fallback');
+  }
+  return {
+    ok: true,
+    data: {
+      xmlPath: gravado.caminho,
+      aviso: gravado.usouFallback
+        ? `A pasta escolhida está bloqueada (permissão/OneDrive/antivírus). O arquivo foi salvo em: ${gravado.caminho}`
+        : undefined,
+    },
+  };
 }
 
 export function registrarHistoricoHandlers(): void {

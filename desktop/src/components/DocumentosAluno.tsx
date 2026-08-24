@@ -43,14 +43,19 @@ export function DocumentosAluno({ alunoId }: { alunoId: number }) {
     setErro(null);
     setSucesso(null);
     setConvertendoId(id);
-    const res = await api.documentos.converterXml(id);
-    setConvertendoId(null);
-    if (res.ok && res.data) {
-      setSucesso(`XML gerado em: ${res.data.xmlPath}`);
-      await carregar();
-      setTimeout(() => setSucesso(null), 5000);
-    } else {
-      setErro(res.error ?? 'Erro ao converter');
+    try {
+      const res = await api.documentos.converterXml(id);
+      if (res.ok && res.data) {
+        setSucesso(res.data.aviso ?? `XML gerado em: ${res.data.xmlPath}`);
+        await carregar();
+        setTimeout(() => setSucesso(null), 5000);
+      } else {
+        setErro(res.error ?? 'Erro ao converter');
+      }
+    } catch (e: any) {
+      setErro(e?.message ?? 'Erro ao converter');
+    } finally {
+      setConvertendoId(null);
     }
   }
 

@@ -233,12 +233,17 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
     setSucesso(null);
     setGerandoXml(true);
     setModalSenha(null);
-    const res = await api.historico.gerarXml(aluno.id, senhaPfx);
-    setGerandoXml(false);
-    if (res.ok && res.data) {
-      setSucesso(`XML gerado em: ${res.data.xmlPath}`);
-    } else {
-      setErro(res.error ?? 'Erro ao gerar XML');
+    try {
+      const res = await api.historico.gerarXml(aluno.id, senhaPfx);
+      if (res.ok && res.data) {
+        setSucesso(res.data.aviso ?? `XML gerado em: ${res.data.xmlPath}`);
+      } else if (res.error !== 'Operação cancelada') {
+        setErro(res.error ?? 'Erro ao gerar XML');
+      }
+    } catch (e: any) {
+      setErro(e?.message ?? 'Erro ao gerar XML');
+    } finally {
+      setGerandoXml(false);
     }
   }
 

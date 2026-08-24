@@ -16,7 +16,7 @@ import { gerarUrlValidacao } from '../qr-validador';
 import { registrarDeclaracaoWeb, removerDeclaracaoWeb } from '../web-registro';
 import { logger } from '../utils/logger';
 import { validarSenhaMaster } from '../utils/regras';
-import { montarNomePdf, montarNomeArquivo } from '../utils/sistema';
+import { montarNomePdf, montarNomeArquivo, gravarArquivoSeguro } from '../utils/sistema';
 import { gerarHashConteudo, gerarQrPng } from '../utils';
 
 async function emitir(
@@ -250,7 +250,7 @@ async function gerarXmlDiploma(
   event: IpcMainInvokeEvent,
   diplomaId: number,
   senhaPfx?: string
-): Promise<ApiResult<{ xmlPath: string }>> {
+): Promise<ApiResult<{ xmlPath: string; aviso?: string }>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
 
@@ -374,8 +374,28 @@ async function gerarXmlDiploma(
     xmlFinal = assinado.xml;
   }
 
-  fs.writeFileSync(destino.filePath, xmlFinal, 'utf8');
-  return { ok: true, data: { xmlPath: destino.filePath } };
+  const gravado = gravarArquivoSeguro(
+    destino.filePath,
+    xmlFinal,
+    path.join(app.getPath('userData'), 'xml'),
+    nomeArquivo
+  );
+  if (!gravado.ok) {
+    logger.warn({ destino: destino.filePath, erro: gravado.erro }, 'Falha ao gravar XML do diploma');
+    return { ok: false, error: gravado.erro };
+  }
+  if (gravado.usouFallback) {
+    logger.warn({ destino: destino.filePath, fallback: gravado.caminho }, 'Pasta de destino bloqueada — XML do diploma salvo em fallback');
+  }
+  return {
+    ok: true,
+    data: {
+      xmlPath: gravado.caminho,
+      aviso: gravado.usouFallback
+        ? `A pasta escolhida está bloqueada (permissão/OneDrive/antivírus). O arquivo foi salvo em: ${gravado.caminho}`
+        : undefined,
+    },
+  };
 }
 
 /**

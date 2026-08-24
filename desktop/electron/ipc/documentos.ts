@@ -8,6 +8,8 @@ import type { Aluno, AlunoDocumento, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getPdfjs as loadPdfjs } from '../pdfjs-loader';
 import { escapeXml } from '../utils';
+import { gravarArquivoSeguro } from '../utils/sistema';
+import { logger } from '../utils/logger';
 
 // (pdfjs carregado sob demanda via pdfjs-loader — v5+ ESM-only)
 
@@ -76,7 +78,7 @@ async function adicionar(
 async function converterXml(
   _event: IpcMainInvokeEvent,
   documentoId: number
-): Promise<ApiResult<{ xmlPath: string }>> {
+): Promise<ApiResult<{ xmlPath: string; aviso?: string }>> {
   const db = getDb();
   const doc = db
     .prepare('SELECT * FROM aluno_documentos WHERE id = ?')
@@ -114,15 +116,35 @@ async function converterXml(
     geradoEm: new Date().toISOString(),
   });
 
-  const xmlPath = path.join(path.dirname(doc.caminho), path.basename(doc.nome, '.pdf') + '.xml');
-  fs.writeFileSync(xmlPath, xml, 'utf8');
+  const xmlPathDesejado = path.join(path.dirname(doc.caminho), path.basename(doc.nome, '.pdf') + '.xml');
+  const gravado = gravarArquivoSeguro(
+    xmlPathDesejado,
+    xml,
+    garantirPasta(doc.aluno_id),
+    path.basename(xmlPathDesejado)
+  );
+  if (!gravado.ok) {
+    logger.warn({ documentoId, destino: xmlPathDesejado, erro: gravado.erro }, 'Falha ao gravar XML do documento');
+    return { ok: false, error: gravado.erro };
+  }
+  if (gravado.usouFallback) {
+    logger.warn({ documentoId, destino: xmlPathDesejado, fallback: gravado.caminho }, 'Pasta do documento bloqueada — XML salvo em fallback');
+  }
 
   db.prepare('UPDATE aluno_documentos SET xml_path = ?, convertido = 1 WHERE id = ?').run(
-    xmlPath,
+    gravado.caminho,
     documentoId
   );
 
-  return { ok: true, data: { xmlPath } };
+  return {
+    ok: true,
+    data: {
+      xmlPath: gravado.caminho,
+      aviso: gravado.usouFallback
+        ? `A pasta do documento está bloqueada (permissão/OneDrive/antivírus). O arquivo foi salvo em: ${gravado.caminho}`
+        : undefined,
+    },
+  };
 }
 
 function excluir(_event: IpcMainInvokeEvent, documentoId: number): ApiResult<true> {

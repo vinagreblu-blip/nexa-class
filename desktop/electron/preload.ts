@@ -102,7 +102,7 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_EXCLUIR, id, senha),
     baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_BAIXAR, id),
-    gerarXml: (id: number, senhaPfx?: string): Promise<ApiResult<{ xmlPath: string }>> =>
+    gerarXml: (id: number, senhaPfx?: string): Promise<ApiResult<{ xmlPath: string; aviso?: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMA_GERAR_XML, id, senhaPfx),
   },
   ataColacao: {
@@ -152,7 +152,7 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_EXCLUIR, id),
     gerarPdf: (alunoId: number, semAssinatura = false, senhaPfx?: string): Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_PDF, alunoId, semAssinatura, senhaPfx),
-    gerarXml: (alunoId: number, senhaPfx?: string): Promise<ApiResult<{ xmlPath: string }>> =>
+    gerarXml: (alunoId: number, senhaPfx?: string): Promise<ApiResult<{ xmlPath: string; aviso?: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_GERAR_XML, alunoId, senhaPfx),
     mover: (id: number, direcao: 'up' | 'down'): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_MOVER, id, direcao),
@@ -184,7 +184,7 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DOCUMENTO_ADICIONAR, alunoId),
     excluir: (id: number): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DOCUMENTO_EXCLUIR, id),
-    converterXml: (id: number): Promise<ApiResult<{ xmlPath: string }>> =>
+    converterXml: (id: number): Promise<ApiResult<{ xmlPath: string; aviso?: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DOCUMENTO_CONVERTER_XML, id),
     visualizarXml: (id: number): Promise<ApiResult<{ nome: string; conteudo: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DOCUMENTO_VISUALIZAR_XML, id),

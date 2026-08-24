@@ -111,12 +111,17 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
     setErro(null);
     setSucesso(null);
     setModalXmlAlvo(null);
-    const res = await api.diplomas.gerarXml(d.id, senhaPfx);
-    setGerandoXmlId(null);
-    if (res.ok && res.data) {
-      setSucesso(`XML do diploma gerado em: ${res.data.xmlPath}`);
-    } else if (res.error !== 'Operação cancelada') {
-      setErro(res.error ?? 'Erro ao gerar XML');
+    try {
+      const res = await api.diplomas.gerarXml(d.id, senhaPfx);
+      if (res.ok && res.data) {
+        setSucesso(res.data.aviso ?? `XML do diploma gerado em: ${res.data.xmlPath}`);
+      } else if (res.error !== 'Operação cancelada') {
+        setErro(res.error ?? 'Erro ao gerar XML');
+      }
+    } catch (e: any) {
+      setErro(e?.message ?? 'Erro ao gerar XML');
+    } finally {
+      setGerandoXmlId(null);
     }
   }
 

@@ -7,6 +7,7 @@ import {
   sanitizarParaArquivo,
   montarNomePdf,
   montarNomeArquivo,
+  gravarArquivoSeguro,
 } from './sistema';
 
 /**
@@ -147,5 +148,63 @@ describe('montarNomeArquivo', () => {
 
   it('normaliza extensão com ou sem ponto', () => {
     expect(montarNomeArquivo('historico', 'X', '1', 1, '.xml')).toBe('historico-x-1-1.xml');
+  });
+});
+
+describe('gravarArquivoSeguro', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = path.join(os.tmpdir(), `nexa-gravar-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignora */
+    }
+  });
+
+  it('grava no destino quando ele é gravável', () => {
+    const destino = path.join(tmpDir, 'arquivo.xml');
+    const res = gravarArquivoSeguro(destino, '<x>ok</x>', path.join(tmpDir, 'fallback'));
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.usouFallback).toBe(false);
+      expect(res.caminho).toBe(destino);
+    }
+    expect(fs.readFileSync(destino, 'utf8')).toBe('<x>ok</x>');
+  });
+
+  it('usa fallback quando o destino está bloqueado (caminho inválido)', () => {
+    // Unidade inexistente: writeFileSync falha sempre, independente de permissões
+    const destino = path.join('\\\\?\\Z:\\nexa-inexistente\\arquivo.xml');
+    const fallbackDir = path.join(tmpDir, 'fallback');
+    const res = gravarArquivoSeguro(destino, '<x>fb</x>', fallbackDir, 'nome-fb.xml');
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.usouFallback).toBe(true);
+      expect(res.caminho).toBe(path.join(fallbackDir, 'nome-fb.xml'));
+    }
+    expect(fs.readFileSync(path.join(fallbackDir, 'nome-fb.xml'), 'utf8')).toBe('<x>fb</x>');
+  });
+
+  it('usa basename do destino como nome do fallback quando não informado', () => {
+    const destino = path.join('\\\\?\\Z:\\nexa-inexistente\\sem-nome.xml');
+    const fallbackDir = path.join(tmpDir, 'fb2');
+    const res = gravarArquivoSeguro(destino, 'conteudo', fallbackDir);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.caminho).toBe(path.join(fallbackDir, 'sem-nome.xml'));
+  });
+
+  it('retorna erro descritivo quando destino e fallback falham', () => {
+    const destino = path.join('\\\\?\\Z:\\nexa-inexistente\\arquivo.xml');
+    const res = gravarArquivoSeguro(destino, 'x', path.join('\\\\?\\Z:\\nexa-inexistente\\fb'));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.erro).toContain('Falha ao gravar');
+    }
   });
 });

@@ -155,7 +155,7 @@ export interface DesktopApi {
     listar: (alunoId?: number) => Promise<ApiResult<DiplomaRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<true>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
-    gerarXml: (id: number, senhaPfx?: string) => Promise<ApiResult<{ xmlPath: string }>>;
+    gerarXml: (id: number, senhaPfx?: string) => Promise<ApiResult<{ xmlPath: string; aviso?: string }>>;
   };
   ataColacao: {
     listarConcluintes: (busca?: string) => Promise<ApiResult<AtaColacaoConcluinte[]>>;
@@ -184,7 +184,7 @@ export interface DesktopApi {
     atualizar: (id: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;
     excluir: (id: number) => Promise<ApiResult<true>>;
     gerarPdf: (alunoId: number, semAssinatura?: boolean, senhaPfx?: string) => Promise<ApiResult<{ pdfPath: string; enviadoWeb: boolean }>>;
-    gerarXml: (alunoId: number, senhaPfx?: string) => Promise<ApiResult<{ xmlPath: string }>>;
+    gerarXml: (alunoId: number, senhaPfx?: string) => Promise<ApiResult<{ xmlPath: string; aviso?: string }>>;
     mover: (id: number, direcao: 'up' | 'down') => Promise<ApiResult<true>>;
   };
   docentes: {
@@ -203,7 +203,7 @@ export interface DesktopApi {
     listar: (alunoId: number) => Promise<ApiResult<AlunoDocumento[]>>;
     adicionar: (alunoId: number) => Promise<ApiResult<AlunoDocumento[]>>;
     excluir: (id: number) => Promise<ApiResult<true>>;
-    converterXml: (id: number) => Promise<ApiResult<{ xmlPath: string }>>;
+    converterXml: (id: number) => Promise<ApiResult<{ xmlPath: string; aviso?: string }>>;
     visualizarXml: (id: number) => Promise<ApiResult<{ nome: string; conteudo: string }>>;
     baixar: (id: number, tipo: 'xml' | 'pdf') => Promise<ApiResult<{ salvoPath: string }>>;
   };

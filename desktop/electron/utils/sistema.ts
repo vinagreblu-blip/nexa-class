@@ -93,3 +93,34 @@ export function montarNomeArquivo(
   const mat = sanitizarParaArquivo(matricula, 20);
   return `${prefixo}-${nome}-${mat}-${sufixo}.${extensao.replace(/^\./, '')}`;
 }
+
+/**
+ * Grava arquivo de texto (utf8) no destino; se a pasta for bloqueada
+ * (permissão, OneDrive, "Acesso Controlado a Pastas" do Defender, caminho
+ * longo, etc.), salva na pasta de fallback e reporta.
+ */
+export function gravarArquivoSeguro(
+  destinoPath: string,
+  conteudo: string,
+  fallbackDir: string,
+  nomeFallback?: string
+): { ok: true; caminho: string; usouFallback: boolean } | { ok: false; erro: string } {
+  try {
+    fs.writeFileSync(destinoPath, conteudo, 'utf8');
+    return { ok: true, caminho: destinoPath, usouFallback: false };
+  } catch (erroDestino: any) {
+    const detalheDestino = erroDestino?.code ? `${erroDestino.code}: ${erroDestino.message}` : String(erroDestino?.message ?? erroDestino);
+    try {
+      fs.mkdirSync(fallbackDir, { recursive: true });
+      const fallbackPath = path.join(fallbackDir, nomeFallback ?? path.basename(destinoPath));
+      fs.writeFileSync(fallbackPath, conteudo, 'utf8');
+      return { ok: true, caminho: fallbackPath, usouFallback: true };
+    } catch (erroFallback: any) {
+      const detalheFallback = String(erroFallback?.message ?? erroFallback);
+      return {
+        ok: false,
+        erro: `Falha ao gravar em "${destinoPath}" (${detalheDestino}) e também em "${fallbackDir}" (${detalheFallback}). Verifique permissões da pasta, OneDrive ou antivírus.`,
+      };
+    }
+  }
+}
