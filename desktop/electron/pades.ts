@@ -5,6 +5,7 @@ import { P12Signer } from '@signpdf/signer-p12';
 import { pdflibAddPlaceholder } from '@signpdf/placeholder-pdf-lib';
 import { getAssinaturaAtiva, traduzirErroA3 } from './ipc/assinatura';
 import { SignerA3 } from './pades-a3';
+import { logger } from './utils/logger';
 
 export interface ResultadoPades {
   ok: boolean;
@@ -63,6 +64,7 @@ export async function assinarPdfPades(pdfPath: string, opts: PadesOpts = {}): Pr
     return { ok: true };
   } catch (e: any) {
     const msg = (e?.message ?? '').toString();
+    logger.error({ err: msg, a3: ehA3 }, 'assinarPdfPades: falha ao assinar PDF');
     if (ehA3) return { ok: false, error: traduzirErroA3(msg) };
     return { ok: false, error: 'Falha ao assinar o PDF: ' + (msg || 'verifique a senha do certificado') };
   }

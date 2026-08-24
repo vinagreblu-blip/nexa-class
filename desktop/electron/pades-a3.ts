@@ -4,6 +4,7 @@ import path from 'node:path';
 // @signpdf/utils é CommonJS — importamos o caminho da base Signer.
 import { Signer } from '@signpdf/utils';
 import { runPowerShellScriptAsync } from './ipc/assinatura';
+import { logger } from './utils/logger';
 
 /**
  * Signer PAdES para certificado A3 (token USB / SmartCard).
@@ -102,7 +103,7 @@ export class SignerA3 extends Signer {
       await runPowerShellScriptAsync(
         PS_CMS_A3,
         { Thumbprint: this.thumbprint, DataFile: dataFile, OutFile: outFile },
-        120000
+        180000
       );
       if (!fs.existsSync(outFile)) {
         throw new Error('O token não gerou a assinatura. Saída não produzida.');
@@ -112,6 +113,10 @@ export class SignerA3 extends Signer {
         throw new Error('O token não gerou a assinatura. CMS vazio.');
       }
       return cms;
+    } catch (e: any) {
+      const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
+      logger.error({ err: msg }, 'SignerA3: falha ao gerar CMS com o token A3');
+      throw e;
     } finally {
       try { fs.unlinkSync(dataFile); } catch { /* noop */ }
       try { fs.unlinkSync(outFile); } catch { /* noop */ }

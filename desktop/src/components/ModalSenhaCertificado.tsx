@@ -94,6 +94,8 @@ export function ModalSenhaCertificado({ documento, onConfirm, onClose }: ModalSe
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             Clique em <strong>“Assinar (PIN no token)”</strong> e digite o PIN na janela que aparecerá.
+            A janela do PIN é aberta pelo driver do fabricante e pode abrir <strong>atrás</strong> do app —
+            se não aparecer, procure-a na barra de tarefas.
           </div>
         </>
       ) : (

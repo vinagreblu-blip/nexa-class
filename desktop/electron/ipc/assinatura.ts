@@ -455,22 +455,39 @@ export function runPowerShellScriptAsync(
   });
 }
 
-/** Traduz mensagens comuns de erro de token A3 para PT-BR. */
+/**
+ * Traduz mensagens comuns de erro de token A3 para PT-BR, ANEXANDO o erro
+ * original (truncado) — sem isso é impossível distinguir diálogo de PIN
+ * cancelado, PIN errado ou falha específica do middleware em produção.
+ */
 export function traduzirErroA3(msg: string): string {
-  const m = msg.toLowerCase();
+  const m = (msg ?? '').toLowerCase();
+  const comOriginal = (traduzido: string): string => {
+    const orig = (msg ?? '').trim();
+    if (!orig) return traduzido;
+    const trunc = orig.length > 200 ? `${orig.slice(0, 200)}…` : orig;
+    return `${traduzido} [Erro original: ${trunc}]`;
+  };
   if (m.includes('the smart card') || m.includes('cartao') || m.includes('card is not supported')) {
-    return 'Token/SmartCard não detectado ou driver não instalado. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, etc.).';
+    return comOriginal('Token/SmartCard não detectado ou driver não instalado. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, etc.).');
   }
-  if (m.includes('pin') || m.includes('cancelled by the user') || m.includes('cancel')) {
-    return 'Operação cancelada ou PIN inválido. Tente novamente e informe o PIN do token quando solicitado.';
+  // PIN errado precisa vir ANTES do genérico "cancel"/"pin" para dar a dica certa.
+  if (m.includes('pin is incorrect') || m.includes('pin was incorrect') || m.includes('pin incorreto') || m.includes('wrong pin')) {
+    return comOriginal('PIN incorreto. Verifique o PIN no utilitário do middleware do fabricante (ícone perto do relógio) e tente novamente.');
+  }
+  if (m.includes('cancel')) {
+    return comOriginal('A janela do PIN não foi confirmada. O diálogo do PIN é aberto pelo driver e pode abrir ATRÁS do app — repita a operação, procure a janela na barra de tarefas e digite o PIN.');
+  }
+  if (m.includes('pin')) {
+    return comOriginal('Não foi possível autenticar o PIN do token. Conecte o token, repita a operação e informe o PIN quando solicitado.');
   }
   if (m.includes('chave privada nao acessivel') || m.includes('nao conseguiu abrir a chave')) {
-    return 'Chave privada do token inacessível: o certificado foi encontrado, mas o driver não abriu a chave. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata…).';
+    return comOriginal('Chave privada do token inacessível: o certificado foi encontrado, mas o driver não abriu a chave. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata…).');
   }
   if (m.includes('cannot find subitem') || m.includes('nao encontrado')) {
-    return 'Certificado não encontrado no repositório do Windows. Reimporte o certificado A3.';
+    return comOriginal('Certificado não encontrado no repositório do Windows. Reimporte o certificado A3.');
   }
-  return 'Erro ao assinar com o token: ' + (msg || 'verifique o token e o driver');
+  return comOriginal('Erro ao assinar com o token: ' + (msg || 'verifique o token e o driver'));
 }
 
 /** Lista certificados A3 disponíveis no Windows Certificate Store. */
@@ -552,7 +569,7 @@ async function testarA3(_event: IpcMainInvokeEvent): Promise<ApiResult<TesteA3Re
     await runPowerShellScriptAsync(
       PS_TESTAR_A3,
       { Thumbprint: ass.certificado_a3_thumbprint, OutFile: outFile },
-      120000
+      180000
     );
     if (!fs.existsSync(outFile)) {
       return { ok: false, error: 'O teste não produziu resultado. Tente novamente.' };
@@ -571,6 +588,7 @@ async function testarA3(_event: IpcMainInvokeEvent): Promise<ApiResult<TesteA3Re
     return { ok: true, data: resultado };
   } catch (e: any) {
     const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
+    logger.error({ err: msg }, 'testarA3: falha ao executar teste de assinatura A3');
     return { ok: false, error: traduzirErroA3(msg) };
   } finally {
     try { fs.unlinkSync(outFile); } catch { /* noop */ }
@@ -681,7 +699,7 @@ async function assinarXmlA3(
   const outFile = path.join(os.tmpdir(), `nexa_a3_out_${id}.xml`);
   fs.writeFileSync(inFile, xmlContent, 'utf8');
   try {
-    await runPowerShellScriptAsync(PS_ASSINAR_A3, { Thumbprint: thumbprint, InFile: inFile, OutFile: outFile }, 120000);
+    await runPowerShellScriptAsync(PS_ASSINAR_A3, { Thumbprint: thumbprint, InFile: inFile, OutFile: outFile }, 180000);
     if (!fs.existsSync(outFile)) {
       return { ok: false, error: 'Falha ao assinar com o token. Saída não gerada.' };
     }
@@ -689,6 +707,7 @@ async function assinarXmlA3(
     return { ok: true, xml: signed };
   } catch (e: any) {
     const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
+    logger.error({ err: msg }, 'assinarXmlA3: falha ao assinar XML com o token A3');
     return { ok: false, error: traduzirErroA3(msg) };
   } finally {
     try { fs.unlinkSync(inFile); } catch { /* noop */ }
