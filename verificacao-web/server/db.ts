@@ -31,6 +31,20 @@ export async function initDb(): Promise<DbAdapter> {
     );
   `);
 
+  // Diploma Digital MEC — consulta pública (dados mínimos, LGPD)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS diplomas_digitais (
+      codigo TEXT PRIMARY KEY,
+      aluno_nome TEXT NOT NULL,
+      curso TEXT,
+      ies TEXT NOT NULL,
+      data_registro TEXT,
+      registrado_por TEXT,
+      verificado_em TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
   return db;
 }
 
@@ -89,5 +103,48 @@ export function marcarVerificado(codigo: string): void {
 export function removerDeclaracao(codigo: string): { changes: number } {
   return getDb()
     .prepare('DELETE FROM declaracoes WHERE codigo_verificacao = ?')
+    .run(codigo);
+}
+
+// ---------- Diploma Digital MEC (consulta pública) ----------
+
+export interface DiplomaPublicoRegistrado {
+  codigo: string;
+  aluno_nome: string;
+  curso: string | null;
+  ies: string;
+  data_registro: string | null;
+  registrado_por: string | null;
+  verificado_em: string | null;
+}
+
+export function registrarDiplomaPublico(input: DiplomaPublicoRegistrado): void {
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO diplomas_digitais
+       (codigo, aluno_nome, curso, ies, data_registro, registrado_por, verificado_em)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      input.codigo,
+      input.aluno_nome,
+      input.curso,
+      input.ies,
+      input.data_registro,
+      input.registrado_por,
+      null
+    );
+}
+
+export function buscarDiplomaPublico(codigo: string): DiplomaPublicoRegistrado | null {
+  const row = getDb()
+    .prepare('SELECT * FROM diplomas_digitais WHERE codigo = ?')
+    .get(codigo) as DiplomaPublicoRegistrado | undefined;
+  return row ?? null;
+}
+
+export function marcarDiplomaVerificado(codigo: string): void {
+  getDb()
+    .prepare("UPDATE diplomas_digitais SET verificado_em = datetime('now') WHERE codigo = ?")
     .run(codigo);
 }

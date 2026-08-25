@@ -903,7 +903,7 @@ export async function assinarXml(
 }
 
 /** Assina o XML usando a chave privada do token A3 (a chave nunca sai do hardware). */
-async function assinarXmlA3(
+export async function assinarXmlA3(
   thumbprint: string,
   xmlContent: string
 ): Promise<{ ok: boolean; xml?: string; error?: string }> {

@@ -178,6 +178,51 @@ export interface DesktopApi {
     listar: (cursoLivreId: number) => Promise<ApiResult<any[]>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
   };
+  diplomasDigitais: {
+    listar: (busca?: string) => Promise<ApiResult<any[]>>;
+    listarAptos: (busca?: string) => Promise<ApiResult<any[]>>;
+    criar: (alunoId: number) => Promise<ApiResult<any>>;
+    obter: (id: number) => Promise<ApiResult<any>>;
+    pendencias: (alunoId: number) => Promise<ApiResult<any[]>>;
+    completarAluno: (input: {
+      alunoId: number;
+      cpf?: string;
+      sexo?: string;
+      nacionalidade?: string;
+      rg?: string;
+      rgUf?: string;
+      dataNascimento?: string;
+      naturalidadeCodigoIbge?: string;
+      naturalidadeUf?: string;
+      naturalidadeEstrangeira?: string;
+      dataColacao?: string;
+    }) => Promise<ApiResult<true>>;
+    gerarXml: (id: number, artefato: 'historico_escolar' | 'documentacao_academica') => Promise<ApiResult<{ valido: boolean; erros: string[]; arquivoId: number }>>;
+    assinar: (id: number, artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => Promise<ApiResult<{ arquivoId: number; pendenciaXadesA3?: boolean }>>;
+    registrar: (id: number, registro: {
+      livro: string;
+      numeroRegistro?: string;
+      numeroFolha?: string;
+      numeroSequencia?: string;
+      processoDiploma?: string;
+      dataExpedicaoDiploma: string;
+      dataRegistroDiploma: string;
+      responsavel: { nome: string; cpf: string; matricula?: string };
+      codigoValidacao: string;
+      informacoesAdicionais?: string;
+    }) => Promise<ApiResult<{ valido: boolean }>>;
+    publicar: (id: number) => Promise<ApiResult<true>>;
+    anular: (id: number, motivo: string, senhaMaster: string, anotacao?: string) => Promise<ApiResult<true>>;
+    gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }) => Promise<ApiResult<{ salvoPath: string; anulados: number }>>;
+    gerarRvdd: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+    gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }) => Promise<ApiResult<{ salvoPath: string; diplomas: number }>>;
+    abrirValidadorMec: () => Promise<ApiResult<true>>;
+    registrarValidacaoMec: (id: number, resultado: 'valido' | 'invalido', observacoes?: string) => Promise<ApiResult<true>>;
+    iesListar: () => Promise<ApiResult<any[]>>;
+    iesSalvar: (input: any) => Promise<ApiResult<any>>;
+    cursoGraduacaoListar: (iesId?: number) => Promise<ApiResult<any[]>>;
+    cursoGraduacaoSalvar: (input: any) => Promise<ApiResult<any>>;
+  };
   historico: {
     listar: (alunoId: number) => Promise<ApiResult<HistoricoDisciplina[]>>;
     criar: (alunoId: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;

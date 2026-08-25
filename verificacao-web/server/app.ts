@@ -7,6 +7,9 @@ import {
   buscarDeclaracao,
   marcarVerificado,
   removerDeclaracao,
+  registrarDiplomaPublico,
+  buscarDiplomaPublico,
+  marcarDiplomaVerificado,
   type DeclaracaoRegistrada,
 } from './db';
 import { logger } from './logger';
@@ -246,5 +249,61 @@ export function createApp(
       .send(renderPagina(decl, instituicao));
   });
 
+  // ---------- Diploma Digital MEC: consulta pública ----------
+
+  app.post('/api/diplomas', (req, res) => {
+    if (!validarApiKey(req, res)) return;
+    const body = req.body as any;
+    if (!body?.codigo || !body?.aluno_nome || !body?.ies) {
+      res.status(400).json({ ok: false, error: 'Payload inválido (codigo, aluno_nome e ies obrigatórios)' });
+      return;
+    }
+    registrarDiplomaPublico({
+      codigo: String(body.codigo),
+      aluno_nome: String(body.aluno_nome),
+      curso: body.curso ? String(body.curso) : null,
+      ies: String(body.ies),
+      data_registro: body.data_registro ? String(body.data_registro) : null,
+      registrado_por: body.registrado_por ? String(body.registrado_por) : null,
+      verificado_em: null,
+    });
+    res.status(201).json({ ok: true });
+  });
+
+  app.get('/d/:codigo', (req, res) => {
+    const dip = buscarDiplomaPublico(req.params.codigo);
+    res
+      .status(dip ? 200 : 404)
+      .set('Content-Type', 'text/html; charset=utf-8')
+      .send(renderPaginaDiploma(dip, instituicao));
+  });
+
   return app;
+}
+
+/** Página pública da consulta do Diploma Digital (dados mínimos — LGPD). */
+function renderPaginaDiploma(dip: Awaited<ReturnType<typeof buscarDiplomaPublico>>, instituicao: string): string {
+  const esc = (s: string | null | undefined) =>
+    String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (!dip) {
+    return `<!DOCTYPE html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diploma não encontrado</title><style>body{font-family:system-ui;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#f1f5f9}.card{background:#fff;border-radius:12px;padding:32px;max-width:480px;box-shadow:0 4px 16px rgba(0,0,0,.08);text-align:center}h1{font-size:18px;color:#b91c1c}</style></head>
+<body><div class="card"><div style="font-size:40px">✕</div><h1>Diploma não encontrado</h1>
+<p style="color:#64748b;font-size:14px">Verifique o código informado. Se o problema persistir, contate a instituição.</p></div></body></html>`;
+  }
+  marcarDiplomaVerificado(dip.codigo);
+  const dataReg = dip.data_registro ? esc(dip.data_registro) : '—';
+  const linhas = [
+    ['Diplomado', esc(dip.aluno_nome)],
+    ['Curso', esc(dip.curso ?? '—')],
+    ['Instituição', esc(dip.ies)],
+    ['Data do registro', dataReg],
+  ];
+  return `<!DOCTYPE html><html lang="pt-br"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diploma Digital — Consulta pública</title><style>body{font-family:system-ui;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center;background:#f1f5f9}.card{background:#fff;border-radius:12px;padding:32px;max-width:560px;box-shadow:0 4px 16px rgba(0,0,0,.08)}h1{font-size:18px;color:#15803d;margin:0 0 16px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px 0;font-size:14px;border-bottom:1px solid #e2e8f0}th{color:#64748b;font-weight:600;width:40%}code{font-size:12px;word-break:break-all}.ok{color:#15803d;font-weight:600;margin-top:16px;font-size:13px}</style></head>
+<body><div class="card"><h1>✓ Diploma Digital registrado</h1>
+<table>${linhas.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join('')}</table>
+<div style="margin-top:16px"><strong style="font-size:13px">Código de validação:</strong><br><code>${esc(dip.codigo)}</code></div>
+<p class="ok">Documento com registro digital ativo nesta instituição.</p>
+<p style="color:#94a3b8;font-size:12px;margin-top:12px">${esc(instituicao)} — consulta pública de Diploma Digital.</p></div></body></html>`;
 }

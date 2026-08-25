@@ -226,6 +226,32 @@ describe('GET /v/:codigo (página pública)', () => {
     expect(res.text).toContain('&lt;script&gt;alert');
   });
 
+  it('POST /api/diplomas exige API key; GET /d/:codigo publica dados mínimos', async () => {
+    const app = createApp({ apiKey: API_KEY, instituicao: INSTITUICAO }, null);
+
+    // sem key → 401
+    const semKey = await request(app).post('/api/diplomas').send({ codigo: '1.2.abc', aluno_nome: 'X', ies: 'IES' });
+    expect(semKey.status).toBe(401);
+
+    // com key → 201 e consulta pública disponível
+    const comKey = await request(app)
+      .post('/api/diplomas')
+      .set('x-api-key', API_KEY)
+      .send({ codigo: '1234.5678.deadbeef1234', aluno_nome: 'MARIA DA SILVA', curso: 'ADMINISTRAÇÃO', ies: 'INSTITUTO ERICH FROMM', data_registro: '2026-08-25' });
+    expect(comKey.status).toBe(201);
+
+    const pagina = await request(app).get('/d/1234.5678.deadbeef1234');
+    expect(pagina.status).toBe(200);
+    expect(pagina.text).toContain('Diploma Digital registrado');
+    expect(pagina.text).toContain('MARIA DA SILVA');
+    expect(pagina.text).toContain('1234.5678.deadbeef1234');
+
+    // código inexistente → 404
+    const naoExiste = await request(app).get('/d/nao-existe');
+    expect(naoExiste.status).toBe(404);
+    expect(naoExiste.text).toContain('não encontrado');
+  });
+
   it('escapa HTML na instituição', async () => {
     const app = createApp(
       {

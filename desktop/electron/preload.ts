@@ -141,6 +141,48 @@ const api = {
     baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CERTIFICADO_BAIXAR, id),
   },
+  diplomasDigitais: {
+    listar: (busca?: string): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR, busca),
+    listarAptos: (busca?: string): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR_APTOS, busca),
+    criar: (alunoId: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_CRIAR, alunoId),
+    obter: (id: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_OBTER, id),
+    pendencias: (alunoId: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PENDENCIAS, alunoId),
+    completarAluno: (input: any): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_COMPLETAR_ALUNO, input),
+    gerarXml: (id: number, artefato: string): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_XML, id, artefato),
+    assinar: (id: number, artefato: string, senhaPfx?: string): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ASSINAR, id, artefato, senhaPfx),
+    registrar: (id: number, registro: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR, id, registro),
+    publicar: (id: number): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PUBLICAR, id),
+    anular: (id: number, motivo: string, senhaMaster: string, anotacao?: string): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ANULAR, id, motivo, senhaMaster, anotacao),
+    gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }): Promise<ApiResult<{ salvoPath: string; anulados: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_LISTA_ANULADOS, input),
+    gerarRvdd: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_RVDD, id),
+    gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }): Promise<ApiResult<{ salvoPath: string; diplomas: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, input),
+    abrirValidadorMec: (): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC),
+    registrarValidacaoMec: (id: number, resultado: string, observacoes?: string): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC, id, resultado, observacoes),
+    iesListar: (): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.IES_LISTAR),
+    iesSalvar: (input: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.IES_SALVAR, input),
+    cursoGraduacaoListar: (iesId?: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_LISTAR, iesId),
+    cursoGraduacaoSalvar: (input: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_SALVAR, input),
+  },
   historico: {
     listar: (alunoId: number): Promise<ApiResult<HistoricoDisciplina[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_LISTAR, alunoId),

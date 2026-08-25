@@ -25,11 +25,18 @@ export const TABELAS_SINCRONIZADAS = [
   'cursos_livres',
   'curso_livre_alunos',
   'aluno_documentos',
+  // Diploma Digital MEC (M2) — exigem supabase-diploma-digital.sql aplicado
+  'ies',
+  'cursos',
+  'diplomas_digitais',
+  'diploma_arquivos',
+  'diploma_assinaturas',
+  'auditoria_diploma',
 ] as const;
 
 export type TabelaSincronizada = (typeof TABELAS_SINCRONIZADAS)[number];
 
-const BOOL_COLS = new Set(['ativo', 'enviado_web', 'convertido']);
+const BOOL_COLS = new Set(['ativo', 'enviado_web', 'convertido', 'valido_xsd']);
 const TS_COLS = new Set(['created_at', 'updated_at', 'emitido_em']);
 
 /** Converte timestamp ISO do Supabase para formato SQLite (mantém ms). */

@@ -32,3 +32,4 @@ tunnel-out.txt
 tunnel-err.txt
 tunnel-url-atual.txt
 deploy-keys.txt
+.opencode/

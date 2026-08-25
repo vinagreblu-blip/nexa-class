@@ -27,6 +27,7 @@ import { registrarDeclaracaoHandlers } from './ipc/declaracao';
 import { registrarDiplomaHandlers, reenviarDiplomasPendentesWeb } from './ipc/diploma';
 import { registrarAtaColacaoHandlers } from './ipc/ata-colacao';
 import { registrarCursosLivresHandlers } from './ipc/cursos-livres';
+import { registrarDiplomasDigitaisHandlers } from './ipc/diplomas-digitais';
 import { registrarCertificadosHandlers } from './ipc/certificados';
 import { registrarHistoricoHandlers } from './ipc/historico';
 import { registrarDocentesHandlers } from './ipc/docentes';
@@ -186,6 +187,7 @@ function registrarHandlers(): void {
   registrarConversoesHandlers();
   registrarAssinaturaHandlers();
   registrarCloudHandlers();
+  registrarDiplomasDigitaisHandlers();
   try {
     iniciarServicoVerificacao();
   } catch (e: any) {

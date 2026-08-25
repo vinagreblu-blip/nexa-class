@@ -13,6 +13,7 @@ import { Usuarios } from '../pages/Usuarios';
 import { DocumentosInstitucionais } from '../pages/DocumentosInstitucionais';
 import { AtaColacao } from '../pages/AtaColacao';
 import { Diploma } from '../pages/Diploma';
+import { DiplomasDigitais } from '../pages/DiplomasDigitais';
 import { CursosLivres } from '../pages/CursosLivres';
 import { AssinaturaDigital } from '../pages/AssinaturaDigital';
 import { Conversoes } from '../pages/Conversoes';
@@ -32,6 +33,7 @@ type Aba =
   | 'documentos-institucionais'
   | 'ata-colacao'
   | 'diploma'
+  | 'diplomas-digitais'
   | 'cursos-livres'
   | 'assinatura'
   | 'conversoes'
@@ -81,6 +83,7 @@ export function Layout() {
     { id: 'documentos-institucionais', label: 'Documentos Institucionais' },
     { id: 'ata-colacao', label: 'Ata de Colação de Grau' },
     { id: 'diploma', label: 'Diploma', adminOnly: true },
+    { id: 'diplomas-digitais', label: 'Diplomas Digitais' },
     { id: 'cursos-livres', label: 'Cursos', adminOnly: true },
     { id: 'assinatura', label: 'Assinatura Digital' },
     { id: 'conversoes', label: 'Converter arquivos' },
@@ -276,6 +279,7 @@ export function Layout() {
         {aba === 'documentos-institucionais' && <DocumentosInstitucionais />}
         {aba === 'ata-colacao' && <AtaColacao />}
         {aba === 'diploma' && <Diploma />}
+        {aba === 'diplomas-digitais' && <DiplomasDigitais />}
         {aba === 'cursos-livres' && usuario?.role === 'admin' && <CursosLivres />}
         {aba === 'assinatura' && <AssinaturaDigital />}
         {aba === 'conversoes' && <Conversoes />}

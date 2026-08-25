@@ -33,6 +33,7 @@ export async function initDatabase(): Promise<DbAdapter> {
   createSchema();
   migrateAtasColacao();
   migrateAlunos();
+  migrateDiplomasDigitais();
   migrateDelecoes();
   atribuirCodigosUsuarios();
   seedAdmin();
@@ -347,6 +348,140 @@ function createSchema(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_historicos_aluno ON historicos(aluno_id);
     CREATE INDEX IF NOT EXISTS idx_historicos_codigo ON historicos(codigo_verificacao);
+
+    -- ============================================================
+    -- DIPLOMA DIGITAL MEC (XSD v1.05) — processo oficial.
+    -- Separação total da Certidão de Conclusão (declaracoes), que
+    -- segue existindo com PDF/QR/código próprios.
+    -- ============================================================
+
+    -- IES emissoras/registradoras com dados oficiais (e-MEC, CNPJ,
+    -- endereço estruturado e atos regulatórios em JSON — estrutura
+    -- espelha os tipos TAtoRegulatorio/TEndereco do XSD oficial).
+    CREATE TABLE IF NOT EXISTS ies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      codigo_emec INTEGER,
+      cnpj TEXT,
+      logradouro TEXT,
+      numero TEXT,
+      complemento TEXT,
+      bairro TEXT,
+      codigo_municipio TEXT,
+      nome_municipio TEXT,
+      uf TEXT,
+      cep TEXT,
+      papel TEXT NOT NULL DEFAULT 'emissora',
+      credenciamento_json TEXT,
+      recredenciamento_json TEXT,
+      mantenedora_json TEXT,
+      ato_autorizacao_registro_json TEXT,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Cursos de graduação com dados exigidos pelo DadosCurso do XSD.
+    CREATE TABLE IF NOT EXISTS cursos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ies_id INTEGER NOT NULL,
+      nome TEXT NOT NULL,
+      codigo_emec INTEGER,
+      modalidade TEXT,
+      titulo_conferido TEXT,
+      outro_titulo TEXT,
+      grau_conferido TEXT,
+      endereco_json TEXT,
+      autorizacao_json TEXT,
+      reconhecimento_json TEXT,
+      renovacao_reconhecimento_json TEXT,
+      carga_horaria TEXT,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ies_id) REFERENCES ies(id) ON DELETE CASCADE
+    );
+
+    -- Processo do diploma digital (uma linha por diplomando).
+    CREATE TABLE IF NOT EXISTS diplomas_digitais (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aluno_id INTEGER NOT NULL,
+      curso_id INTEGER,
+      ies_emissora_id INTEGER NOT NULL,
+      ies_registradora_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'aguardando_conclusao',
+      versao_schema TEXT NOT NULL DEFAULT '1.05',
+      chave_acesso TEXT,
+      chave_req TEXT,
+      codigo_validacao_historico TEXT,
+      dados_registro_json TEXT,
+      certidao_id INTEGER,
+      motivo_anulacao TEXT,
+      anotacao_anulacao TEXT,
+      validado_mec_em TEXT,
+      anulado_em TEXT,
+      anulado_por INTEGER,
+      criado_por INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id),
+      FOREIGN KEY (curso_id) REFERENCES cursos(id),
+      FOREIGN KEY (ies_emissora_id) REFERENCES ies(id),
+      FOREIGN KEY (ies_registradora_id) REFERENCES ies(id),
+      FOREIGN KEY (certidao_id) REFERENCES declaracoes(id),
+      FOREIGN KEY (criado_por) REFERENCES usuarios(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_diplomas_digitais_aluno ON diplomas_digitais(aluno_id);
+
+    -- Artefatos XML/PDF do processo, com resultado da validação XSD.
+    CREATE TABLE IF NOT EXISTS diploma_arquivos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      diploma_id INTEGER NOT NULL,
+      tipo_arquivo TEXT NOT NULL,
+      nome TEXT,
+      caminho_storage TEXT,
+      hash TEXT,
+      versao_schema TEXT NOT NULL,
+      valido_xsd INTEGER,
+      erros_validacao_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (diploma_id) REFERENCES diplomas_digitais(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_diploma_arquivos_diploma ON diploma_arquivos(diploma_id);
+
+    -- Assinaturas (XAdES, M4) — quem assina, cargo (enum MEC) e status.
+    -- NUNCA guarda chave privada ou PIN: apenas metadados do certificado.
+    CREATE TABLE IF NOT EXISTS diploma_assinaturas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      diploma_id INTEGER NOT NULL,
+      tipo TEXT NOT NULL,
+      cpf TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      cargo TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      cert_serial TEXT,
+      assinado_em TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (diploma_id) REFERENCES diplomas_digitais(id) ON DELETE CASCADE
+    );
+
+    -- Trilha de auditoria do fluxo (criação, geração, validação,
+    -- assinatura, registro, publicação, anulação...). Append-only na
+    -- aplicação; nunca apaga histórico de diploma.
+    CREATE TABLE IF NOT EXISTS auditoria_diploma (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      diploma_id INTEGER,
+      usuario_id INTEGER,
+      usuario_nome TEXT,
+      acao TEXT NOT NULL,
+      resultado TEXT NOT NULL DEFAULT 'sucesso',
+      detalhes_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_auditoria_diploma ON auditoria_diploma(diploma_id);
   `);
 }
 
@@ -359,6 +494,27 @@ function migrateAtasColacao(): void {
   if (names.includes('secretario_cargo')) {
     db.exec('ALTER TABLE atas_colacao RENAME COLUMN secretario_cargo TO diretor_cargo');
   }
+}
+
+// Diploma Digital MEC: colunas adicionadas após a criação inicial das
+// tabelas do módulo (idempotente para DBs de dev criados no M2).
+function migrateDiplomasDigitais(): void {
+  const addCol = (tabela: string, col: string, def: string) => {
+    const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
+    if (cols.length > 0 && !cols.some((c) => c.name === col)) {
+      db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${def}`);
+    }
+  };
+  addCol('cursos', 'carga_horaria', 'carga_horaria TEXT');
+  addCol('diplomas_digitais', 'codigo_validacao_historico', 'codigo_validacao_historico TEXT');
+  addCol('diplomas_digitais', 'chave_req', 'chave_req TEXT');
+  addCol('diplomas_digitais', 'anotacao_anulacao', 'anotacao_anulacao TEXT');
+  addCol('diplomas_digitais', 'validado_mec_em', 'validado_mec_em TEXT');
+  addCol('ies', 'ato_autorizacao_registro_json', 'ato_autorizacao_registro_json TEXT');
+  addCol('alunos', 'mae_nome', 'mae_nome TEXT');
+  addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');
+  addCol('alunos', 'pai_nome', 'pai_nome TEXT');
+  addCol('alunos', 'pai_sexo', 'pai_sexo TEXT');
 }
 
 function migrateAlunos(): void {
@@ -383,6 +539,19 @@ function migrateAlunos(): void {
   adicionar('data_vestibular', 'data_vestibular TEXT');
   adicionar('data_colacao', 'data_colacao TEXT');
   adicionar('created_by', 'created_by INTEGER');
+  // Diploma Digital MEC (XSD v1.05): RG exige UF; naturalidade exige
+  // código IBGE 7 dígitos + UF (ou município estrangeiro); nome social
+  // é opcional no XSD (TDadosDiplomado → GPessoa).
+  adicionar('rg_uf', 'rg_uf TEXT');
+  adicionar('nome_social', 'nome_social TEXT');
+  adicionar('naturalidade_codigo_ibge', 'naturalidade_codigo_ibge TEXT');
+  adicionar('naturalidade_uf', 'naturalidade_uf TEXT');
+  adicionar('naturalidade_estrangeira', 'naturalidade_estrangeira TEXT');
+  // Diploma Digital MEC: filiação (Filiacao/Genitor no XSD da DA)
+  adicionar('mae_nome', 'mae_nome TEXT');
+  adicionar('mae_sexo', 'mae_sexo TEXT');
+  adicionar('pai_nome', 'pai_nome TEXT');
+  adicionar('pai_sexo', 'pai_sexo TEXT');
 
   // declaracoes: pdf_caminho
   const colsDecl = db.prepare('PRAGMA table_info(declaracoes)').all() as { name: string }[];
