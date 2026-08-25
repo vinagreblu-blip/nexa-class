@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS cursos (
   autorizacao_json JSONB,
   reconhecimento_json JSONB,
   renovacao_reconhecimento_json JSONB,
+  carga_horaria TEXT,
   ativo INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -128,6 +129,7 @@ CREATE INDEX IF NOT EXISTS idx_auditoria_diploma ON auditoria_diploma(diploma_id
 ALTER TABLE ies ADD COLUMN IF NOT EXISTS ato_autorizacao_registro_json JSONB;
 ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS chave_req TEXT;
 ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS codigo_validacao_historico TEXT;
+ALTER TABLE cursos ADD COLUMN IF NOT EXISTS carga_horaria TEXT;
 
 -- ---------------------------------------------------------
 -- 2) RLS: mesmo padrão das tabelas operacionais (só authenticated)
