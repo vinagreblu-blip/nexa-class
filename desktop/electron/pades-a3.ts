@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 // @signpdf/utils é CommonJS — importamos o caminho da base Signer.
 import { Signer } from '@signpdf/utils';
-import { runPowerShellScriptAsync, precheckCertificadoA3 } from './ipc/assinatura';
+import { runPowerShellScriptAsync, precheckCertificadoA3, PS_VIGIA_PIN } from './ipc/assinatura';
 import { logger } from './utils/logger';
 
 /**
@@ -70,6 +70,7 @@ $signer.DigestAlgorithm = New-Object System.Security.Cryptography.Oid('2.16.840.
 $signer.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
 
 # ComputeSignature invoca o token -> PIN pedido pelo driver do fabricante.
+${PS_VIGIA_PIN}
 Write-Output 'FASE:assinando'
 $cms.ComputeSignature($signer, $false)
 Write-Output 'FASE:assinado'
@@ -114,7 +115,8 @@ export class SignerA3 extends Signer {
       await runPowerShellScriptAsync(
         PS_CMS_A3,
         { Thumbprint: this.thumbprint, DataFile: dataFile, OutFile: outFile },
-        180000
+        180000,
+        { exibirDialogos: true } // o diálogo de PIN do driver deve nascer visível
       );
       if (!fs.existsSync(outFile)) {
         throw new Error('O token não gerou a assinatura. Saída não produzida.');

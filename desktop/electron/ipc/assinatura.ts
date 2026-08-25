@@ -215,6 +215,61 @@ $json = [pscustomobject]@{ Certs = @($unique) } | ConvertTo-Json -Compress -Dept
 Write-Output 'OK'
 `.trim();
 
+// Bloco compartilhado: VIGIA DE JANELA DE PIN. Muitos middlewares (SafeNet,
+// Pronova/FENACON...) criam o diálogo de PIN como janela top-level que abre
+// ATRÁS do app (ou oculta quando o host nasce escondido). Um timer de 300ms
+// enumera as janelas visíveis e traz para frente qualquer uma cujo título
+// contenha palavras-chave de PIN/token — cada janela é ativada UMA vez (não
+// rouba foco repetidamente). Threads de timer são background: morrem com o
+// processo, sem precisar de Parar().
+export const PS_VIGIA_PIN = `
+if (-not ('NexaPinWatchdog' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
+public static class NexaPinWatchdog {
+  delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
+  [DllImport("user32.dll")] static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+
+  static readonly string[] Chaves = { "pin", "senha", "token", "smart card", "smartcard", "safenet", "fenacon", "sescape", "certificado" };
+  static Timer _timer;
+  static IntPtr _ultima = IntPtr.Zero;
+
+  static bool Callback(IntPtr hWnd, IntPtr lParam) {
+    try {
+      if (!IsWindowVisible(hWnd)) return true;
+      var titulo = new StringBuilder(256);
+      GetWindowText(hWnd, titulo, 256);
+      var t = titulo.ToString().ToLowerInvariant();
+      if (t.Length == 0) return true;
+      var combina = false;
+      foreach (var k in Chaves) if (t.Contains(k)) { combina = true; break; }
+      if (combina && hWnd != _ultima) {
+        ShowWindowAsync(hWnd, 9); // SW_RESTORE
+        SetForegroundWindow(hWnd);
+        _ultima = hWnd;
+      }
+    } catch { }
+    return true;
+  }
+
+  public static void Iniciar() {
+    if (_timer != null) return;
+    _timer = new Timer(_ => { try { EnumWindows(Callback, IntPtr.Zero); } catch { } }, null, 200, 300);
+  }
+}
+'@
+}
+[NexaPinWatchdog]::Iniciar()
+`.trim();
+
 // PowerShell: assina o XML (enveloped, C14N, SHA-256) com a chave do token.
 const PS_ASSINAR_A3 = `
 param([string]$Thumbprint, [string]$InFile, [string]$OutFile)
@@ -332,6 +387,7 @@ public class ECDsaP1363SignatureDescription : SignatureDescription {
   [System.Security.Cryptography.CryptoConfig]::AddAlgorithm([ECDsaP1363SignatureDescription], 'http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256')
 }
 
+${PS_VIGIA_PIN}
 Write-Output 'FASE:assinando'
 $signedXml.ComputeSignature()
 Write-Output 'FASE:assinado'
@@ -391,6 +447,7 @@ if ($candidatos.Count -gt 0) {
     $signer = New-Object System.Security.Cryptography.Pkcs.CmsSigner($cert)
     $signer.DigestAlgorithm = New-Object System.Security.Cryptography.Oid('2.16.840.1.101.3.4.2.1')
     $signer.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
+    ${PS_VIGIA_PIN}
     Write-Output 'FASE:assinando'
     $cms.ComputeSignature($signer, $false)
     if ($cms.Encode().Length -gt 0) { $result.Assinou = $true }
@@ -415,11 +472,21 @@ function resolverPowerShell(): string {
  * Executa um script PowerShell a partir de um arquivo .ps1 temporário (evita escaping).
  * NÃO bloqueia o event loop do Electron (usa spawn) — essencial para não congelar a UI
  * enquanto o usuário digita o PIN do token A3.
+ *
+ * `exibirDialogos: true` — para scripts que acionam o PIN do token: o processo nasce
+ * VISÍVEL ao Windows (windowsHide: false) com o console escondido via -WindowStyle
+ * Hidden. Razão: middlewares que hospedam o diálogo de PIN no processo chamador
+ * herdam a visibilidade do spawn — com windowsHide:true o PIN nasce oculto, nunca é
+ * digitado e a assinatura morre no timeout de 180s (FASE:assinando).
  */
+export interface OpcoesPowerShell {
+  exibirDialogos?: boolean;
+}
 export function runPowerShellScriptAsync(
   scriptBody: string,
   params: Record<string, string> = {},
-  timeoutMs = 120000
+  timeoutMs = 120000,
+  opcoes: OpcoesPowerShell = {}
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(os.tmpdir(), `nexa_a3_${Date.now()}_${Math.random().toString(36).slice(2)}.ps1`);
@@ -427,8 +494,11 @@ export function runPowerShellScriptAsync(
     const paramArgs: string[] = [];
     for (const [k, v] of Object.entries(params)) paramArgs.push(`-${k}`, v);
 
-    const child = spawn(resolverPowerShell(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...paramArgs], {
-      windowsHide: true,
+    const args = opcoes.exibirDialogos
+      ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', scriptPath, ...paramArgs]
+      : ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...paramArgs];
+    const child = spawn(resolverPowerShell(), args, {
+      windowsHide: !opcoes.exibirDialogos,
     });
 
     let stdout = '';
@@ -459,16 +529,21 @@ export function runPowerShellScriptAsync(
       cleanup();
       // Fase do script antes do travamento (FASE:store-ok/chave-ok/assinando…)
       // — identifica se parou na leitura do store, na abertura da chave
-      // (middleware travado) ou na assinatura em si (PIN/hardware).
+      // (middleware travado) ou na assinatura em si (PIN/hardware). A
+      // telemetria de middleware (processos/serviços dos drivers conhecidos)
+      // vai na mensagem em 1 linha — veredicto imediato do estado do driver.
       const fase = extrairUltimaFase(stdout);
-      const err = new Error(
-        'Tempo esgotado aguardando o token/PIN. Verifique se o token está conectado e tente novamente.' +
-          (fase ? ` (parou em: ${fase})` : '')
-      );
-      // Preserva o diagnóstico capturado (hoje era descartado) para os logs —
-      // é a única pista quando o middleware trava sem mensagem de erro.
-      (err as any).detalhe = { stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 4000) };
-      reject(err);
+      void coletarTelemetriaMiddleware().then((mw) => {
+        const err = new Error(
+          'Tempo esgotado aguardando o token/PIN. Verifique se o token está conectado e tente novamente.' +
+            (fase ? ` (parou em: ${fase})` : '') +
+            (mw ? ` [middleware: ${mw}]` : '')
+        );
+        // Preserva o diagnóstico capturado (hoje era descartado) para os logs —
+        // é a única pista quando o middleware trava sem mensagem de erro.
+        (err as any).detalhe = { stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 4000), middleware: mw };
+        reject(err);
+      });
     }, timeoutMs);
 
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString('utf8'); });
@@ -486,6 +561,37 @@ export function runPowerShellScriptAsync(
       if (code === 0) resolve(stdout);
       else reject(new Error(stderr.trim() || `PowerShell encerrou com código ${code}`));
     });
+  });
+}
+
+// PowerShell: telemetria de middleware de token (1 linha compacta). Roda em
+// best-effort após um timeout — nunca deve demorar (própria deadline de 8s).
+const PS_TELEMETRIA_MIDDLEWARE = `
+$nomes = @('safenet','pronova','gemalto','watchdata','fenacon','sescape','etoken','idprime')
+$p = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $n = $_.Name.ToLower(); $nomes | Where-Object { $n -like ('*' + $_ + '*') } } | Select-Object -ExpandProperty Name -Unique)
+$s = @(Get-Service -ErrorAction SilentlyContinue | Where-Object { $n = $_.Name.ToLower(); $nomes | Where-Object { $n -like ('*' + $_ + '*') } } | ForEach-Object { ($_.Name + ':' + $_.Status) } | Select-Object -Unique)
+Write-Output ('procs=[' + ($p -join ',') + '] servicos=[' + ($s -join ',') + ']')
+`.trim();
+
+/** Coleta 1 linha com processos/serviços de middlewares de token conhecidos. */
+function coletarTelemetriaMiddleware(): Promise<string> {
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    const finalizar = (v: string) => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(resolverPowerShell(), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', PS_TELEMETRIA_MIDDLEWARE], {
+        windowsHide: true,
+      });
+    } catch { resolve(''); return; }
+    const t = setTimeout(() => {
+      try { child.kill(); } catch { /* noop */ }
+      finalizar('');
+    }, 8000);
+    child.stdout?.on('data', (d: Buffer) => { out += d.toString('utf8'); });
+    child.on('error', () => finalizar(''));
+    child.on('close', () => finalizar(out.split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? ''));
   });
 }
 
@@ -674,7 +780,8 @@ async function testarA3(_event: IpcMainInvokeEvent): Promise<ApiResult<TesteA3Re
     await runPowerShellScriptAsync(
       PS_TESTAR_A3,
       { Thumbprint: ass.certificado_a3_thumbprint, OutFile: outFile },
-      180000
+      180000,
+      { exibirDialogos: true } // o diálogo de PIN do driver deve nascer visível
     );
     if (!fs.existsSync(outFile)) {
       return { ok: false, error: 'O teste não produziu resultado. Tente novamente.' };
@@ -810,7 +917,7 @@ async function assinarXmlA3(
   const outFile = path.join(os.tmpdir(), `nexa_a3_out_${id}.xml`);
   fs.writeFileSync(inFile, xmlContent, 'utf8');
   try {
-    await runPowerShellScriptAsync(PS_ASSINAR_A3, { Thumbprint: thumbprint, InFile: inFile, OutFile: outFile }, 180000);
+    await runPowerShellScriptAsync(PS_ASSINAR_A3, { Thumbprint: thumbprint, InFile: inFile, OutFile: outFile }, 180000, { exibirDialogos: true });
     if (!fs.existsSync(outFile)) {
       return { ok: false, error: 'Falha ao assinar com o token. Saída não gerada.' };
     }
