@@ -18,7 +18,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node 24 — mesmo runtime usado em desenvolvimento, onde a suíte
+          # inteira passa. No Node 20 do runner o better-sqlite3 (nativo)
+          # derrubava os workers do vitest (CI vermelho desde a v1.2.15).
+          node-version: '24'
           cache: 'npm'
 
       - name: Instalar dependências
