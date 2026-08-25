@@ -4,6 +4,7 @@ import type { Disciplina, DisciplinaInput, Docente } from '../types';
 import { Modal } from '../components/Modal';
 import { formatarDisciplina } from '../utils/formatar';
 import { useToast } from '../context/ToastContext';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 const VAZIO: DisciplinaInput = { nome: '', docente_id: null, ch: '' };
 
@@ -45,6 +46,12 @@ export function Disciplinas() {
   useEffect(() => {
     carregarDocentes();
   }, []);
+
+  // Tempo real: recarrega a lista quando outra máquina cadastra/edita/exclui.
+  useSyncTempoReal(() => {
+    carregar(busca);
+    carregarDocentes();
+  }, ['disciplinas', 'docentes']);
 
   function abrirNovo() {
     setEditando(null);

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { DiplomaRow } from '../types';
 import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 /**
  * Página "Declaração de Autenticidade de Diploma".
@@ -31,6 +32,9 @@ export function DeclaracaoDiploma() {
   useEffect(() => {
     carregar();
   }, []);
+
+  // Tempo real: recarrega quando outra máquina emite/exclui diplomas.
+  useSyncTempoReal(carregar, ['diplomas', 'declaracoes']);
 
   async function emitirDeclaracao(d: DiplomaRow, sa: boolean, senhaPfx?: string) {
     setEmitindoId(d.id);

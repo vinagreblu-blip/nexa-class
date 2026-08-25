@@ -4,6 +4,7 @@ import type { Aluno, AlunoInput } from '../types';
 import { Modal, ConfirmDialog } from '../components/Modal';
 import { DocumentosAluno } from '../components/DocumentosAluno';
 import { mascararCPF } from '../utils';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 export const FACULDADES = ['Hélio Rocha', 'FACIIP', 'FATECE', 'FACEI', '2 de Julho'] as const;
 export const ESTADOS_BR = [
@@ -129,6 +130,9 @@ export function Alunos() {
     const t = setTimeout(() => carregar(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
+
+  // Tempo real: recarrega a lista quando outra máquina cadastra/edita/exclui.
+  useSyncTempoReal(() => carregar(busca), ['alunos', 'aluno_documentos']);
 
   async function cadastroComIA() {
     setErro(null);

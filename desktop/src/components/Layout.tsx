@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useToast } from '../context/ToastContext';
 import { Home } from '../pages/Home';
 import { Dashboard } from '../pages/Dashboard';
 import { Alunos } from '../pages/Alunos';
@@ -38,12 +39,37 @@ type Aba =
   | 'usuarios'
   | 'perfil';
 
+type EstadoConexao = 'conectando' | 'online' | 'offline';
+
+const CONEXAO_INFO: Record<EstadoConexao, { cor: string; label: string }> = {
+  online: { cor: '#4ade80', label: 'Sincronizado em tempo real' },
+  conectando: { cor: '#fbbf24', label: 'Conectando à nuvem…' },
+  offline: { cor: '#f87171', label: 'Offline — aguardando conexão' },
+};
+
 export function Layout() {
   const { usuario, logout } = useAuth();
   const { tema, alternar } = useTheme();
+  const toast = useToast();
   const [aba, setAba] = useState<Aba>('home');
   const [fotoRefresh, setFotoRefresh] = useState(0);
   const [trocandoFoto, setTrocandoFoto] = useState(false);
+  const [conexao, setConexao] = useState<EstadoConexao>('conectando');
+  const conexaoAnterior = useRef<EstadoConexao>('conectando');
+
+  // Estado da sincronização em tempo real (dot no rodapé + toasts nas
+  // transições de queda/reconexão). O main envia o estado atual no load.
+  useEffect(() => {
+    return api.conexao.onEstado((estado) => {
+      setConexao(estado);
+      if (estado === 'online' && conexaoAnterior.current === 'offline') {
+        toast.success('Conexão restabelecida — sincronizando dados…');
+      } else if (estado === 'offline' && conexaoAnterior.current === 'online') {
+        toast.warning('Conexão com a nuvem perdida. Tentando reconectar…', 6000);
+      }
+      conexaoAnterior.current = estado;
+    });
+  }, [toast]);
 
   const itens: { id: Aba; label: string; adminOnly?: boolean }[] = [
     { id: 'home', label: 'Home' },
@@ -199,6 +225,32 @@ export function Layout() {
               </span>
             </div>
           )}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              marginBottom: 10,
+              fontSize: 12,
+            }}
+            title={
+              conexao === 'online'
+                ? 'Alterações de outros usuários aparecem automaticamente.'
+                : 'Sem conexão com a nuvem. Seus dados locais continuam salvos e sincronizam ao voltar.'
+            }
+          >
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: '50%',
+                background: CONEXAO_INFO[conexao].cor,
+                boxShadow: `0 0 6px ${CONEXAO_INFO[conexao].cor}`,
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ opacity: 0.85 }}>{CONEXAO_INFO[conexao].label}</span>
+          </div>
           <button
             onClick={logout}
             style={{

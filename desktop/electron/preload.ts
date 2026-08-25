@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import { IPC_CHANNELS } from './types';
 import type {
   Aluno,
@@ -232,6 +232,27 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.CLOUD_SALVAR, input),
     sync: (): Promise<ApiResult<{ synced: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CLOUD_SYNC),
+  },
+  dados: {
+    /** Notificação main → renderer: tabelas sincronizadas mudaram (outra máquina). */
+    onAtualizados: (cb: (tabelas: string[]) => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, tabelas: string[]): void => cb(tabelas);
+      ipcRenderer.on(IPC_CHANNELS.DADOS_ATUALIZADOS, listener);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.DADOS_ATUALIZADOS, listener);
+      };
+    },
+  },
+  conexao: {
+    /** Estado da sincronização em tempo real (online/offline/conectando). */
+    onEstado: (cb: (estado: 'conectando' | 'online' | 'offline') => void): (() => void) => {
+      const listener = (_e: IpcRendererEvent, estado: 'conectando' | 'online' | 'offline'): void =>
+        cb(estado);
+      ipcRenderer.on(IPC_CHANNELS.CONEXAO_ESTADO, listener);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.CONEXAO_ESTADO, listener);
+      };
+    },
   },
 };
 

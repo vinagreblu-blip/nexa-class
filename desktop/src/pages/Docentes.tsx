@@ -4,6 +4,7 @@ import type { Docente, DocenteInput } from '../types';
 import { Modal } from '../components/Modal';
 import { formatarDisciplina } from '../utils/formatar';
 import { useToast } from '../context/ToastContext';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 const TITULACOES = ['DOUTOR', 'DOUTORA', 'MESTRADO', 'MESTRADO/DOUTORADO', 'ESPECIALISTA', 'GRADUADO'] as const;
 
@@ -36,6 +37,9 @@ export function Docentes() {
     const t = setTimeout(() => carregar(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
+
+  // Tempo real: recarrega a lista quando outra máquina cadastra/edita/exclui.
+  useSyncTempoReal(() => carregar(busca), ['docentes']);
 
   function abrirNovo() {
     setEditando(null);

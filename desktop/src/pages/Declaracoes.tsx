@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import type { Aluno, DeclaracaoRow } from '../types';
 import { Modal } from '../components/Modal';
 import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 interface DeclaracoesLabels {
   titulo: string;
@@ -69,6 +70,13 @@ export function Declaracoes({
   useEffect(() => {
     carregarHistorico();
   }, []);
+
+  // Tempo real: recarrega quando outra máquina emite/exclui declarações
+  // ou cadastra alunos (seletor aberto).
+  useSyncTempoReal(() => {
+    carregarHistorico();
+    if (seletorAberto) carregarAlunos();
+  }, ['declaracoes', 'alunos']);
 
   useEffect(() => {
     if (!seletorAberto) return;

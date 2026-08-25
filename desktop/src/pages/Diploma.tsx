@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import type { Aluno, DiplomaRow } from '../types';
 import { Modal } from '../components/Modal';
 import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 interface DiplomaLabels {
   titulo: string;
@@ -58,6 +59,13 @@ export function Diploma({ labels }: { labels?: Partial<DiplomaLabels> }) {
   }
 
   useEffect(() => { carregar(); }, []);
+
+  // Tempo real: recarrega quando outra máquina emite/exclui diplomas
+  // ou cadastra alunos (seletor aberto).
+  useSyncTempoReal(() => {
+    carregar();
+    if (seletorAberto) carregarAlunos();
+  }, ['diplomas', 'alunos']);
 
   useEffect(() => {
     if (!seletorAberto) return;

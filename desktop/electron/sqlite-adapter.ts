@@ -29,6 +29,36 @@ let persistSync = false; // flag que força persist síncrono (ex: shutdown)
 
 const PERSIST_DEBOUNCE_MS = 100;
 
+// ============================================================
+// Notificação de escritas LOCAIS (para push acelerado da nuvem)
+// ============================================================
+// O sync em tempo real precisa empurrar mudanças para o Supabase logo após
+// uma mutação do usuário (~3s), em vez de esperar o ciclo de 15s. Para isso,
+// o adapter avisa um listener a cada escrita — exceto escritas que aplicam
+// dados vindos da nuvem (pull/realtime), marcadas via flag de supressão
+// (senão cada pull dispararia um push em loop).
+
+type LocalWriteListener = () => void;
+let localWriteListener: LocalWriteListener | null = null;
+let suppressLocalWriteNotify = false;
+
+export function setLocalWriteListener(fn: LocalWriteListener | null): void {
+  localWriteListener = fn;
+}
+
+export function setSuppressLocalWriteNotify(v: boolean): void {
+  suppressLocalWriteNotify = v;
+}
+
+function notifyLocalWrite(): void {
+  if (suppressLocalWriteNotify || !localWriteListener) return;
+  try {
+    localWriteListener();
+  } catch (e: any) {
+    logger.warn({ err: e }, 'Listener de escrita local falhou');
+  }
+}
+
 /**
  * Persiste o DB em disco de forma ATÔMICA:
  *   1. Escreve o conteúdo em arquivo temporário <path>.tmp
@@ -140,6 +170,7 @@ function makeStatement(sql: string): StatementResult {
       const changes = instance.getRowsModified();
       const id = lastInsertRowid();
       schedulePersist();
+      notifyLocalWrite();
       return { changes, lastInsertRowid: id };
     },
     get(...params: any[]) {
@@ -194,6 +225,7 @@ export async function openDatabase(dbPath: string): Promise<DbAdapter> {
       if (!instance) throw new Error('DB não inicializado');
       instance.exec(sql);
       schedulePersist();
+      notifyLocalWrite();
     },
     pragma: (_s: string) => {
       /* no-op: sql.js roda em memória (WASM) */

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { openDatabase, type DbAdapter } from './sqlite-adapter';
 import { logger } from './utils/logger';
 import { getDbPath, getDbPathAntigo, getDbPathAntigo2, CONFIG } from './config';
+import { instalarInfraSincronizacao, TABELAS_SINCRONIZADAS } from './sync-core';
 
 let db: DbAdapter;
 
@@ -32,12 +33,22 @@ export async function initDatabase(): Promise<DbAdapter> {
   createSchema();
   migrateAtasColacao();
   migrateAlunos();
+  migrateDelecoes();
   atribuirCodigosUsuarios();
   seedAdmin();
   atribuirCodigosUsuarios();
   seedDocentes();
   seedDisciplinas();
   return db;
+}
+
+/**
+ * Infraestrutura de sincronização multiusuário (tombstones de exclusão +
+ * bump automático de updated_at). Implementação em sync-core.ts —
+ * compartilhada com os testes unitários.
+ */
+function migrateDelecoes(): void {
+  instalarInfraSincronizacao(db, TABELAS_SINCRONIZADAS);
 }
 
 // Gera um código identificador de 2 letras + 3 números (ex.: AB123) único entre os usuários

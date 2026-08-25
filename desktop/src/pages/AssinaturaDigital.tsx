@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Modal } from '../components/Modal';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 /** Extrai o CN= de um Subject X.500 (ex: "CN=FULANO DE TAL:12345678901,O=ICP-Brasil"). */
 function extrairCN(subject?: string | null): string {
@@ -128,6 +129,9 @@ export function AssinaturaDigital() {
   }
 
   useEffect(() => { carregar(); }, []);
+
+  // Tempo real: recarrega quando outra máquina atualiza a assinatura digital.
+  useSyncTempoReal(carregar, ['assinaturas']);
 
   async function salvar() {
     setErro(null);

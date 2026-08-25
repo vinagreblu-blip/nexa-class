@@ -5,6 +5,7 @@ import { FACULDADES, SEMESTRES } from './Alunos';
 import { formatarDisciplina } from '../utils/formatar';
 import { Modal, ConfirmDialog } from '../components/Modal';
 import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 const TITULACOES = ['DOUTOR', 'DOUTORA', 'MESTRADO', 'MESTRADO/DOUTORADO', 'ESPECIALISTA', 'GRADUADO'] as const;
 const STATUS_DISC = ['AP', 'REP', 'CUMP', 'MAT', 'TRANC'] as const;
@@ -37,6 +38,9 @@ export function Historicos() {
   useEffect(() => {
     carregar();
   }, []);
+
+  // Tempo real: recarrega quando outra máquina cadastra/edita/exclui alunos.
+  useSyncTempoReal(carregar, ['alunos', 'historico_disciplinas']);
 
   const filtrados = lista.filter((a) => {
     const matchBusca =

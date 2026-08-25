@@ -318,4 +318,6 @@ export const IPC_CHANNELS = {
   CERTIFICADO_GERAR: 'certificado:gerar',
   CERTIFICADO_LISTAR: 'certificado:listar',
   CERTIFICADO_BAIXAR: 'certificado:baixar',
+  DADOS_ATUALIZADOS: 'dados:atualizados',
+  CONEXAO_ESTADO: 'conexao:estado',
 } as const;

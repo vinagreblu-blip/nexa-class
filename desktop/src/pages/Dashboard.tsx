@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import type { MetricasDashboard } from '../api';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 /**
  * Dashboard admin: contadores, atividade recente e status do sistema.
@@ -50,6 +51,9 @@ export function Dashboard() {
     const id = setInterval(carregar, 15_000);
     return () => clearInterval(id);
   }, []);
+
+  // Tempo real: métricas atualizam na hora quando outra máquina altera dados.
+  useSyncTempoReal(carregar);
 
   if (carregando && !metricas) {
     return <p style={{ color: 'var(--text-muted)' }}>Carregando métricas…</p>;

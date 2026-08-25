@@ -20,7 +20,6 @@ if (userDataOverride && !app.isReady()) {
 
 import { autoUpdater } from 'electron-updater';
 import { initDatabase } from './database';
-import { shutdown as dbShutdown } from './sqlite-adapter';
 import { registrarAuthHandlers } from './ipc/auth';
 import { registrarAlunosHandlers } from './ipc/alunos';
 import { registrarUsuariosHandlers } from './ipc/usuarios';
@@ -40,8 +39,11 @@ import { registrarExtracaoHandlers } from './ipc/extracao';
 import { registrarConversoesHandlers } from './ipc/conversoes';
 import { registrarAssinaturaHandlers } from './ipc/assinatura';
 import { registrarCloudHandlers } from './ipc/cloud';
-import { initCloud, syncBidirecional } from './cloud';
+import { initCloud, syncBidirecional, agendarSyncRapido, setOnDadosAlterados } from './cloud';
+import { iniciarRealtime, fecharRealtime, setOnEstadoConexao, obterEstadoConexao } from './realtime';
+import { setLocalWriteListener, shutdown as dbShutdown } from './sqlite-adapter';
 import { getDb } from './database';
+import { IPC_CHANNELS } from './types';
 import { iniciarServicoVerificacao } from './servico-verificacao';
 import { iniciarTunnel, fecharTunnel } from './tunnel';
 import { CONFIG } from './config';
@@ -150,6 +152,15 @@ function criarJanela(): void {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
+  // Estado inicial de conexão para janelas recém-criadas (o evento só é
+  // emitido em transições — na criação da janela o renderer precisa do valor
+  // atual para desenhar o indicador corretamente).
+  mainWindow.webContents.once('did-finish-load', () => {
+    try {
+      mainWindow?.webContents.send(IPC_CHANNELS.CONEXAO_ESTADO, obterEstadoConexao());
+    } catch { /* ignora */ }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -245,6 +256,29 @@ app.whenReady().then(async () => {
     void CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH;
     void CONFIG.VERIFICACAO_API_KEY;
 
+    // ===== Tempo real multiusuário =====
+    // 1. Eventos do Supabase Realtime aplicam mudanças de OUTRAS máquinas no
+    //    SQLite local na hora e notificam as telas (sem F5).
+    iniciarRealtime();
+    setOnDadosAlterados((tabelas) => {
+      const lista = Array.from(tabelas);
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send(IPC_CHANNELS.DADOS_ATUALIZADOS, lista);
+        } catch { /* janela fechando */ }
+      }
+    });
+    setOnEstadoConexao((estado) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send(IPC_CHANNELS.CONEXAO_ESTADO, estado);
+        } catch { /* janela fechando */ }
+      }
+    });
+    // 2. Push acelerado: toda escrita LOCAL (mutations do usuário) agenda um
+    //    sync em ~2.5s — os outros usuários recebem em segundos via realtime.
+    setLocalWriteListener(() => agendarSyncRapido());
+
   // Sync bidirecional após 5s (não bloqueia o login inicial)
   setTimeout(() => {
     syncBidirecional(() => getDb()).catch(() => {});
@@ -289,6 +323,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   try { dbShutdown(); } catch { /* ignora */ }
+  try { fecharRealtime(); } catch { /* ignora */ }
   try { fecharTunnel(); } catch { /* ignora */ }
   if (process.platform !== 'darwin') app.quit();
 });

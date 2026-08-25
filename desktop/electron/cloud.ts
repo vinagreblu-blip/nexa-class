@@ -6,6 +6,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { logger } from './utils/logger';
+import { setSuppressLocalWriteNotify } from './sqlite-adapter';
+import {
+  TABELAS_SINCRONIZADAS,
+  aplicarLinhaRemota,
+  aplicarTombstonesRemotos,
+  aplicarDeleteRemoto,
+  lerWatermarkPush,
+  salvarWatermarkPush,
+  linhaParaRemoto,
+  podarTombstones,
+  agoraSqlite,
+  sqliteToIso,
+  type TombstoneRemoto,
+} from './sync-core';
+import { getDb } from './database';
 
 // ============================================================
 // CONFIG EMBUTIDA — sempre ativo, sem configuração manual.
@@ -25,6 +40,43 @@ let syncing = false;
 // `ultimoSyncEm` = ISO timestamp; `ultimoSyncOk` = true se foi bem-sucedido.
 let ultimoSyncEm: string | null = null;
 let ultimoSyncOk: boolean | null = null;
+
+// ============================================================
+// NOTIFICAÇÃO DE DADOS ALTERADOS (main → renderer)
+// ============================================================
+// Chamado ao final de cada sync/realtime que aplicou mudanças vindas da
+// nuvem. O main.ts registra o callback que reenvia via webContents.send
+// para todas as janelas — as telas recarregam suas listas sem F5.
+
+type DadosAlteradosListener = (tabelas: Set<string>) => void;
+let onDadosAlterados: DadosAlteradosListener | null = null;
+
+export function setOnDadosAlterados(cb: DadosAlteradosListener | null): void {
+  onDadosAlterados = cb;
+}
+
+function notificarDadosAlterados(tabelas: Set<string>): void {
+  if (tabelas.size === 0 || !onDadosAlterados) return;
+  try {
+    onDadosAlterados(new Set(tabelas));
+  } catch (e: any) {
+    logger.warn({ err: e }, 'Callback de dados alterados falhou');
+  }
+}
+
+/** Emite notificação de dados alterados (usado também pelo realtime.ts). */
+export function emitirDadosAlterados(tabelas: Set<string>): void {
+  notificarDadosAlterados(tabelas);
+}
+
+// Autenticação restaurada (offline → online): o realtime re-assina o canal
+// com o token novo. Registrado por realtime.ts.
+type AuthRestauradaListener = () => void;
+let onAuthRestaurada: AuthRestauradaListener | null = null;
+
+export function setOnAuthRestaurada(cb: AuthRestauradaListener | null): void {
+  onAuthRestaurada = cb;
+}
 
 // ============================================================
 // AUTENTICAÇÃO POR INSTALAÇÃO
@@ -88,7 +140,7 @@ function saveIdentity(id: IdentityFile): void {
   }
 }
 
-/** Cria identidade Supabase Auth na primeira execução; reusa a existida depois. */
+/** Cria identidade Supabase Auth na primeira execução; reusa a existente depois. */
 async function ensureIdentity(): Promise<IdentityFile | null> {
   const existing = loadIdentity();
   if (existing) return existing;
@@ -123,10 +175,17 @@ async function signIn(identity: IdentityFile): Promise<boolean> {
     logger.warn({ err: error.message }, 'signIn nuvem falhou');
     return false;
   }
+  const antes = authStatus.autenticado;
   authStatus.autenticado = true;
   authStatus.identityEmail = identity.email;
   authStatus.machineId = identity.machineId;
   authStatus.ultimoErro = null;
+  // Boot offline → online: realtime precisa re-assinar com o token novo.
+  if (!antes && onAuthRestaurada) {
+    try {
+      onAuthRestaurada();
+    } catch { /* ignora */ }
+  }
   return true;
 }
 
@@ -241,51 +300,62 @@ export async function initCloud(): Promise<void> {
 }
 
 // ============================================================
-// SYNC BIDIRECIONAL POR LINHA (10+ máquinas simultâneas)
+// SYNC BIDIRECIONAL INCREMENTAL (multiusuário, 5+ máquinas)
 // ============================================================
+// Ordem de cada ciclo (importante para não ressuscitar excluídos):
+//   1. PULL de linhas modificadas (watermark + sobreposição p/ clock skew)
+//   2. PULL de tombstones (`delecoes`) e aplicação dos DELETEs
+//   3. PUSH de linhas modificadas localmente (watermark incremental)
+//   4. PUSH de tombstones novos + DELETE das linhas remotas correspondentes
+//
+// Concorrência: last-write-wins por updated_at. Duplicatas evitadas pelas
+// chaves únicas (id/matricula/username) + upsert idempotente.
 
-const TABELAS = [
-  'usuarios',
-  'alunos',
-  'docentes',
-  'disciplinas',
-  'historico_disciplinas',
-  'declaracoes',
-  'assinaturas',
-  'diplomas',
-  'atas_colacao',
-  'cursos_livres',
-  'curso_livre_alunos',
-  'aluno_documentos',
-];
+const PAGE_SIZE = 1000;
+const CHUNK_SIZE = 500;
+// Sobreposição dos watermarks de pull (5 min) — tolera clock skew entre
+// máquinas (timestamps são gerados pelos relógios locais de origem).
+const PULL_OVERLAP_MS = 5 * 60 * 1000;
 
-const BOOL_COLS = new Set(['ativo', 'enviado_web', 'convertido']);
+const WM_PULL_PREFIXO = 'sync_pull_wm_';
+const WM_PULL_DEL_PREFIXO = 'sync_pull_del_wm_';
+const WM_PUSH_DEL_PREFIXO = 'sync_push_del_wm_';
 
-/** Converte timestamp ISO do Supabase para formato SQLite */
-function isoToSqlite(v: any): string {
-  if (typeof v !== 'string') return String(v);
-  if (v.includes('T')) {
-    return v.replace('T', ' ').replace(/\+00:00$/, '').replace(/Z$/, '');
+function lerConfig(db: any, chave: string): string | null {
+  try {
+    const row = db.prepare('SELECT valor FROM configuracoes WHERE chave = ?').get(chave) as
+      | { valor?: string }
+      | undefined;
+    return row?.valor ?? null;
+  } catch {
+    return null;
   }
-  return v;
 }
 
-/** Converte timestamp SQLite para ISO do Supabase */
-function sqliteToIso(v: any): string {
-  if (typeof v !== 'string') return v;
-  if (v && !v.includes('T') && v.includes(' ')) {
-    return v.replace(' ', 'T') + 'Z';
-  }
-  return v;
+function salvarConfig(db: any, chave: string, valor: string): void {
+  db.prepare(
+    `INSERT INTO configuracoes (chave, valor) VALUES (?, ?)
+     ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`
+  ).run(chave, valor);
 }
 
-/** Comparar timestamps (retorna >0 se a>b, <0 se a<b, 0 se igual) */
-function compararTs(a: string, b: string): number {
-  return new Date(sqliteToIso(a)).getTime() - new Date(sqliteToIso(b)).getTime();
+/** Watermark de pull em ISO, com sobreposição para clock skew. */
+function wmPullIso(db: any, tabela: string): string | null {
+  const wm = lerConfig(db, WM_PULL_PREFIXO + tabela);
+  if (!wm) return null;
+  const t = new Date(sqliteToIso(wm)).getTime() - PULL_OVERLAP_MS;
+  if (Number.isNaN(t)) return null;
+  return new Date(t).toISOString();
+}
+
+function tsMax(a: string | null, b: string | null): string {
+  if (!a) return b ?? '';
+  if (!b) return a;
+  return new Date(sqliteToIso(a)).getTime() >= new Date(sqliteToIso(b)).getTime() ? a : b;
 }
 
 /** Sync bidirecional completo — resolve conflitos por updated_at */
-export async function syncBidirecional(getDb: () => any): Promise<void> {
+export async function syncBidirecional(getDbFn: () => any): Promise<void> {
   if (!client || syncing) return;
 
   // Garante autenticação antes de sincronizar (auto-heal de sessões expiradas
@@ -301,112 +371,210 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
   if (authStatus.revogada) return;
 
   syncing = true;
+  // Escritas abaixo aplicam dados da NUvem — não devem disparar o push
+  // acelerado (senão cada pull geraria um push em loop).
+  setSuppressLocalWriteNotify(true);
+  const alteradas = new Set<string>();
 
   try {
-  const db = getDb();
+    const db = getDbFn();
 
-  for (const tabela of TABELAS) {
+    // 0. Poda de tombstones antigos (mesma retenção do Supabase: 90 dias)
     try {
-      // Colunas existentes localmente
-      const localCols = (db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[]).map((c) => c.name);
-      if (localCols.length === 0) continue;
+      podarTombstones(db);
+    } catch { /* ignora */ }
 
-      // 1. PULL: baixa dados da nuvem (paginação completa)
-      let fromOffset = 0;
-      const PAGE_SIZE = 1000;
-      let hasMore = true;
-      while (hasMore) {
-        const { data: remoteRows, error } = await client.from(tabela).select('*').range(fromOffset, fromOffset + PAGE_SIZE - 1);
-        if (error) break;
-        if (!remoteRows || remoteRows.length === 0) { hasMore = false; break; }
-        if (remoteRows.length < PAGE_SIZE) hasMore = false;
-        fromOffset += PAGE_SIZE;
+    for (const tabela of TABELAS_SINCRONIZADAS) {
+      try {
+        const localCols = (db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[]).map(
+          (c) => c.name
+        );
+        if (localCols.length === 0) continue;
 
-        for (const row of remoteRows) {
+        // 1. PULL incremental de linhas
+        const wm = wmPullIso(db, tabela);
+        let fromOffset = 0;
+        let hasMore = true;
+        let maxTsVisto: string | null = null;
+        while (hasMore) {
+          // Builder NÃO pode ser reutilizado entre requests — construir a
+          // query fresh a cada página (supabase-js resolve uma vez só).
+          let q = client.from(tabela).select('*');
+          if (wm) q = q.gte('updated_at', wm);
+          const { data: remoteRows, error } = await q
+            .order('id', { ascending: true })
+            .range(fromOffset, fromOffset + PAGE_SIZE - 1);
+          if (error) throw error;
+          if (!remoteRows || remoteRows.length === 0) {
+            hasMore = false;
+            break;
+          }
+          if (remoteRows.length < PAGE_SIZE) hasMore = false;
+          fromOffset += PAGE_SIZE;
+
+          for (const row of remoteRows) {
+            try {
+              if (aplicarLinhaRemota(db, tabela, row)) alteradas.add(tabela);
+              if (row.updated_at) maxTsVisto = tsMax(maxTsVisto, String(row.updated_at));
+            } catch { /* ignora linha com erro */ }
+          }
+        }
+        if (maxTsVisto) salvarConfig(db, WM_PULL_PREFIXO + tabela, agoraSqlite());
+
+        // 2. Atualiza autoincrement local para evitar conflito de IDs
+        const maxRow = db.prepare(`SELECT MAX(id) as mx FROM ${tabela}`).get() as { mx?: number } | undefined;
+        if (maxRow?.mx) {
           try {
-            const cols = Object.keys(row).filter((k) => localCols.includes(k) && row[k] !== undefined);
-            const vals = cols.map((k) => {
-              const v = row[k];
-              if (v === null) return null;
-              if (typeof v === 'boolean') return v ? 1 : 0;
-              if (k === 'created_at' || k === 'updated_at' || k === 'emitido_em') return isoToSqlite(v);
-              if (typeof v === 'object') return JSON.stringify(v);
-              return String(v);
-            });
+            db.prepare('UPDATE sqlite_sequence SET seq = ? WHERE name = ?').run(maxRow.mx, tabela);
+          } catch { /* tabela sem autoincrement */ }
+        }
+      } catch (e: any) {
+        logger.warn({ err: e, tabela }, 'Erro no pull da tabela');
+      }
+    }
 
-            if (row.id != null && localCols.includes('updated_at')) {
-              if (tabela === 'usuarios' && row.username === 'admin') continue;
-
-              const local = db.prepare(`SELECT updated_at FROM ${tabela} WHERE id = ?`).get(row.id) as { updated_at?: string } | undefined;
-              if (local?.updated_at) {
-                const cmp = compararTs(local.updated_at, isoToSqlite(row.updated_at ?? ''));
-                if (cmp >= 0) continue;
-              }
-            }
-
-            const placeholders = cols.map(() => '?').join(', ');
-            const updateCols = cols.filter((c) => c !== 'id');
-            if (updateCols.length > 0) {
-              const updateSet = updateCols.map((c) => `${c} = excluded.${c}`).join(', ');
-              db.prepare(`INSERT INTO ${tabela} (${cols.join(', ')}) VALUES (${placeholders}) ON CONFLICT(id) DO UPDATE SET ${updateSet}`).run(...vals);
-            } else {
-              db.prepare(`INSERT OR IGNORE INTO ${tabela} (${cols.join(', ')}) VALUES (${placeholders})`).run(...vals);
-            }
-          } catch { /* ignora linha com erro */ }
+    // 2.5. PULL de tombstones (deleções feitas em outras máquinas)
+    try {
+      const wmDel = lerConfig(db, WM_PULL_DEL_PREFIXO);
+      let overlap: string | null = null;
+      if (wmDel) {
+        overlap = new Date(new Date(sqliteToIso(wmDel)).getTime() - PULL_OVERLAP_MS).toISOString();
+      }
+      let fromOffset = 0;
+      let hasMore = true;
+      let aplicou = false;
+      while (hasMore) {
+        let q = client.from('delecoes').select('tabela, id, deleted_at');
+        if (overlap) q = q.gte('deleted_at', overlap);
+        const { data: tombstones, error } = await q
+          .order('deleted_at', { ascending: true })
+          .order('tabela', { ascending: true })
+          .order('id', { ascending: true })
+          .range(fromOffset, fromOffset + PAGE_SIZE - 1);
+        if (error) throw error;
+        if (!tombstones || tombstones.length === 0) break;
+        if (tombstones.length < PAGE_SIZE) hasMore = false;
+        fromOffset += PAGE_SIZE;
+        aplicou = true;
+        for (const t of aplicarTombstonesRemotos(db, tombstones as TombstoneRemoto[])) {
+          alteradas.add(t);
         }
       }
+      if (aplicou) salvarConfig(db, WM_PULL_DEL_PREFIXO, agoraSqlite());
+    } catch (e: any) {
+      logger.warn({ err: e }, 'Erro no pull de tombstones');
+    }
 
-      // 2. PUSH: envia dados locais para nuvem
-      const localRows = db.prepare(`SELECT * FROM ${tabela}`).all() as Record<string, any>[];
-      if (localRows.length > 0) {
-        const batch = localRows.map((row) => {
-          const r: Record<string, any> = {};
-          for (const [k, v] of Object.entries(row)) {
-            if (v === undefined) continue;
-            if (BOOL_COLS.has(k)) {
-              r[k] = v === 1 || v === true;
-            } else if (k === 'created_at' || k === 'updated_at' || k === 'emitido_em') {
-              r[k] = sqliteToIso(String(v));
-            } else {
-              r[k] = v;
-            }
-          }
-          return r;
-        });
-        // Upsert em lotes de 500 para não estourar limite do PostgREST
-        for (let i = 0; i < batch.length; i += 500) {
-          const chunk = batch.slice(i, i + 500);
+    // 3. PUSH incremental de linhas (watermark por tabela)
+    for (const tabela of TABELAS_SINCRONIZADAS) {
+      try {
+        const localCols = (db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[]).map(
+          (c) => c.name
+        );
+        if (localCols.length === 0) continue;
+        // usuários: não reenvia o admin local (senha é por instalação)
+        const whereAdmin = tabela === 'usuarios' ? " WHERE username != 'admin'" : '';
+        const wmAntigo = lerWatermarkPush(db, tabela);
+        const inicioTs = agoraSqlite();
+        const rows = wmAntigo === null
+          ? db.prepare(`SELECT * FROM ${tabela}${whereAdmin}`).all()
+          : db.prepare(`SELECT * FROM ${tabela}${whereAdmin ? whereAdmin + ' AND' : ' WHERE'} (updated_at IS NULL OR updated_at >= ?)`).all(wmAntigo);
+        if (rows.length === 0) {
+          salvarWatermarkPush(db, tabela, inicioTs);
+          continue;
+        }
+        const batch = rows.map(linhaParaRemoto);
+        let falhou = false;
+        for (let i = 0; i < batch.length; i += CHUNK_SIZE) {
+          const chunk = batch.slice(i, i + CHUNK_SIZE);
           try {
-            await client.from(tabela).upsert(chunk);
+            const { error } = await client.from(tabela).upsert(chunk);
+            if (error) {
+              falhou = true;
+              logger.warn({ err: error.message, tabela, range: `${i}-${i + chunk.length}` }, 'Erro ao enviar chunk');
+            }
           } catch (e: any) {
+            falhou = true;
             logger.warn({ err: e, tabela, range: `${i}-${i + chunk.length}` }, 'Erro ao enviar chunk');
           }
         }
+        // Só avança o watermark se TODOS os chunks foram aceitos — em caso
+        // de falha parcial, o próximo ciclo reenvia (upsert idempotente).
+        if (!falhou) salvarWatermarkPush(db, tabela, inicioTs);
+      } catch (e: any) {
+        logger.warn({ err: e, tabela }, 'Erro no push da tabela');
       }
-
-      // 3. Atualiza autoincrement local para evitar conflito de IDs
-      const maxRow = db.prepare(`SELECT MAX(id) as mx FROM ${tabela}`).get() as { mx?: number } | undefined;
-      if (maxRow?.mx) {
-        try {
-          db.prepare(`UPDATE sqlite_sequence SET seq = ? WHERE name = ?`).run(maxRow.mx, tabela);
-        } catch { /* tabela sem autoincrement */ }
-      }
-    } catch (e: any) {
-      logger.warn({ err: e, tabela }, 'Erro ao sincronizar tabela');
     }
-  }
+
+    // 4. PUSH de tombstones novos + DELETE remoto das linhas correspondentes
+    try {
+      const wmDelPush = lerConfig(db, WM_PUSH_DEL_PREFIXO);
+      const inicioTs = agoraSqlite();
+      const novos = wmDelPush === null
+        ? (db.prepare('SELECT tabela, id, deleted_at FROM delecoes').all() as TombstoneRemoto[])
+        : (db
+            .prepare('SELECT tabela, id, deleted_at FROM delecoes WHERE deleted_at >= ?')
+            .all(wmDelPush) as TombstoneRemoto[]);
+      if (novos.length > 0) {
+        const { error } = await client.from('delecoes').upsert(novos);
+        if (error) throw error;
+
+        // Deleta as linhas remotas agrupadas por tabela
+        const porTabela = new Map<string, number[]>();
+        for (const t of novos) {
+          const arr = porTabela.get(t.tabela) ?? [];
+          arr.push(t.id);
+          porTabela.set(t.tabela, arr);
+        }
+        for (const [tabela, ids] of porTabela) {
+          if (!TABELAS_SINCRONIZADAS.includes(tabela as any)) continue;
+          for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+            const chunk = ids.slice(i, i + CHUNK_SIZE);
+            const { error: delErr } = await client.from(tabela).delete().in('id', chunk);
+            if (delErr) logger.warn({ err: delErr.message, tabela }, 'Erro ao deletar remoto');
+          }
+        }
+      }
+      salvarConfig(db, WM_PUSH_DEL_PREFIXO, inicioTs);
+    } catch (e: any) {
+      logger.warn({ err: e }, 'Erro no push de tombstones');
+    }
   } catch (e: any) {
     logger.warn({ err: e }, 'Erro no sync bidirecional');
     ultimoSyncEm = new Date().toISOString();
     ultimoSyncOk = false;
   } finally {
+    setSuppressLocalWriteNotify(false);
     syncing = false;
   }
+
   // Sem erros neste ponto → sync OK.
   if (ultimoSyncEm === null || ultimoSyncOk !== false) {
     ultimoSyncEm = new Date().toISOString();
     ultimoSyncOk = true;
   }
+  notificarDadosAlterados(alteradas);
+}
+
+// ============================================================
+// PUSH ACELERADO (mutação local → nuvem em ~2.5s)
+// ============================================================
+// O sqlite-adapter notifica cada escrita LOCAL (mutations do usuário). O
+// debounce agrega rajadas de escrita em um único sync — os outros usuários
+// recebem a mudança em segundos via realtime, sem esperar o ciclo de 15s.
+
+const FAST_SYNC_DELAY_MS = 2500;
+let fastSyncTimer: NodeJS.Timeout | null = null;
+
+export function agendarSyncRapido(delayMs: number = FAST_SYNC_DELAY_MS): void {
+  if (!client) return; // nuvem não inicializada / offline — ciclo de 15s cobre
+  if (fastSyncTimer) return; // já agendado (debounce)
+  fastSyncTimer = setTimeout(() => {
+    fastSyncTimer = null;
+    syncBidirecional(getDb).catch((e: any) => {
+      logger.warn({ err: e }, 'Sync rápido falhou');
+    });
+  }, delayMs);
 }
 
 /**
@@ -415,7 +583,7 @@ export async function syncBidirecional(getDb: () => any): Promise<void> {
  * registro local e remoto atomicamente — sem isso, um sync no meio da operação
  * poderia re-inserir (PULL) ou re-enviar (PUSH) o registro e ressuscitá-lo.
  */
-export async function withSyncLock<T>(fn: () => Promise<T>): Promise<T> {
+export async function withSyncLock<T>(fn: () => T | Promise<T>): Promise<T> {
   while (syncing) await new Promise((r) => setTimeout(r, 50));
   syncing = true;
   try {
@@ -483,11 +651,37 @@ export async function downloadAllFilesFromCloud(dir: string): Promise<void> {
 }
 
 // ============================================================
-// Compatibilidade com código antigo
+// COMPATIBILIDADE COM O REALTIME (realtime.ts chama estes helpers)
 // ============================================================
 
-export async function syncFromCloud(getDb: () => any): Promise<{ synced: number }> {
-  await syncBidirecional(getDb);
+/** Aplica um evento postgres_changes vindo do Realtime. Exportado para testes. */
+export async function aplicarEventoRealtime(
+  getDbFn: () => any,
+  evento: { tipo: 'INSERT' | 'UPDATE' | 'DELETE'; tabela: string; row: Record<string, any> | null; id: number | null; commitTimestamp: string | null }
+): Promise<boolean> {
+  return withSyncLock(() => {
+    const db = getDbFn();
+    setSuppressLocalWriteNotify(true);
+    try {
+      if (evento.tipo === 'DELETE' && evento.id != null) {
+        return aplicarDeleteRemoto(db, evento.tabela, evento.id, evento.commitTimestamp ?? undefined);
+      }
+      if (evento.row) {
+        return aplicarLinhaRemota(db, evento.tabela, evento.row);
+      }
+      return false;
+    } finally {
+      setSuppressLocalWriteNotify(false);
+    }
+  });
+}
+
+// ============================================================
+// COMPATIBILIDADE COM CÓDIGO ANTIGO
+// ============================================================
+
+export async function syncFromCloud(getDbFn: () => any): Promise<{ synced: number }> {
+  await syncBidirecional(getDbFn);
   return { synced: 0 };
 }
 

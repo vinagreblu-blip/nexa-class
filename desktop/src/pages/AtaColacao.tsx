@@ -3,6 +3,7 @@ import { api } from '../api';
 import type { AtaColacaoConcluinte, AtaColacaoDados } from '../types';
 import { Modal } from '../components/Modal';
 import { ESTADOS_BR } from './Alunos';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 const VAZIO: AtaColacaoDados = {
   aluno_id: 0,
@@ -48,6 +49,9 @@ export function AtaColacao() {
     const t = setTimeout(() => carregar(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
+
+  // Tempo real: recarrega quando outra máquina salva atas/edita alunos.
+  useSyncTempoReal(() => carregar(busca), ['atas_colacao', 'alunos']);
 
   async function abrirEdicao(c: AtaColacaoConcluinte) {
     setErro(null);

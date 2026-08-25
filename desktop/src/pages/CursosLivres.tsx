@@ -4,6 +4,7 @@ import type { Aluno } from '../types';
 import { NovoAlunoModal } from '../components/NovoAlunoModal';
 import { ConfirmDialog } from '../components/Modal';
 import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 type SubAba = 'menu' | 'livres' | 'extensao' | 'livres-alunos' | 'certificados';
 
@@ -135,6 +136,9 @@ function AlunosInterno({ onVoltar }: { onVoltar: () => void }) {
     const t = setTimeout(() => carregar(busca), 250);
     return () => clearTimeout(t);
   }, [busca]);
+
+  // Tempo real: recarrega quando outra máquina cadastra/edita/exclui.
+  useSyncTempoReal(() => carregar(busca), ['alunos']);
 
   async function confirmarExclusao() {
     if (excluirId === null) return;
@@ -334,6 +338,12 @@ function CertificadosInterno({ onVoltar }: { onVoltar: () => void }) {
     setCarregando(false);
   }
   useEffect(() => { carregarCursos(); }, []);
+
+  // Tempo real: recarrega quando outra máquina altera cursos/vínculos.
+  useSyncTempoReal(() => {
+    carregarCursos();
+    if (cursoSel) void selecionarCurso(cursoSel);
+  }, ['cursos_livres', 'curso_livre_alunos', 'alunos']);
 
   async function selecionarCurso(c: CursoLivreItem) {
     setCursoSel(c);

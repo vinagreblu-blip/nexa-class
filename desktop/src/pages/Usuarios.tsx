@@ -4,6 +4,7 @@ import type { Usuario } from '../types';
 import { Modal, ConfirmDialog } from '../components/Modal';
 import { Avatar } from '../components/Avatar';
 import { useToast } from '../context/ToastContext';
+import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
 export function Usuarios() {
   const toast = useToast();
@@ -39,6 +40,9 @@ export function Usuarios() {
   useEffect(() => {
     carregar();
   }, []);
+
+  // Tempo real: recarrega quando outra máquina cria/edita/exclui usuários.
+  useSyncTempoReal(carregar, ['usuarios']);
 
   function abrirNovo() {
     setEditando(null);

@@ -235,6 +235,14 @@ export interface DesktopApi {
     salvar: (input: { url: string; key: string; enabled: boolean }) => Promise<ApiResult<true>>;
     sync: () => Promise<ApiResult<{ synced: number }>>;
   };
+  dados: {
+    /** Notificação main → renderer: tabelas sincronizadas mudaram (outra máquina). */
+    onAtualizados: (cb: (tabelas: string[]) => void) => () => void;
+  };
+  conexao: {
+    /** Estado da sincronização em tempo real (online/offline/conectando). */
+    onEstado: (cb: (estado: 'conectando' | 'online' | 'offline') => void) => () => void;
+  };
 }
 
 declare global {
