@@ -178,6 +178,30 @@ export interface DesktopApi {
     listar: (cursoLivreId: number) => Promise<ApiResult<any[]>>;
     baixar: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
   };
+  diplomasDigitais: {
+    listar: (busca?: string) => Promise<ApiResult<any[]>>;
+    listarAptos: (busca?: string) => Promise<ApiResult<any[]>>;
+    criar: (alunoId: number) => Promise<ApiResult<any>>;
+    obter: (id: number) => Promise<ApiResult<any>>;
+    pendencias: (alunoId: number) => Promise<ApiResult<any[]>>;
+    completarAluno: (input: {
+      alunoId: number;
+      cpf?: string;
+      sexo?: string;
+      nacionalidade?: string;
+      rg?: string;
+      rgUf?: string;
+      dataNascimento?: string;
+      naturalidadeCodigoIbge?: string;
+      naturalidadeUf?: string;
+      naturalidadeEstrangeira?: string;
+      dataColacao?: string;
+    }) => Promise<ApiResult<true>>;
+    iesListar: () => Promise<ApiResult<any[]>>;
+    iesSalvar: (input: any) => Promise<ApiResult<any>>;
+    cursoGraduacaoListar: (iesId?: number) => Promise<ApiResult<any[]>>;
+    cursoGraduacaoSalvar: (input: any) => Promise<ApiResult<any>>;
+  };
   historico: {
     listar: (alunoId: number) => Promise<ApiResult<HistoricoDisciplina[]>>;
     criar: (alunoId: number, input: HistoricoDisciplinaInput) => Promise<ApiResult<HistoricoDisciplina>>;

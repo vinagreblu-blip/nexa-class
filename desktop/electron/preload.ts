@@ -141,6 +141,28 @@ const api = {
     baixar: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CERTIFICADO_BAIXAR, id),
   },
+  diplomasDigitais: {
+    listar: (busca?: string): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR, busca),
+    listarAptos: (busca?: string): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR_APTOS, busca),
+    criar: (alunoId: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_CRIAR, alunoId),
+    obter: (id: number): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_OBTER, id),
+    pendencias: (alunoId: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PENDENCIAS, alunoId),
+    completarAluno: (input: any): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_COMPLETAR_ALUNO, input),
+    iesListar: (): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.IES_LISTAR),
+    iesSalvar: (input: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.IES_SALVAR, input),
+    cursoGraduacaoListar: (iesId?: number): Promise<ApiResult<any[]>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_LISTAR, iesId),
+    cursoGraduacaoSalvar: (input: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_SALVAR, input),
+  },
   historico: {
     listar: (alunoId: number): Promise<ApiResult<HistoricoDisciplina[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.HISTORICO_LISTAR, alunoId),

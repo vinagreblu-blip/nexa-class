@@ -511,6 +511,14 @@ function migrateAlunos(): void {
   adicionar('data_vestibular', 'data_vestibular TEXT');
   adicionar('data_colacao', 'data_colacao TEXT');
   adicionar('created_by', 'created_by INTEGER');
+  // Diploma Digital MEC (XSD v1.05): RG exige UF; naturalidade exige
+  // código IBGE 7 dígitos + UF (ou município estrangeiro); nome social
+  // é opcional no XSD (TDadosDiplomado → GPessoa).
+  adicionar('rg_uf', 'rg_uf TEXT');
+  adicionar('nome_social', 'nome_social TEXT');
+  adicionar('naturalidade_codigo_ibge', 'naturalidade_codigo_ibge TEXT');
+  adicionar('naturalidade_uf', 'naturalidade_uf TEXT');
+  adicionar('naturalidade_estrangeira', 'naturalidade_estrangeira TEXT');
 
   // declaracoes: pdf_caminho
   const colsDecl = db.prepare('PRAGMA table_info(declaracoes)').all() as { name: string }[];

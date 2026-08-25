@@ -1,7 +1,8 @@
 # DIPLOMA DIGITAL MEC — Documentação Técnica do Módulo
 
-> Estado: **M1 concluído** (fundação). M2 (UI + dados institucionais) e M3
-> (geração/validação XML) em desenvolvimento na branch `feat/diploma-digital-mec`.
+> Estado: **M1 concluído** (fundação), **M2 concluído** (UI + dados
+> institucionais + sync). M3 (geração/validação XML) em desenvolvimento na
+> branch `feat/diploma-digital-mec`.
 
 Este documento descreve a arquitetura do módulo de **Diploma Digital de
 graduação** conforme a especificação oficial do MEC (Sesu), que **substitui o
@@ -117,7 +118,28 @@ já emitidos (`versao_schema` por diploma/arquivo).
 ## 10. Roadmap
 
 - **M1** ✅ XSDs oficiais + validação comprovada + tabelas + SQL nuvem + Storage + docs
-- **M2** Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
+- **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
 - **M3** Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
 - **M4** Assinatura XAdES (certificado real), registro assistido (retorno da registradora), consulta pública
 - **M5** Anulação/ListaDiplomasAnulados, ArquivoFiscalização, RVDD (PDF/A), validador oficial MEC no pipeline
+
+### Detalhe do M2 (implementado)
+
+- **Página "Diplomas Digitais"** (`desktop/src/pages/DiplomasDigitais.tsx`,
+  menu para admin e operador; cadastro institucional só admin — RLS/IPC
+  também exigem admin em `IES_SALVAR`/`CURSO_GRADUACAO_SALVAR`).
+- **Pendências** (`diploma-digital/pendencias.ts`, 37 testes): verifica na
+  ordem do XSD — CPF, sexo, nacionalidade, naturalidade (IBGE 7 dígitos +
+  UF ou estrangeiro), RG+UF, nascimento, conclusão, colação, curso
+  (e-MEC/modalidade/título/grau/autorização/reconhecimento) e IES
+  (e-MEC/CNPJ/credenciamento/endereço). Dados faltantes são completados na
+  própria tela de Pendências (colunas novas em `alunos`: `rg_uf`,
+  `nome_social`, `naturalidade_codigo_ibge`, `naturalidade_uf`,
+  `naturalidade_estrangeira`) — nunca inventados.
+- **Normalizadores** (`diploma-digital/normalizadores.ts`): CPF/CNPJ/CEP
+  (dígitos), datas → AAAA-MM-DD, sexo M/F, RG, UF, carga horária →
+  HoraAula|HoraRelogio, nota 0–10|conceito — conforme `tiposBasicos_v1.05.xsd`.
+- **Processo**: criação só com zero pendências (`ipc/diplomas-digitais.ts`),
+  status inicial `apto`; auditoria de criação/complemento/cadastro.
+- **Sync**: 6 tabelas em `TABELAS_SINCRONIZADAS` (exige
+  `supabase-diploma-digital.sql` aplicado na nuvem).
