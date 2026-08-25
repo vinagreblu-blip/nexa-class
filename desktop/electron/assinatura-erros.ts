@@ -68,6 +68,16 @@ export function traduzirErroA3(msg: string): string {
   return comOriginal('Erro ao assinar com o token: ' + (msg || 'verifique o token e o driver'));
 }
 
+/**
+ * Extrai o último marcador de fase (FASE:xxx) emitido pelo script PowerShell
+ * antes de travar — revela ONDE a assinatura parou (store, chave, XML,
+ * assinando=PIN/hardware) quando o timeout mata o processo.
+ */
+export function extrairUltimaFase(stdout: string): string | null {
+  const fases = (stdout ?? '').match(/FASE:[^\s\r\n]+/g);
+  return fases && fases.length > 0 ? fases[fases.length - 1] : null;
+}
+
 /** Mensagem de erro de certificado A3 ausente no store DESTA máquina. */
 export function erroCertificadoAusente(): string {
   return (

@@ -43,6 +43,7 @@ foreach ($loc in $locs) {
   } catch {}
 }
 if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine). Reimporte o certificado A3 em Assinatura Digital.' }
+Write-Output 'FASE:store-ok'
 $cert = $null
 $rsaKey = $null
 foreach ($cand in $candidatos) {
@@ -57,6 +58,7 @@ foreach ($cand in $candidatos) {
   } catch {}
 }
 if ($null -eq $rsaKey) { throw 'Chave privada nao acessivel: o certificado foi encontrado, mas o Windows nao conseguiu abrir a chave do token. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata...).' }
+Write-Output 'FASE:chave-ok'
 
 $data = [System.IO.File]::ReadAllBytes($DataFile)
 $content = New-Object System.Security.Cryptography.Pkcs.ContentInfo -ArgumentList (,[byte[]]$data)
@@ -68,7 +70,9 @@ $signer.DigestAlgorithm = New-Object System.Security.Cryptography.Oid('2.16.840.
 $signer.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
 
 # ComputeSignature invoca o token -> PIN pedido pelo driver do fabricante.
+Write-Output 'FASE:assinando'
 $cms.ComputeSignature($signer, $false)
+Write-Output 'FASE:assinado'
 $encoded = $cms.Encode()
 [System.IO.File]::WriteAllBytes($OutFile, $encoded)
 Write-Output 'OK'
@@ -122,7 +126,7 @@ export class SignerA3 extends Signer {
       return cms;
     } catch (e: any) {
       const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
-      logger.error({ err: msg }, 'SignerA3: falha ao gerar CMS com o token A3');
+      logger.error({ err: msg, detalhe: e?.detalhe }, 'SignerA3: falha ao gerar CMS com o token A3');
       throw e;
     } finally {
       try { fs.unlinkSync(dataFile); } catch { /* noop */ }

@@ -9,7 +9,7 @@ import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
 import { logger } from '../utils/logger';
-import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado, erroChaveInacessivel } from '../assinatura-erros';
+import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado, erroChaveInacessivel, extrairUltimaFase } from '../assinatura-erros';
 
 // Re-export para compatibilidade (pades.ts e outros importam daqui).
 export { traduzirErroA3 };
@@ -237,6 +237,7 @@ foreach ($loc in $locs) {
   } catch {}
 }
 if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine). Reimporte o certificado A3 em Assinatura Digital.' }
+Write-Output 'FASE:store-ok'
 $cert = $null
 $signKey = $null
 $keyAlg = 'RSA'
@@ -254,11 +255,13 @@ foreach ($cand in $candidatos) {
   } catch {}
 }
 if ($null -eq $signKey) { throw 'Chave privada nao acessivel: o certificado foi encontrado, mas o Windows nao conseguiu abrir a chave do token. Conecte o token/SmartCard e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata...).' }
+Write-Output "FASE:chave-ok-$keyAlg"
 
 $xmlIn = [System.IO.File]::ReadAllText($InFile, [System.Text.Encoding]::UTF8)
 $doc = New-Object System.Xml.XmlDocument
 $doc.PreserveWhitespace = $true
 $doc.LoadXml($xmlIn)
+Write-Output 'FASE:xml-ok'
 
 $signedXml = New-Object System.Security.Cryptography.Xml.SignedXml($doc)
 $signedXml.SigningKey = $signKey
@@ -329,7 +332,9 @@ public class ECDsaP1363SignatureDescription : SignatureDescription {
   [System.Security.Cryptography.CryptoConfig]::AddAlgorithm([ECDsaP1363SignatureDescription], 'http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256')
 }
 
+Write-Output 'FASE:assinando'
 $signedXml.ComputeSignature()
+Write-Output 'FASE:assinado'
 $sig = $signedXml.GetXml()
 $doc.DocumentElement.AppendChild($doc.ImportNode($sig, $true)) | Out-Null
 
@@ -375,6 +380,7 @@ foreach ($locName in $locs) {
 }
 $result.Certs = @($infos)
 if ($infos.Count -gt 0) { $result.Encontrado = $true }
+Write-Output 'FASE:store-ok'
 
 if ($candidatos.Count -gt 0) {
   try {
@@ -385,6 +391,7 @@ if ($candidatos.Count -gt 0) {
     $signer = New-Object System.Security.Cryptography.Pkcs.CmsSigner($cert)
     $signer.DigestAlgorithm = New-Object System.Security.Cryptography.Oid('2.16.840.1.101.3.4.2.1')
     $signer.IncludeOption = [System.Security.Cryptography.X509Certificates.X509IncludeOption]::EndCertOnly
+    Write-Output 'FASE:assinando'
     $cms.ComputeSignature($signer, $false)
     if ($cms.Encode().Length -gt 0) { $result.Assinou = $true }
   } catch {
@@ -450,7 +457,14 @@ export function runPowerShellScriptAsync(
         }
       } catch { /* noop */ }
       cleanup();
-      const err = new Error('Tempo esgotado aguardando o token/PIN. Verifique se o token está conectado e tente novamente.');
+      // Fase do script antes do travamento (FASE:store-ok/chave-ok/assinando…)
+      // — identifica se parou na leitura do store, na abertura da chave
+      // (middleware travado) ou na assinatura em si (PIN/hardware).
+      const fase = extrairUltimaFase(stdout);
+      const err = new Error(
+        'Tempo esgotado aguardando o token/PIN. Verifique se o token está conectado e tente novamente.' +
+          (fase ? ` (parou em: ${fase})` : '')
+      );
       // Preserva o diagnóstico capturado (hoje era descartado) para os logs —
       // é a única pista quando o middleware trava sem mensagem de erro.
       (err as any).detalhe = { stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 4000) };
@@ -804,7 +818,7 @@ async function assinarXmlA3(
     return { ok: true, xml: signed };
   } catch (e: any) {
     const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
-    logger.error({ err: msg }, 'assinarXmlA3: falha ao assinar XML com o token A3');
+    logger.error({ err: msg, detalhe: e?.detalhe }, 'assinarXmlA3: falha ao assinar XML com o token A3');
     return { ok: false, error: traduzirErroA3(msg) };
   } finally {
     try { fs.unlinkSync(inFile); } catch { /* noop */ }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado, erroChaveInacessivel } from './assinatura-erros';
+import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado, erroChaveInacessivel, extrairUltimaFase } from './assinatura-erros';
 
 describe('traduzirErroA3', () => {
   it('timeout vem ANTES do ramo genérico de PIN (mensagem da falha real)', () => {
@@ -64,5 +64,23 @@ describe('mensagens de pré-check', () => {
     expect(r).toMatch(/nesta máquina/i);
     expect(r).toMatch(/Conecte o token USB/i);
     expect(r).toMatch(/middleware/i);
+  });
+
+  it('timeout com marcador de fase preserva a fase no erro original', () => {
+    const r = traduzirErroA3('Tempo esgotado aguardando o token/PIN. (parou em: FASE:assinando)');
+    expect(r).toMatch(/Tempo esgotado aguardando o token responder/);
+    expect(r).toMatch(/FASE:assinando/);
+  });
+});
+
+describe('extrairUltimaFase', () => {
+  it('retorna a última fase emitida', () => {
+    const stdout = 'FASE:store-ok\r\nFASE:chave-ok-RSA\r\nFASE:xml-ok\r\nFASE:assinando\r\n';
+    expect(extrairUltimaFase(stdout)).toBe('FASE:assinando');
+  });
+
+  it('retorna null quando não há marcadores', () => {
+    expect(extrairUltimaFase('')).toBeNull();
+    expect(extrairUltimaFase('OK sem fases')).toBeNull();
   });
 });
