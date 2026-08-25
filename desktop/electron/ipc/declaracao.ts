@@ -19,6 +19,7 @@ import { validarExclusaoDeclaracao } from '../utils/regras';
 import { montarNomePdf } from '../utils/sistema';
 import { logger } from '../utils/logger';
 import { registrarDeclaracaoWeb, removerDeclaracaoWeb } from '../web-registro';
+import { agendarCompartilharPdf, garantirPdfLocal } from '../pdf-sync';
 
 function gerarPdf(opts: {
   aluno: Aluno;
@@ -440,6 +441,10 @@ async function emitir(
     db.prepare('UPDATE declaracoes SET pdf_caminho = ? WHERE id = ?').run(caminhoInterno, declaracao.id);
   } catch { /* ignora se falhar */ }
 
+  // Compartilha o PDF assinado na nuvem — as outras máquinas (sem o token)
+  // baixam ao clicar em "Baixar". Fire-and-forget: não afeta a emissão.
+  agendarCompartilharPdf('declaracoes', declaracao.id, caminhoInterno);
+
   return {
     ok: true,
     data: {
@@ -523,7 +528,16 @@ async function baixar(
     pdfPath = path.join(app.getPath('userData'), 'declaracoes', `${id}.pdf`);
   }
   if (!fs.existsSync(pdfPath)) {
-    return { ok: false, error: 'Arquivo PDF da declaração não encontrado. Re-genere a declaração.' };
+    // Emitido em outra máquina (o token A3 é de uma máquina só): baixa da nuvem.
+    const baixou = await garantirPdfLocal('declaracoes', id, pdfPath);
+    if (!baixou) {
+      return {
+        ok: false,
+        error:
+          'Arquivo PDF não encontrado nesta máquina nem na nuvem. ' +
+          'Se foi emitido em outro computador, peça para que ele esteja conectado à internet e tente novamente.',
+      };
+    }
   }
 
   const aluno = db.prepare('SELECT nome, matricula FROM alunos WHERE id = ?').get(decl.aluno_id) as { nome: string; matricula: string } | undefined;

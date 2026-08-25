@@ -13,6 +13,7 @@ import type {
   AtaColacaoDados,
 } from '../types';
 import { getSessao, requerAuth } from './auth';
+import { agendarCompartilharPdf } from '../pdf-sync';
 import { formatarDataExtensoBrasilia } from '../utils';
 import { montarNomePdf } from '../utils/sistema';
 import { logger } from '../utils/logger';
@@ -488,6 +489,8 @@ async function gerarPdfHandler(
     db.prepare('UPDATE atas_colacao SET pdf_caminho = ?, emitido_em = datetime(\'now\'), updated_at = datetime(\'now\') WHERE id = ?')
       .run(caminhoInterno, ata.id);
     logger.info({ alunoId, caminhoInterno }, 'Ata: cópia interna salva');
+    // Compartilha o PDF assinado na nuvem (as outras máquinas baixam depois).
+    agendarCompartilharPdf('atas_colacao', ata.id, caminhoInterno);
   } catch (e: any) {
     logger.warn({ err: e, alunoId }, 'Ata: falha ao salvar cópia interna (não crítico)');
   }

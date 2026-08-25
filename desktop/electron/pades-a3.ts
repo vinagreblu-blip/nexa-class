@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 // @signpdf/utils é CommonJS — importamos o caminho da base Signer.
 import { Signer } from '@signpdf/utils';
-import { runPowerShellScriptAsync } from './ipc/assinatura';
+import { runPowerShellScriptAsync, precheckCertificadoA3 } from './ipc/assinatura';
 import { logger } from './utils/logger';
 
 /**
@@ -95,6 +95,13 @@ export class SignerA3 extends Signer {
    * O .NET calcula o messageDigest (SHA-256) e assina via token.
    */
   async sign(pdfBuffer: Buffer): Promise<Buffer> {
+    // Pré-check: falha rápido com mensagem clara se o certificado não está
+    // nesta máquina (token em outra máquina) ou está vencido — em vez do
+    // timeout mudo de 3 minutos no meio da emissão do documento.
+    const pre = await precheckCertificadoA3(this.thumbprint);
+    if (pre.status !== 'ok') {
+      throw new Error(pre.erro ?? 'Certificado A3 indisponível nesta máquina.');
+    }
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const dataFile = path.join(os.tmpdir(), `nexa_pades_in_${id}.bin`);
     const outFile = path.join(os.tmpdir(), `nexa_pades_out_${id}.der`);

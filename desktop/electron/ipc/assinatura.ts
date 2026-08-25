@@ -9,6 +9,10 @@ import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
 import { logger } from '../utils/logger';
+import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado } from '../assinatura-erros';
+
+// Re-export para compatibilidade (pades.ts e outros importam daqui).
+export { traduzirErroA3 };
 // uploadFileToCloud removido: NÃO subir .pfx (chave privada ICP-Brasil) nem assinaturas
 // para a nuvem — expõe material criptográfico sensível em storage compartilhado.
 // Cada máquina cadastra seu próprio certificado localmente.
@@ -432,9 +436,25 @@ export function runPowerShellScriptAsync(
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try { child.kill(); } catch { /* noop */ }
+      // Mata a ÁRVORE de processos (powershell + filhos do CSP/middleware que
+      // ele tenha acionado). child.kill() só mata o powershell.exe e pode
+      // deixar um diálogo de PIN órfão segurando o handle do token.
+      try {
+        if (child.pid) {
+          spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+            windowsHide: true,
+            stdio: 'ignore',
+          });
+        } else {
+          child.kill();
+        }
+      } catch { /* noop */ }
       cleanup();
-      reject(new Error('Tempo esgotado aguardando o token/PIN. Verifique se o token está conectado e tente novamente.'));
+      const err = new Error('Tempo esgotado aguardando o token/PIN. Verifique se o token está conectado e tente novamente.');
+      // Preserva o diagnóstico capturado (hoje era descartado) para os logs —
+      // é a única pista quando o middleware trava sem mensagem de erro.
+      (err as any).detalhe = { stdout: stdout.slice(0, 4000), stderr: stderr.slice(0, 4000) };
+      reject(err);
     }, timeoutMs);
 
     child.stdout.on('data', (d: Buffer) => { stdout += d.toString('utf8'); });
@@ -455,56 +475,85 @@ export function runPowerShellScriptAsync(
   });
 }
 
+
+// PowerShell: PRÉ-CHECK do certificado A3 — verifica se o thumbprint existe
+// no store DESTA máquina e se está dentro da validade. Só lê propriedades do
+// certificado (não toca a chave, não pede PIN, não assina). Serve para falhar
+// rápido com mensagem clara quando o token/certificado está em outra máquina
+// ou o certificado venceu — em vez de travar 3 minutos esperando o PIN.
+const PS_PRECHECK_A3 = `
+param([string]$Thumbprint, [string]$OutFile)
+$ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+$result = [ordered]@{ Encontrado = $false; Subject = ''; NotBefore = ''; NotAfter = ''; Store = '' }
+$locs = @('CurrentUser', 'LocalMachine')
+foreach ($locName in $locs) {
+  $loc = [System.Security.Cryptography.X509Certificates.StoreLocation]::$locName
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) {
+      if ($c.Thumbprint -ieq $Thumbprint) {
+        $result.Encontrado = $true
+        $result.Subject = $c.Subject
+        $result.NotBefore = $c.NotBefore.ToString('o')
+        $result.NotAfter = $c.NotAfter.ToString('o')
+        $result.Store = $locName
+        break
+      }
+    }
+    $store.Close()
+  } catch {}
+  if ($result.Encontrado) { break }
+}
+$json = [pscustomobject]$result | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText($OutFile, $json, (New-Object System.Text.UTF8Encoding($false)))
+Write-Output 'OK'
+`.trim();
+
+export interface PrecheckA3 {
+  status: 'ok' | 'nao-encontrado' | 'expirado' | 'erro';
+  /** Mensagem de erro pronta para exibir (quando status != 'ok'). */
+  erro?: string;
+  validoAte?: string;
+}
+
 /**
- * Traduz mensagens comuns de erro de token A3 para PT-BR, ANEXANDO o erro
- * original (truncado) — sem isso é impossível distinguir diálogo de PIN
- * cancelado, PIN errado, token bloqueado ou falha específica do middleware.
- * A comparação é sem acentos (middlewares em PT-BR emitem "cartão", "bloqueado"…).
+ * Valida o certificado A3 ANTES de qualquer operação de assinatura: existe no
+ * store desta máquina? está válido? Retorna erro claro em ~20s no pior caso,
+ * em vez do timeout mudo de 3 minutos quando o token está em outra máquina.
  */
-export function traduzirErroA3(msg: string): string {
-  const m = (msg ?? '').toLowerCase();
-  // Normaliza: remove diacríticos ("cartão" → "cartao") para casar middlewares PT-BR.
-  const mn = m.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const comOriginal = (traduzido: string): string => {
-    const orig = (msg ?? '').trim();
-    if (!orig) return traduzido;
-    const trunc = orig.length > 200 ? `${orig.slice(0, 200)}…` : orig;
-    return `${traduzido} [Erro original: ${trunc}]`;
-  };
-  // Troca de PIN obrigatória vem ANTES de tudo: "The smart card PIN must be
-  // changed" também contém "the smart card" e cairia no ramo de driver.
-  if (
-    mn.includes('pin must be changed') || mn.includes('pin deve ser alterado') ||
-    mn.includes('precisa ser alterado') || mn.includes('alterar o pin') || mn.includes('trocar o pin')
-  ) {
-    return comOriginal('O token exige a troca do PIN inicial antes de assinar. Abra o utilitário do fabricante (ícone perto do relógio), troque o PIN e tente novamente.');
+export async function precheckCertificadoA3(thumbprint: string): Promise<PrecheckA3> {
+  const outFile = path.join(os.tmpdir(), `nexa_precheck_a3_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
+  try {
+    await runPowerShellScriptAsync(PS_PRECHECK_A3, { Thumbprint: thumbprint, OutFile: outFile }, 20000);
+    if (!fs.existsSync(outFile)) {
+      return { status: 'erro', erro: 'Não foi possível verificar o certificado no Windows. Tente novamente.' };
+    }
+    const p = JSON.parse(fs.readFileSync(outFile, 'utf8')) as any;
+    if (!p?.Encontrado) {
+      return { status: 'nao-encontrado', erro: erroCertificadoAusente() };
+    }
+    const notAfter = p.NotAfter ? String(p.NotAfter) : '';
+    const validoAteFmt = notAfter ? notAfter.slice(0, 10).split('-').reverse().join('/') : 'desconhecida';
+    if (notAfter && new Date(notAfter).getTime() < Date.now()) {
+      return { status: 'expirado', erro: erroCertificadoExpirado(validoAteFmt), validoAte: validoAteFmt };
+    }
+    return { status: 'ok', validoAte: validoAteFmt };
+  } catch (e: any) {
+    // Timeout/erro na leitura do store → provável middleware travado. Não
+    // prossegue para a assinatura (ela travaria da mesma forma).
+    logger.warn({ err: e?.message }, 'precheckCertificadoA3: falhou (store ilegível/middleware?)');
+    return {
+      status: 'erro',
+      erro:
+        'Não foi possível ler o repositório de certificados do Windows (o middleware do token pode estar travado). ' +
+        'Reinicie o computador com o token conectado e tente novamente. ' +
+        (e?.message ? `[Erro original: ${e.message}]` : ''),
+    };
+  } finally {
+    try { fs.unlinkSync(outFile); } catch { /* noop */ }
   }
-  if (mn.includes('pin is incorrect') || mn.includes('pin was incorrect') || mn.includes('pin incorreto') || mn.includes('wrong pin')) {
-    return comOriginal('PIN incorreto. Verifique o PIN no utilitário do middleware do fabricante (ícone perto do relógio) e tente novamente.');
-  }
-  // Bloqueio por tentativas erradas (Safenet e afins; PT e EN).
-  if (
-    mn.includes('bloqueado') || mn.includes('blocked') || mn.includes('blockeado') ||
-    mn.includes('tentativas') || mn.includes('attempts') || mn.includes('excedido') || mn.includes('exceeded')
-  ) {
-    return comOriginal('Token BLOQUEADO após tentativas de PIN erradas (ou PIN expirado). Desbloqueie com o PUK no utilitário do fabricante (ícone perto do relógio). Se não souber o PUK, procure a autoridade certificadora que emitiu o token.');
-  }
-  if (mn.includes('cancel')) {
-    return comOriginal('A janela do PIN não foi confirmada. O diálogo do PIN é aberto pelo driver e pode abrir ATRÁS do app — repita a operação, procure a janela na barra de tarefas e digite o PIN.');
-  }
-  if (mn.includes('the smart card') || mn.includes('cartao') || mn.includes('card is not supported')) {
-    return comOriginal('Token/SmartCard não detectado ou driver não instalado. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, etc.).');
-  }
-  if (mn.includes('pin')) {
-    return comOriginal('Não foi possível autenticar o PIN do token. Conecte o token, repita a operação e informe o PIN quando solicitado.');
-  }
-  if (mn.includes('chave privada nao acessivel') || mn.includes('nao conseguiu abrir a chave')) {
-    return comOriginal('Chave privada do token inacessível: o certificado foi encontrado, mas o driver não abriu a chave. Conecte o token e instale o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata…).');
-  }
-  if (mn.includes('cannot find subitem') || mn.includes('nao encontrado')) {
-    return comOriginal('Certificado não encontrado no repositório do Windows. Reimporte o certificado A3.');
-  }
-  return comOriginal('Erro ao assinar com o token: ' + (msg || 'verifique o token e o driver'));
 }
 
 /** Lista certificados A3 disponíveis no Windows Certificate Store. */
@@ -581,6 +630,12 @@ async function testarA3(_event: IpcMainInvokeEvent): Promise<ApiResult<TesteA3Re
   if (!ass || ass.certificado_tipo !== 'A3' || !ass.certificado_a3_thumbprint) {
     return { ok: false, error: 'Nenhum certificado A3 vinculado. Importe o certificado A3 primeiro.' };
   }
+  // Pré-check: falha rápido (~20s no pior caso) com mensagem clara quando o
+  // certificado não está nesta máquina ou está vencido — sem esperar o PIN.
+  const pre = await precheckCertificadoA3(ass.certificado_a3_thumbprint);
+  if (pre.status !== 'ok') {
+    return { ok: false, error: pre.erro ?? 'Certificado A3 indisponível nesta máquina.' };
+  }
   const outFile = path.join(os.tmpdir(), `nexa_teste_a3_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
   try {
     await runPowerShellScriptAsync(
@@ -602,10 +657,11 @@ async function testarA3(_event: IpcMainInvokeEvent): Promise<ApiResult<TesteA3Re
       assinou: Boolean(parsed?.Assinou ?? false),
       erro: parsed?.Erro ? String(parsed.Erro) : undefined,
     };
+    logger.info({ resultado }, 'testarA3: resultado do teste de assinatura A3');
     return { ok: true, data: resultado };
   } catch (e: any) {
     const msg = (e?.stderr?.toString?.() ?? e?.message ?? '').toString();
-    logger.error({ err: msg }, 'testarA3: falha ao executar teste de assinatura A3');
+    logger.error({ err: msg, detalhe: e?.detalhe }, 'testarA3: falha ao executar teste de assinatura A3');
     return { ok: false, error: traduzirErroA3(msg) };
   } finally {
     try { fs.unlinkSync(outFile); } catch { /* noop */ }
@@ -711,6 +767,11 @@ async function assinarXmlA3(
   thumbprint: string,
   xmlContent: string
 ): Promise<{ ok: boolean; xml?: string; error?: string }> {
+  // Pré-check: certificado presente nesta máquina e dentro da validade.
+  const pre = await precheckCertificadoA3(thumbprint);
+  if (pre.status !== 'ok') {
+    return { ok: false, error: pre.erro ?? 'Certificado A3 indisponível nesta máquina.' };
+  }
   const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const inFile = path.join(os.tmpdir(), `nexa_a3_in_${id}.xml`);
   const outFile = path.join(os.tmpdir(), `nexa_a3_out_${id}.xml`);

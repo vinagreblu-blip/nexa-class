@@ -568,6 +568,8 @@ export function AssinaturaDigital() {
                       name="certA3"
                       checked={sel}
                       onChange={() => setCertA3Sel(c.thumbprint)}
+                      disabled={expirado}
+                      title={expirado ? 'Certificado vencido — não pode ser vinculado' : undefined}
                       style={{ marginTop: 3 }}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -579,9 +581,9 @@ export function AssinaturaDigital() {
                         Algoritmo: {c.algorithm || 'RSA'} · Repositório: {c.store === 'LocalMachine' ? 'LocalMachine (máquina)' : 'CurrentUser (usuário)'}
                       </div>
                       <div style={{ fontSize: 11, color: expirado ? '#DC2626' : 'var(--text-muted)', marginTop: 2 }}>
-                        Válido até: {formatarData(c.notAfter)} {expirado ? '· EXPIRADO' : ''}
+                        Válido até: {formatarData(c.notAfter)} {expirado ? '· EXPIRADO — renove com a autoridade certificadora' : ''}
                       </div>
-                      {!c.keyAcessivel && (
+                      {!c.keyAcessivel && !expirado && (
                         <div style={{ fontSize: 11, color: '#DC2626', marginTop: 2, fontWeight: 600 }}>
                           ⚠ Chave não acessível — token desconectado ou middleware do fabricante não instalado
                         </div>

@@ -14,6 +14,7 @@ import { gerarUrlValidacao } from '../qr-validador';
 import { montarNomePdf } from '../utils/sistema';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
+import { agendarCompartilharPdf, garantirPdfLocal } from '../pdf-sync';
 
 export interface CertificadoRow {
   id: number;
@@ -242,6 +243,9 @@ async function certificadoGerar(
     db.prepare('UPDATE certificados SET pdf_caminho = ? WHERE id = ?').run(caminhoInterno, certId);
   } catch { /* ignora */ }
 
+  // Compartilha o PDF assinado na nuvem (as outras máquinas baixam no "Baixar").
+  agendarCompartilharPdf('certificados', certId, caminhoInterno);
+
   return { ok: true, data: { id: certId, pdfPath: destino.filePath, codigo_verificacao: codigo } };
 }
 
@@ -268,8 +272,22 @@ async function certificadoBaixar(
   const row = db.prepare('SELECT * FROM certificados WHERE id = ?').get(id) as
     | { id: number; pdf_caminho: string | null; aluno_id: number }
     | undefined;
-  if (!row || !row.pdf_caminho || !fs.existsSync(row.pdf_caminho)) {
-    return { ok: false, error: 'PDF do certificado não encontrado' };
+  if (!row) return { ok: false, error: 'Certificado não encontrado' };
+  let pdfLocal = row.pdf_caminho || '';
+  if (!pdfLocal || !fs.existsSync(pdfLocal)) {
+    pdfLocal = path.join(app.getPath('userData'), 'certificados', `${id}.pdf`);
+  }
+  if (!fs.existsSync(pdfLocal)) {
+    // Emitido em outra máquina (o token A3 é de uma máquina só): baixa da nuvem.
+    const baixou = await garantirPdfLocal('certificados', id, pdfLocal);
+    if (!baixou) {
+      return {
+        ok: false,
+        error:
+          'PDF do certificado não encontrado nesta máquina nem na nuvem. ' +
+          'Se foi emitido em outro computador, peça para que ele esteja conectado à internet e tente novamente.',
+      };
+    }
   }
   const win = BrowserWindow.fromWebContents(event.sender);
   const nomeArquivo = montarNomePdf('certificado', String(row.id), '', row.id);
@@ -281,7 +299,7 @@ async function certificadoBaixar(
       })
     : { canceled: true, filePath: '' };
   if (destino.canceled || !destino.filePath) return { ok: false, error: 'Cancelado' };
-  fs.copyFileSync(row.pdf_caminho, destino.filePath);
+  fs.copyFileSync(pdfLocal, destino.filePath);
   return { ok: true, data: { salvoPath: destino.filePath } };
 }
 

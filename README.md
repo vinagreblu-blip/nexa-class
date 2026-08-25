@@ -99,6 +99,24 @@ Concorrência: last-write-wins por `updated_at` (ms); duplicatas evitadas por ch
 
 Cole e rode `supabase-realtime.sql` no **SQL Editor** do projeto (após schema + migrations RLS existentes). Sem isso o app funciona, mas sem atualização instantânea (só o ciclo de 15s).
 
+## PDFs assinados compartilhados entre máquinas
+
+O certificado A3 (token USB) fica em **uma máquina só** — quem assina é ela. Para os outros usuários terem acesso aos documentos assinados, toda emissão (declaração, diploma, histórico, certificado, ata) envia uma cópia do PDF assinado para a tabela `arquivos_pdf` do Supabase, e o botão **Baixar** de qualquer máquina recupera da nuvem quando o arquivo não existe localmente.
+
+### Habilitar (1x, obrigatório)
+
+Cole e rode `supabase-pdf-sync.sql` no **SQL Editor** do Supabase (idempotente).
+
+Fluxo: emissão assinada → upload imediato (retry automático se offline) → nuvem → outra máquina clica "Baixar" → download transparente para o cache local. Limite por arquivo: 15MB (PDFs assinados ficam bem abaixo; plano Free tem 500MB ≈ 2.500+ documentos).
+
+### Erros de assinatura A3 (mensagens claras)
+
+Antes de assinar/testar, o app faz um **pré-check** (~20s no pior caso): o certificado existe no store DESTA máquina? está dentro da validade? Falha rápido com mensagem específica em vez de travar 3 minutos:
+- **"Certificado A3 não encontrado nesta máquina"** → o token está em outro computador; A3 só assina onde o token está conectado
+- **"Certificado A3 EXPIRADO (válido até dd/mm/aaaa)"** → renovar com a autoridade certificadora
+- **Timeout** → agora mata a árvore do processo (sem diálogo órfão de PIN), captura o diagnóstico do PowerShell para o log e orienta verificar token/janela de PIN/middleware
+- No modal de seleção A3, certificados **vencidos ficam em vermelho e não podem ser vinculados**
+
 ### Testar 5 usuários simultâneos
 
 1. Rode o `supabase-realtime.sql` no Supabase (uma vez).

@@ -18,6 +18,7 @@ import { logger } from '../utils/logger';
 import { validarSenhaMaster } from '../utils/regras';
 import { montarNomePdf, montarNomeArquivo, gravarArquivoSeguro } from '../utils/sistema';
 import { gerarHashConteudo, gerarQrPng } from '../utils';
+import { agendarCompartilharPdf, garantirPdfLocal } from '../pdf-sync';
 
 async function emitir(
   event: IpcMainInvokeEvent,
@@ -138,6 +139,9 @@ async function emitir(
     db.prepare('UPDATE diplomas SET pdf_caminho = ? WHERE id = ?').run(caminhoInterno, diplomaId);
   } catch { /* ignora */ }
 
+  // Compartilha o PDF assinado na nuvem (as outras máquinas baixam no "Baixar").
+  agendarCompartilharPdf('diplomas', diplomaId, caminhoInterno);
+
   if (enviadoWeb) {
     try {
       db.prepare('UPDATE diplomas SET enviado_web = 1 WHERE id = ?').run(diplomaId);
@@ -213,7 +217,16 @@ async function baixar(
     pdfPath = path.join(app.getPath('userData'), 'diplomas', `${id}.pdf`);
   }
   if (!fs.existsSync(pdfPath)) {
-    return { ok: false, error: 'Arquivo PDF não encontrado. Re-genere o diploma.' };
+    // Emitido em outra máquina (o token A3 é de uma máquina só): baixa da nuvem.
+    const baixou = await garantirPdfLocal('diplomas', id, pdfPath);
+    if (!baixou) {
+      return {
+        ok: false,
+        error:
+          'Arquivo PDF não encontrado nesta máquina nem na nuvem. ' +
+          'Se foi emitido em outro computador, peça para que ele esteja conectado à internet e tente novamente.',
+      };
+    }
   }
 
   const aluno = db.prepare('SELECT nome, matricula FROM alunos WHERE id = ?').get(dip.aluno_id) as { nome: string; matricula: string } | undefined;

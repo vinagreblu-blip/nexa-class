@@ -22,6 +22,7 @@ import { getImageSize, getPngContentBounds } from '../image-size';
 import { formatarDataHoraBrasilia } from '../utils';
 import { logger } from '../utils/logger';
 import { registrarDeclaracaoWeb } from '../web-registro';
+import { agendarCompartilharPdf } from '../pdf-sync';
 
 // Normaliza nomes de disciplinas/docentes para formato título
 function formatarNome(s: string): string {
@@ -326,6 +327,18 @@ async function gerarPdf(
     try { fs.unlinkSync(destino.filePath); } catch { /* noop */ }
     return { ok: false, error: assinado.error ?? 'Falha ao assinar o histórico.' };
   }
+
+  // Cópia interna + compartilhamento na nuvem (mesmo padrão de declarações/
+  // diplomas): o PDF assinado fica disponível para as outras máquinas, já
+  // que o token A3 fica em uma máquina só.
+  try {
+    const histDir = path.join(app.getPath('userData'), 'historicos');
+    if (!fs.existsSync(histDir)) fs.mkdirSync(histDir, { recursive: true });
+    const caminhoInterno = path.join(histDir, `${historicoId}.pdf`);
+    fs.copyFileSync(destino.filePath, caminhoInterno);
+    db.prepare('UPDATE historicos SET pdf_caminho = ? WHERE id = ?').run(caminhoInterno, historicoId);
+    agendarCompartilharPdf('historicos', historicoId, caminhoInterno);
+  } catch { /* não crítico */ }
 
   return { ok: true, data: { pdfPath: destino.filePath, enviadoWeb } };
 }
