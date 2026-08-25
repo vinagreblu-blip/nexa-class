@@ -1,0 +1,2 @@
+# XSDs oficiais do MEC: preservar bytes exatos (sem normalização de EOL)
+schemas/**/*.xsd -text

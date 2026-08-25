@@ -347,6 +347,134 @@ function createSchema(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_historicos_aluno ON historicos(aluno_id);
     CREATE INDEX IF NOT EXISTS idx_historicos_codigo ON historicos(codigo_verificacao);
+
+    -- ============================================================
+    -- DIPLOMA DIGITAL MEC (XSD v1.05) — processo oficial.
+    -- Separação total da Certidão de Conclusão (declaracoes), que
+    -- segue existindo com PDF/QR/código próprios.
+    -- ============================================================
+
+    -- IES emissoras/registradoras com dados oficiais (e-MEC, CNPJ,
+    -- endereço estruturado e atos regulatórios em JSON — estrutura
+    -- espelha os tipos TAtoRegulatorio/TEndereco do XSD oficial).
+    CREATE TABLE IF NOT EXISTS ies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      codigo_emec INTEGER,
+      cnpj TEXT,
+      logradouro TEXT,
+      numero TEXT,
+      complemento TEXT,
+      bairro TEXT,
+      codigo_municipio TEXT,
+      nome_municipio TEXT,
+      uf TEXT,
+      cep TEXT,
+      papel TEXT NOT NULL DEFAULT 'emissora',
+      credenciamento_json TEXT,
+      recredenciamento_json TEXT,
+      mantenedora_json TEXT,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Cursos de graduação com dados exigidos pelo DadosCurso do XSD.
+    CREATE TABLE IF NOT EXISTS cursos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ies_id INTEGER NOT NULL,
+      nome TEXT NOT NULL,
+      codigo_emec INTEGER,
+      modalidade TEXT,
+      titulo_conferido TEXT,
+      outro_titulo TEXT,
+      grau_conferido TEXT,
+      endereco_json TEXT,
+      autorizacao_json TEXT,
+      reconhecimento_json TEXT,
+      renovacao_reconhecimento_json TEXT,
+      ativo INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (ies_id) REFERENCES ies(id) ON DELETE CASCADE
+    );
+
+    -- Processo do diploma digital (uma linha por diplomando).
+    CREATE TABLE IF NOT EXISTS diplomas_digitais (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      aluno_id INTEGER NOT NULL,
+      curso_id INTEGER,
+      ies_emissora_id INTEGER NOT NULL,
+      ies_registradora_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'aguardando_conclusao',
+      versao_schema TEXT NOT NULL DEFAULT '1.05',
+      chave_acesso TEXT,
+      dados_registro_json TEXT,
+      certidao_id INTEGER,
+      motivo_anulacao TEXT,
+      anulado_em TEXT,
+      anulado_por INTEGER,
+      criado_por INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (aluno_id) REFERENCES alunos(id),
+      FOREIGN KEY (curso_id) REFERENCES cursos(id),
+      FOREIGN KEY (ies_emissora_id) REFERENCES ies(id),
+      FOREIGN KEY (ies_registradora_id) REFERENCES ies(id),
+      FOREIGN KEY (certidao_id) REFERENCES declaracoes(id),
+      FOREIGN KEY (criado_por) REFERENCES usuarios(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_diplomas_digitais_aluno ON diplomas_digitais(aluno_id);
+
+    -- Artefatos XML/PDF do processo, com resultado da validação XSD.
+    CREATE TABLE IF NOT EXISTS diploma_arquivos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      diploma_id INTEGER NOT NULL,
+      tipo_arquivo TEXT NOT NULL,
+      nome TEXT,
+      caminho_storage TEXT,
+      hash TEXT,
+      versao_schema TEXT NOT NULL,
+      valido_xsd INTEGER,
+      erros_validacao_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (diploma_id) REFERENCES diplomas_digitais(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_diploma_arquivos_diploma ON diploma_arquivos(diploma_id);
+
+    -- Assinaturas (XAdES, M4) — quem assina, cargo (enum MEC) e status.
+    -- NUNCA guarda chave privada ou PIN: apenas metadados do certificado.
+    CREATE TABLE IF NOT EXISTS diploma_assinaturas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      diploma_id INTEGER NOT NULL,
+      tipo TEXT NOT NULL,
+      cpf TEXT NOT NULL,
+      nome TEXT NOT NULL,
+      cargo TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pendente',
+      cert_serial TEXT,
+      assinado_em TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (diploma_id) REFERENCES diplomas_digitais(id) ON DELETE CASCADE
+    );
+
+    -- Trilha de auditoria do fluxo (criação, geração, validação,
+    -- assinatura, registro, publicação, anulação...). Append-only na
+    -- aplicação; nunca apaga histórico de diploma.
+    CREATE TABLE IF NOT EXISTS auditoria_diploma (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      diploma_id INTEGER,
+      usuario_id INTEGER,
+      usuario_nome TEXT,
+      acao TEXT NOT NULL,
+      resultado TEXT NOT NULL DEFAULT 'sucesso',
+      detalhes_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_auditoria_diploma ON auditoria_diploma(diploma_id);
   `);
 }
 
