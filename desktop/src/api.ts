@@ -198,6 +198,21 @@ export interface DesktopApi {
       dataColacao?: string;
     }) => Promise<ApiResult<true>>;
     gerarXml: (id: number, artefato: 'historico_escolar' | 'documentacao_academica') => Promise<ApiResult<{ valido: boolean; erros: string[]; arquivoId: number }>>;
+    assinar: (id: number, artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => Promise<ApiResult<{ arquivoId: number; pendenciaXadesA3?: boolean }>>;
+    registrar: (id: number, registro: {
+      livro: string;
+      numeroRegistro?: string;
+      numeroFolha?: string;
+      numeroSequencia?: string;
+      processoDiploma?: string;
+      dataExpedicaoDiploma: string;
+      dataRegistroDiploma: string;
+      responsavel: { nome: string; cpf: string; matricula?: string };
+      codigoValidacao: string;
+      informacoesAdicionais?: string;
+    }) => Promise<ApiResult<{ valido: boolean }>>;
+    publicar: (id: number) => Promise<ApiResult<true>>;
+    anular: (id: number, motivo: string, senhaMaster: string) => Promise<ApiResult<true>>;
     iesListar: () => Promise<ApiResult<any[]>>;
     iesSalvar: (input: any) => Promise<ApiResult<any>>;
     cursoGraduacaoListar: (iesId?: number) => Promise<ApiResult<any[]>>;

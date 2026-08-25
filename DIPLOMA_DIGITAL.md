@@ -1,8 +1,8 @@
 # DIPLOMA DIGITAL MEC — Documentação Técnica do Módulo
 
-> Estado: **M1 concluído** (fundação), **M2 concluído** (UI + dados
-> institucionais + sync), **M3 concluído** (geração/validação XML oficial).
-> M4 (assinatura XAdES + registro) pendente.
+> Estado: **M1–M4 concluídos** (fundação; UI+sync; geração/validação XML;
+> assinatura real + registro + consulta pública + anulação). M5 pendente
+> (ListaDiplomasAnulados, ArquivoFiscalização, RVDD/PDF-A, validador MEC).
 
 Este documento descreve a arquitetura do módulo de **Diploma Digital de
 graduação** conforme a especificação oficial do MEC (Sesu), que **substitui o
@@ -120,8 +120,8 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **M1** ✅ XSDs oficiais + validação comprovada + tabelas + SQL nuvem + Storage + docs
 - **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
 - **M3** ✅ Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
-- **M4** Assinatura XAdES (certificado real), registro assistido (retorno da registradora), consulta pública
-- **M5** Anulação/ListaDiplomasAnulados, ArquivoFiscalização, RVDD (PDF/A), validador oficial MEC no pipeline
+- **M4** ✅ Assinatura XAdES-BES real (A1) / XMLDSig real (A3 token), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
+- **M5** Anulação em lote/ListaDiplomasAnulados (XML), ArquivoFiscalização, RVDD (PDF/A), validador oficial MEC no pipeline
 
 ### Detalhe do M3 (implementado)
 
@@ -146,6 +146,39 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **Esqueleto estrutural de assinatura**: os XSDs exigem `ds:Signature`
   presente; até o M4 o XML carrega um esqueleto (digest/valor vazios) APENAS
   para satisfazer o schema — o status deixa claro que NÃO há assinatura.
+
+### Detalhe do M4 (implementado)
+
+- **Assinatura REAL** (`xades-signer.ts`): XAdES-BES — 2 references
+  (documento com enveloped+C14N e `xades:SignedProperties` com
+  SigningTime + SigningCertificate digest SHA-256), KeyInfo com
+  certificado X509 completo, RSA-SHA256. Assina por POSIÇÃO
+  (esqueleto com SignatureValue vazio), na ordem: Histórico 1×, DA 2×
+  (ambas da emissora). **Prova de interoperabilidade**: round-trip com
+  `xml-crypto checkSignature` (motor independente) + revalidação XSD
+  (testes `xades-signer.test.ts`).
+- **A1**: extração do .pfx (node-forge) e assinatura em Node puro.
+- **A3**: infra PowerShell existente (XMLDSig enveloped REAL com o
+  token ICP-Brasil; a assinatura é movida para a posição do esqueleto —
+  o digest não depende da posição). **Pendência de conformidade
+  documentada**: camada XAdES no A3 e política XAdES-EPES (PolicyId da
+  IN-05) — incluir somente com o identificador oficial confirmado.
+- **Registro assistido** (`gerar-diploma-xml.ts` + handler): grava o
+  RETORNO da registradora (livro/folha/nº/datas/responsável/
+  CodigoValidacao `eMEC.eMEC.hex`), monta o **Diploma final**
+  (VDip{44}, DadosDiploma extraído byte-idêntito da DA assinada +
+  DadosRegistro RDip{44}) e **valida contra o XSD** — as assinaturas da
+  REGISTRADORA permanecem esqueleto (competência dela; jamais
+  simuladas). Exige IES Registradora cadastrada com mantenedora.
+- **Consulta pública**: `POST /api/diplomas` (x-api-key) + `GET
+  /d/:codigo` no verificacao-web com dados mínimos (LGPD). Publicação
+  pelo app muda status para `publicado`. **Exige redeploy do serviço**
+  (Render/Fly) para a rota nova.
+- **Anulação** (admin + senha master): soft — status `anulado` +
+  motivo + data + usuário + auditoria; documento e histórico NUNCA são
+  apagados.
+- **Nuvem**: `supabase-diploma-digital.sql` atualizado (chave_req,
+  ato_autorizacao_registro_json — reaplicar).
 
 ### Detalhe do M2 (implementado)
 

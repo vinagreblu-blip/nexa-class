@@ -1,0 +1,142 @@
+// ============================================================
+// GERADOR — DIPLOMA DIGITAL FINAL (XSD v1.05, pós-registro)
+// ============================================================
+// Root: Diploma → infDiploma{versao, id=VDip{44}, ambiente}
+//   ├─ DadosDiploma (id=Dip{44}) — extraído DO XML DA DA JÁ ASSINADO
+//   │  pela emissora (assinatura real preservada dentro do elemento)
+//   └─ DadosRegistro (id=RDip{44}) — montado com o RETORNO REAL da
+//      IES Registradora (livro/folha/nº/datas/responsável/CodigoValidacao)
+//      + ds:Signature ESQUELETO: quem assina o registro é a
+//      REGISTRADORA — o sistema da emissora NUNCA assina por ela.
+// O ds:Signature do nível Diploma (TDiploma) também permanece
+// esqueleto pelo mesmo motivo (competência da registradora).
+//
+// Registro assistido: os dados vêm do formulário preenchido com o que
+// a registradora devolveu. Nada é simulado nem pré-preenchido.
+import { el, elAttrs, documentoXml, assinaturaEstrutural, blocoAto, blocoEndereco } from './xml-utils';
+import { normalizarCnpj, normalizarData } from './normalizadores';
+import type { SnapshotDiploma } from './coletor';
+
+export interface DadosRegistroRetorno {
+  /** Livro de registro (código). */
+  livro: string;
+  /** Nº de registro OU (folha + sequência) — um dos dois. */
+  numeroRegistro?: string;
+  numeroFolha?: string;
+  numeroSequencia?: string;
+  processoDiploma?: string;
+  dataExpedicaoDiploma: string; // AAAA-MM-DD
+  dataRegistroDiploma: string; // AAAA-MM-DD
+  responsavel: { nome: string; cpf: string; matricula?: string };
+  /** CodigoValidacao oficial retornado pela registradora (eMEC.eMEC.hex12+). */
+  codigoValidacao: string;
+  informacoesAdicionais?: string;
+}
+
+/** Extrai o elemento DadosDiploma (com assinaturas internas) da DA assinada. */
+export function extrairDadosDiploma(xmlDaAssinada: string): string | null {
+  const m = /<DadosDiploma[\s\S]*?<\/DadosDiploma>/.exec(xmlDaAssinada);
+  return m ? m[0] : null;
+}
+
+/**
+ * Monta o Diploma final. @xmlDaAssinada = XML da Documentação
+ * Acadêmica com a assinatura real da emissora (dadosDiploma extraído
+ * de lá, byte-idêntico). @registradora = linha da tabela ies com
+ * papel de registradora (dados oficiais completos).
+ */
+export function gerarDiplomaFinalXml(
+  s: SnapshotDiploma,
+  xmlDaAssinada: string,
+  registro: DadosRegistroRetorno,
+  registradora: any,
+  chaveVdip: string,
+  chaveRdip: string
+): string | null {
+  const dadosDiploma = extrairDadosDiploma(xmlDaAssinada);
+  if (!dadosDiploma) return null;
+
+  const cnpjReg = normalizarCnpj(registradora?.cnpj);
+  const credReg = blocoAto(registradora?.credenciamento_json, 'Credenciamento');
+  const recredReg = blocoAto(registradora?.recredenciamento_json, 'Recredenciamento');
+  const atoReg = blocoAto(registradora?.ato_autorizacao_registro_json, 'AtoRegulatorioAutorizacaoRegistro');
+  let mantenedora: string | null = null;
+  if (registradora?.mantenedora_json) {
+    try {
+      const m = JSON.parse(registradora.mantenedora_json);
+      if (m.razaoSocial && m.cnpj) {
+        const endM = m.endereco ? blocoEndereco(m.endereco) : null;
+        if (endM) {
+          mantenedora =
+            '<Mantenedora>' +
+            el('RazaoSocial', m.razaoSocial) +
+            el('CNPJ', normalizarCnpj(m.cnpj) ?? '') +
+            `<Endereco>${endM}</Endereco>` +
+            '</Mantenedora>';
+        }
+      }
+    } catch { /* ignora JSON inválido */ }
+  }
+  const endReg = blocoEndereco({
+    logradouro: registradora?.logradouro, numero: registradora?.numero,
+    complemento: registradora?.complemento, bairro: registradora?.bairro,
+    codigoMunicipio: registradora?.codigo_municipio,
+    nomeMunicipio: registradora?.nome_municipio, uf: registradora?.uf, cep: registradora?.cep,
+  });
+  if (!cnpjReg || !credReg || !endReg || !mantenedora) return null;
+
+  const a = s.aluno;
+  const colacao = normalizarData(a?.data_colacao);
+  if (!colacao) return null;
+
+  const identificador =
+    registro.numeroRegistro
+      ? el('NumeroRegistro', registro.numeroRegistro)
+      : el('NumeroFolhaDoDiploma', registro.numeroFolha ?? '') + el('NumeroSequenciaDoDiploma', registro.numeroSequencia ?? '');
+  if (!registro.numeroRegistro && !(registro.numeroFolha && registro.numeroSequencia)) return null;
+
+  const livroRegistro =
+    '<LivroRegistro>' +
+    el('LivroRegistro', registro.livro) +
+    identificador +
+    (registro.processoDiploma ? el('ProcessoDoDiploma', registro.processoDiploma) : '') +
+    el('DataColacaoGrau', colacao) +
+    el('DataExpedicaoDiploma', registro.dataExpedicaoDiploma) +
+    el('DataRegistroDiploma', registro.dataRegistroDiploma) +
+    '<ResponsavelRegistro>' +
+    el('Nome', registro.responsavel.nome) +
+    el('CPF', registro.responsavel.cpf) +
+    (registro.responsavel.matricula ? el('IDouNumeroMatricula', registro.responsavel.matricula) : '') +
+    '</ResponsavelRegistro>' +
+    '</LivroRegistro>';
+
+  // Id da DA (ReqDip{44}) — vem da chave da DA registrada no processo
+  const reqDip = s.processo?.chave_req ?? null;
+  if (!reqDip) return null;
+
+  const dadosRegistro =
+    elAttrs('DadosRegistro', { id: chaveRdip },
+      '<IesRegistradora>' +
+      el('Nome', registradora.nome) +
+      el('CodigoMEC', registradora.codigo_emec) +
+      el('CNPJ', cnpjReg) +
+      `<Endereco>${endReg}</Endereco>` +
+      credReg +
+      (recredReg ?? '') +
+      (atoReg ?? '') +
+      mantenedora +
+      '</IesRegistradora>' +
+      livroRegistro +
+      el('IdDocumentacaoAcademica', reqDip) +
+      '<Seguranca>' + el('CodigoValidacao', registro.codigoValidacao) + '</Seguranca>' +
+      (registro.informacoesAdicionais ? el('InformacoesAdicionais', registro.informacoesAdicionais) : '') +
+      assinaturaEstrutural()
+    );
+
+  const infDiploma =
+    elAttrs('infDiploma', { versao: '1.05', id: chaveVdip, ambiente: 'Produção' },
+      dadosDiploma + dadosRegistro
+    );
+
+  return documentoXml('Diploma', infDiploma + assinaturaEstrutural());
+}

@@ -123,6 +123,13 @@ CREATE TABLE IF NOT EXISTS auditoria_diploma (
 CREATE INDEX IF NOT EXISTS idx_auditoria_diploma ON auditoria_diploma(diploma_id);
 
 -- ---------------------------------------------------------
+-- 1.1) Migração de colunas adicionais (M3/M4 — idempotente)
+-- ---------------------------------------------------------
+ALTER TABLE ies ADD COLUMN IF NOT EXISTS ato_autorizacao_registro_json JSONB;
+ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS chave_req TEXT;
+ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS codigo_validacao_historico TEXT;
+
+-- ---------------------------------------------------------
 -- 2) RLS: mesmo padrão das tabelas operacionais (só authenticated)
 -- ---------------------------------------------------------
 

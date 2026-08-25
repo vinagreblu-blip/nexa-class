@@ -156,6 +156,14 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_COMPLETAR_ALUNO, input),
     gerarXml: (id: number, artefato: string): Promise<ApiResult<any>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_XML, id, artefato),
+    assinar: (id: number, artefato: string, senhaPfx?: string): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ASSINAR, id, artefato, senhaPfx),
+    registrar: (id: number, registro: any): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR, id, registro),
+    publicar: (id: number): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PUBLICAR, id),
+    anular: (id: number, motivo: string, senhaMaster: string): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ANULAR, id, motivo, senhaMaster),
     iesListar: (): Promise<ApiResult<any[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.IES_LISTAR),
     iesSalvar: (input: any): Promise<ApiResult<any>> =>

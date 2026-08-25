@@ -375,6 +375,7 @@ function createSchema(): void {
       credenciamento_json TEXT,
       recredenciamento_json TEXT,
       mantenedora_json TEXT,
+      ato_autorizacao_registro_json TEXT,
       ativo INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -411,6 +412,7 @@ function createSchema(): void {
       status TEXT NOT NULL DEFAULT 'aguardando_conclusao',
       versao_schema TEXT NOT NULL DEFAULT '1.05',
       chave_acesso TEXT,
+      chave_req TEXT,
       codigo_validacao_historico TEXT,
       dados_registro_json TEXT,
       certidao_id INTEGER,
@@ -503,6 +505,8 @@ function migrateDiplomasDigitais(): void {
   };
   addCol('cursos', 'carga_horaria', 'carga_horaria TEXT');
   addCol('diplomas_digitais', 'codigo_validacao_historico', 'codigo_validacao_historico TEXT');
+  addCol('diplomas_digitais', 'chave_req', 'chave_req TEXT');
+  addCol('ies', 'ato_autorizacao_registro_json', 'ato_autorizacao_registro_json TEXT');
   addCol('alunos', 'mae_nome', 'mae_nome TEXT');
   addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');
   addCol('alunos', 'pai_nome', 'pai_nome TEXT');

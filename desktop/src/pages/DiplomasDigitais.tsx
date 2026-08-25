@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 import { useDebouncedValue } from '../utils/hooks';
 import { Modal } from '../components/Modal';
+import { ModalSenhaCertificado } from '../components/ModalSenhaCertificado';
 
 // ============================================================
 // DIPLOMAS DIGITAIS MEC â€” pÃ¡gina do mÃ³dulo oficial (XSD v1.05)
@@ -471,6 +472,39 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
   const [dados, setDados] = useState<any | null>(null);
   const [gerando, setGerando] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+  const [modalSenha, setModalSenha] = useState<string | null>(null); // artefato aguardando senha A1
+  const [modalRegistro, setModalRegistro] = useState(false);
+  const [modalAnular, setModalAnular] = useState(false);
+  const { usuario } = useAuth();
+
+  const assinar = async (artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => {
+    setGerando(`assinar-${artefato}`);
+    setMsg(null);
+    const r = await api.diplomasDigitais.assinar(id, artefato, senhaPfx);
+    setGerando(null);
+    setModalSenha(null);
+    if (r.ok) {
+      setMsg({
+        tipo: 'ok',
+        texto: r.data?.pendenciaXadesA3
+          ? 'Assinado com o token A3 (XMLDSig real). PendÃªncia de conformidade: camada XAdES na assinatura A3 â€” ver DIPLOMA_DIGITAL.md.'
+          : 'Assinado (XAdES-BES real) e revalidado contra o XSD oficial.',
+      });
+    } else {
+      setMsg({ tipo: 'erro', texto: r.error ?? 'Falha na assinatura' });
+    }
+    await carregar();
+  };
+
+  const publicar = async () => {
+    setGerando('publicar');
+    setMsg(null);
+    const r = await api.diplomasDigitais.publicar(id);
+    setGerando(null);
+    if (r.ok) setMsg({ tipo: 'ok', texto: 'Publicado â€” consulta pÃºblica ativa no serviÃ§o de verificaÃ§Ã£o.' });
+    else setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao publicar' });
+    await carregar();
+  };
 
   const carregar = useCallback(async () => {
     const r = await api.diplomasDigitais.obter(id);
@@ -519,13 +553,35 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
           {msg.texto}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <button className="btn-primary btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('historico_escolar')}>
           {gerando === 'historico_escolar' ? 'Gerando e validandoâ€¦' : 'Gerar XML â€” HistÃ³rico Escolar Digital'}
         </button>
         <button className="btn-accent btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('documentacao_academica')}>
-          {gerando === 'documentacao_academica' ? 'Gerando e validandoâ€¦' : 'Gerar XML â€” DocumentaÃ§Ã£o AcadÃªmica (Registro)'}
+          {gerando === 'historico_escolar' ? 'Gerando e validandoâ€¦' : 'Gerar XML â€” DocumentaÃ§Ã£o AcadÃªmica (Registro)'}
         </button>
+        {['aguardando_assinatura', 'xml_gerado', 'xml_invalido'].includes(dados.status) && (
+          <>
+            <button className="btn-primary btn-sm" disabled={gerando !== null} onClick={() => setModalSenha('documentacao_academica')}>
+              {gerando?.startsWith('assinar') ? 'Assinandoâ€¦ (PIN/senha)' : 'Assinar c/ Certificado Digital'}
+            </button>
+          </>
+        )}
+        {dados.status === 'assinado' && (
+          <button className="btn-accent btn-sm" disabled={gerando !== null} onClick={() => setModalRegistro(true)}>
+            Registrar (retorno da Registradora)
+          </button>
+        )}
+        {dados.status === 'registrado' && (
+          <button className="btn-primary btn-sm" disabled={gerando !== null} onClick={() => void publicar()}>
+            {gerando === 'publicar' ? 'Publicandoâ€¦' : 'Publicar consulta pÃºblica'}
+          </button>
+        )}
+        {usuario?.role === 'admin' && !['anulado', 'cancelado'].includes(dados.status) && (
+          <button className="btn-danger btn-sm" onClick={() => setModalAnular(true)}>
+            Anular
+          </button>
+        )}
       </div>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
         Fluxo: gerar â†’ validar contra o XSD oficial v1.05 â†’ (invÃ¡lido nÃ£o continua). O Diploma final (com DadosRegistro) sÃ³ Ã©
@@ -583,6 +639,38 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
           </tbody>
         </table>
       </div>
+
+      {modalSenha && (
+        <ModalSenhaCertificado
+          documento="DocumentaÃ§Ã£o AcadÃªmica"
+          onConfirm={(senha) => void assinar('documentacao_academica', senha)}
+          onClose={() => setModalSenha(null)}
+        />
+      )}
+      {modalRegistro && (
+        <ModalRegistro
+          onClose={() => setModalRegistro(false)}
+          onRegistrado={async (texto) => {
+            setModalRegistro(false);
+            setMsg({ tipo: 'ok', texto });
+            await carregar();
+          }}
+          onErro={(t) => setMsg({ tipo: 'erro', texto: t })}
+          id={id}
+        />
+      )}
+      {modalAnular && (
+        <ModalAnular
+          id={id}
+          onClose={() => setModalAnular(false)}
+          onAnulado={async () => {
+            setModalAnular(false);
+            setMsg({ tipo: 'ok', texto: 'Diploma ANULADO â€” histÃ³rico e documentos preservados (auditoria).' });
+            await carregar();
+          }}
+          onErro={(t) => setMsg({ tipo: 'erro', texto: t })}
+        />
+      )}
     </Modal>
   );
 }
@@ -913,6 +1001,144 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
           )}
         </>
       )}
+    </Modal>
+  );
+}
+
+// ============================================================
+// Modal: Registro assistido (retorno da IES Registradora)
+// ============================================================
+
+function ModalRegistro({
+  id,
+  onClose,
+  onRegistrado,
+  onErro,
+}: {
+  id: number;
+  onClose: () => void;
+  onRegistrado: (msg: string) => Promise<void> | void;
+  onErro: (msg: string) => void;
+}) {
+  const [form, setForm] = useState({
+    livro: '',
+    numeroRegistro: '',
+    numeroFolha: '',
+    numeroSequencia: '',
+    processoDiploma: '',
+    dataExpedicaoDiploma: '',
+    dataRegistroDiploma: '',
+    respNome: '',
+    respCpf: '',
+    respMatricula: '',
+    codigoValidacao: '',
+  });
+  const [salvando, setSalvando] = useState(false);
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  const salvar = async () => {
+    if (!form.livro || !form.dataExpedicaoDiploma || !form.dataRegistroDiploma || !form.respNome || !form.respCpf || !form.codigoValidacao) {
+      onErro('Preencha livro, datas, responsável e o código de validação oficial.');
+      return;
+    }
+    setSalvando(true);
+    const r = await api.diplomasDigitais.registrar(id, {
+      livro: form.livro,
+      numeroRegistro: form.numeroRegistro || undefined,
+      numeroFolha: form.numeroRegistro ? undefined : form.numeroFolha || undefined,
+      numeroSequencia: form.numeroRegistro ? undefined : form.numeroSequencia || undefined,
+      processoDiploma: form.processoDiploma || undefined,
+      dataExpedicaoDiploma: form.dataExpedicaoDiploma,
+      dataRegistroDiploma: form.dataRegistroDiploma,
+      responsavel: { nome: form.respNome, cpf: form.respCpf.replace(/\D/g, ''), matricula: form.respMatricula || undefined },
+      codigoValidacao: form.codigoValidacao,
+    });
+    setSalvando(false);
+    if (r.ok) await onRegistrado('Diploma final montado com o retorno da registradora e VALIDADO contra o XSD oficial.');
+    else onErro(r.error ?? 'Falha no registro');
+  };
+
+  return (
+    <Modal title="Registrar Diploma — retorno da IES Registradora" onClose={onClose} width={720}>
+      <div className="alert alert-warning" style={{ marginBottom: 12 }}>
+        Preencha com o <strong>retorno oficial da Registradora</strong> (livro, registro, datas, responsável e código de
+        validação). Nada é pré-preenchido: o sistema nunca assina nem registra por conta da registradora.
+      </div>
+      <div className="form-grid">
+        <div><label style={labelStyle}>Livro *</label><input value={form.livro} onChange={(e) => set('livro', e.target.value)} /></div>
+        <div><label style={labelStyle}>Nº de registro</label><input value={form.numeroRegistro} onChange={(e) => set('numeroRegistro', e.target.value)} placeholder="ou use folha+sequência" /></div>
+        <div><label style={labelStyle}>Folha (se sem nº registro)</label><input value={form.numeroFolha} onChange={(e) => set('numeroFolha', e.target.value)} disabled={!!form.numeroRegistro} /></div>
+        <div><label style={labelStyle}>Sequência (se sem nº registro)</label><input value={form.numeroSequencia} onChange={(e) => set('numeroSequencia', e.target.value)} disabled={!!form.numeroRegistro} /></div>
+        <div><label style={labelStyle}>Processo do diploma</label><input value={form.processoDiploma} onChange={(e) => set('processoDiploma', e.target.value)} /></div>
+        <div><label style={labelStyle}>Data expedição (AAAA-MM-DD) *</label><input value={form.dataExpedicaoDiploma} onChange={(e) => set('dataExpedicaoDiploma', e.target.value)} placeholder="2026-08-25" /></div>
+        <div><label style={labelStyle}>Data registro (AAAA-MM-DD) *</label><input value={form.dataRegistroDiploma} onChange={(e) => set('dataRegistroDiploma', e.target.value)} placeholder="2026-08-25" /></div>
+        <div><label style={labelStyle}>Responsável — nome *</label><input value={form.respNome} onChange={(e) => set('respNome', e.target.value)} /></div>
+        <div><label style={labelStyle}>Responsável — CPF (11 díg.) *</label><input value={form.respCpf} onChange={(e) => set('respCpf', e.target.value)} /></div>
+        <div><label style={labelStyle}>Responsável — matrícula</label><input value={form.respMatricula} onChange={(e) => set('respMatricula', e.target.value)} /></div>
+        <div className="full">
+          <label style={labelStyle}>Código de validação oficial * (eMEC-emissora.eMEC-registradora.hex — retornado pela registradora)</label>
+          <input value={form.codigoValidacao} onChange={(e) => set('codigoValidacao', e.target.value)} placeholder="1234.5678.abcdef0123456789" style={{ fontFamily: 'monospace' }} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn-primary" disabled={salvando} onClick={() => void salvar()}>
+          {salvando ? 'Montando e validando…' : 'Registrar e montar Diploma final'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ============================================================
+// Modal: Anulação (admin + senha master; soft — nunca apaga)
+// ============================================================
+
+function ModalAnular({
+  id,
+  onClose,
+  onAnulado,
+  onErro,
+}: {
+  id: number;
+  onClose: () => void;
+  onAnulado: () => Promise<void> | void;
+  onErro: (msg: string) => void;
+}) {
+  const [motivo, setMotivo] = useState('');
+  const [senha, setSenha] = useState('');
+  const [anulando, setAnulando] = useState(false);
+
+  const anular = async () => {
+    setAnulando(true);
+    const r = await api.diplomasDigitais.anular(id, motivo, senha);
+    setAnulando(false);
+    if (r.ok) await onAnulado();
+    else onErro(r.error ?? 'Falha ao anular');
+  };
+
+  return (
+    <Modal title="Anular Diploma Digital" onClose={onClose} width={560}>
+      <div className="alert alert-error" style={{ marginBottom: 12 }}>
+        A anulação é permanente no fluxo, mas <strong>nunca apaga</strong> o processo: documento, motivo, data, usuário e
+        auditoria ficam preservados (exigência oficial). Confirme com a senha master.
+      </div>
+      <div className="form-row" style={{ flexDirection: 'column', gap: 10 }}>
+        <div style={{ width: '100%' }}>
+          <label style={labelStyle}>Motivo (mín. 10 caracteres — registrado na auditoria) *</label>
+          <textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} style={{ width: '100%' }} />
+        </div>
+        <div style={{ width: '100%' }}>
+          <label style={labelStyle}>Senha master *</label>
+          <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)} style={{ width: '100%' }} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+        <button className="btn-danger" disabled={anulando || motivo.trim().length < 10 || !senha} onClick={() => void anular()}>
+          {anulando ? 'Anulando…' : 'Anular diploma'}
+        </button>
+      </div>
     </Modal>
   );
 }

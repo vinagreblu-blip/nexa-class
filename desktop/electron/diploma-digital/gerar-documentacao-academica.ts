@@ -88,7 +88,7 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
     '</IesEmissora>';
 
   return (
-    elAttrs('DadosDiploma', { id: `Dip${chaveDip}` },
+    elAttrs('DadosDiploma', { id: chaveDip },
       '<Diplomado>' + diplomado + '</Diplomado>' +
       (normalizarData(`${a.ano_conclusao}-01-01`) ? el('DataConclusao', normalizarData(`${a.ano_conclusao}-01-01`)) : '') +
       dadosCurso +
@@ -113,12 +113,13 @@ export function gerarDocumentacaoAcademicaXml(
   if (!a) return null;
 
   // Chaves de acesso (pattern XSD: Dip[0-9]{44} / ReqDip[0-9]{44})
-  const chaveDip =
-    s.processo?.chave_acesso ??
-    montarChaveAcesso44(a.cpf, a.matricula, `dip-${s.processo.id}`) ??
-    '';
-  const chaveReq = montarChaveAcesso44(a.cpf, a.matricula, `req-${s.processo.id}`) ?? '';
-  if (!/^[0-9]{44}$/.test(chaveDip.replace(/^Dip/, '')) || !chaveReq) return null;
+  // processo.chave_* (persistidas com prefixo) têm precedência.
+  const ch44dip = montarChaveAcesso44(a.cpf, a.matricula, `dip-${s.processo.id}`);
+  const chaveDip = s.processo?.chave_acesso ?? (ch44dip ? `Dip${ch44dip}` : null);
+  const ch44req = montarChaveAcesso44(a.cpf, a.matricula, `req-${s.processo.id}`);
+  const chaveReq = s.processo?.chave_req ?? (ch44req ? `ReqDip${ch44req}` : null);
+  if (!chaveDip || !/^Dip[0-9]{44}$/.test(chaveDip)) return null;
+  if (!chaveReq || !/^ReqDip[0-9]{44}$/.test(chaveReq)) return null;
 
   const dadosDiploma = dadosDiplomaCompleto(s, chaveDip);
   if (!dadosDiploma) return null;
@@ -152,7 +153,7 @@ export function gerarDocumentacaoAcademicaXml(
   if (docs.length === 0) return null;
 
   const registroReq =
-    elAttrs('RegistroReq', { versao: '1.05', id: `ReqDip${chaveReq}`, ambiente: 'Produção' },
+    elAttrs('RegistroReq', { versao: '1.05', id: chaveReq, ambiente: 'Produção' },
       dadosDiploma +
       '<DadosPrivadosDiplomado>' +
       '<Filiacao>' + genitores.join('') + '</Filiacao>' +
