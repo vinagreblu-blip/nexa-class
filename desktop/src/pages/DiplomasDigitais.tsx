@@ -469,12 +469,30 @@ function ModalPendencias({
 
 function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
   const [dados, setDados] = useState<any | null>(null);
-  useEffect(() => {
-    void (async () => {
-      const r = await api.diplomasDigitais.obter(id);
-      if (r.ok && r.data) setDados(r.data);
-    })();
+  const [gerando, setGerando] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+
+  const carregar = useCallback(async () => {
+    const r = await api.diplomasDigitais.obter(id);
+    if (r.ok && r.data) setDados(r.data);
   }, [id]);
+
+  useEffect(() => {
+    void carregar();
+  }, [carregar]);
+
+  const gerarXml = async (artefato: 'historico_escolar' | 'documentacao_academica') => {
+    setGerando(artefato);
+    setMsg(null);
+    const r = await api.diplomasDigitais.gerarXml(id, artefato);
+    setGerando(null);
+    if (r.ok) {
+      setMsg({ tipo: 'ok', texto: `XML gerado e VÁLIDO contra o XSD oficial 1.05 (schema ${artefato}). Assinatura digital: etapa M4 — aguardando configuração do certificado da IES.` });
+    } else {
+      setMsg({ tipo: 'erro', texto: r.error ?? 'Falha na geração' });
+    }
+    await carregar();
+  };
 
   if (!dados) {
     return (
@@ -496,9 +514,26 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
       </div>
 
       <div style={secaoStyle}>Artefatos XML</div>
+      {msg && (
+        <div className={msg.tipo === 'ok' ? 'alert alert-success' : 'alert alert-error'} style={{ marginBottom: 12, whiteSpace: 'pre-wrap' }}>
+          {msg.texto}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button className="btn-primary btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('historico_escolar')}>
+          {gerando === 'historico_escolar' ? 'Gerando e validando…' : 'Gerar XML — Histórico Escolar Digital'}
+        </button>
+        <button className="btn-accent btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('documentacao_academica')}>
+          {gerando === 'documentacao_academica' ? 'Gerando e validando…' : 'Gerar XML — Documentação Acadêmica (Registro)'}
+        </button>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+        Fluxo: gerar → validar contra o XSD oficial v1.05 → (inválido não continua). O Diploma final (com DadosRegistro) só é
+        montado após o retorno da IES Registradora — etapa M4, jamais simulada.
+      </p>
       {(!dados.arquivos || dados.arquivos.length === 0) && (
         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-          Nenhum XML gerado. A geração validada contra o XSD oficial será habilitada na próxima etapa do módulo (M3).
+          Nenhum XML gerado ainda.
         </p>
       )}
       {!!dados.arquivos?.length && (

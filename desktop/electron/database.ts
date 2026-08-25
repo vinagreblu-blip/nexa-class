@@ -33,6 +33,7 @@ export async function initDatabase(): Promise<DbAdapter> {
   createSchema();
   migrateAtasColacao();
   migrateAlunos();
+  migrateDiplomasDigitais();
   migrateDelecoes();
   atribuirCodigosUsuarios();
   seedAdmin();
@@ -393,6 +394,7 @@ function createSchema(): void {
       autorizacao_json TEXT,
       reconhecimento_json TEXT,
       renovacao_reconhecimento_json TEXT,
+      carga_horaria TEXT,
       ativo INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -409,6 +411,7 @@ function createSchema(): void {
       status TEXT NOT NULL DEFAULT 'aguardando_conclusao',
       versao_schema TEXT NOT NULL DEFAULT '1.05',
       chave_acesso TEXT,
+      codigo_validacao_historico TEXT,
       dados_registro_json TEXT,
       certidao_id INTEGER,
       motivo_anulacao TEXT,
@@ -489,6 +492,23 @@ function migrateAtasColacao(): void {
   }
 }
 
+// Diploma Digital MEC: colunas adicionadas após a criação inicial das
+// tabelas do módulo (idempotente para DBs de dev criados no M2).
+function migrateDiplomasDigitais(): void {
+  const addCol = (tabela: string, col: string, def: string) => {
+    const cols = db.prepare(`PRAGMA table_info(${tabela})`).all() as { name: string }[];
+    if (cols.length > 0 && !cols.some((c) => c.name === col)) {
+      db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${def}`);
+    }
+  };
+  addCol('cursos', 'carga_horaria', 'carga_horaria TEXT');
+  addCol('diplomas_digitais', 'codigo_validacao_historico', 'codigo_validacao_historico TEXT');
+  addCol('alunos', 'mae_nome', 'mae_nome TEXT');
+  addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');
+  addCol('alunos', 'pai_nome', 'pai_nome TEXT');
+  addCol('alunos', 'pai_sexo', 'pai_sexo TEXT');
+}
+
 function migrateAlunos(): void {
   const cols = db.prepare('PRAGMA table_info(alunos)').all() as { name: string }[];
   const names = cols.map((c) => c.name);
@@ -519,6 +539,11 @@ function migrateAlunos(): void {
   adicionar('naturalidade_codigo_ibge', 'naturalidade_codigo_ibge TEXT');
   adicionar('naturalidade_uf', 'naturalidade_uf TEXT');
   adicionar('naturalidade_estrangeira', 'naturalidade_estrangeira TEXT');
+  // Diploma Digital MEC: filiação (Filiacao/Genitor no XSD da DA)
+  adicionar('mae_nome', 'mae_nome TEXT');
+  adicionar('mae_sexo', 'mae_sexo TEXT');
+  adicionar('pai_nome', 'pai_nome TEXT');
+  adicionar('pai_sexo', 'pai_sexo TEXT');
 
   // declaracoes: pdf_caminho
   const colsDecl = db.prepare('PRAGMA table_info(declaracoes)').all() as { name: string }[];

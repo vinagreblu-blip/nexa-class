@@ -1,8 +1,8 @@
 # DIPLOMA DIGITAL MEC — Documentação Técnica do Módulo
 
 > Estado: **M1 concluído** (fundação), **M2 concluído** (UI + dados
-> institucionais + sync). M3 (geração/validação XML) em desenvolvimento na
-> branch `feat/diploma-digital-mec`.
+> institucionais + sync), **M3 concluído** (geração/validação XML oficial).
+> M4 (assinatura XAdES + registro) pendente.
 
 Este documento descreve a arquitetura do módulo de **Diploma Digital de
 graduação** conforme a especificação oficial do MEC (Sesu), que **substitui o
@@ -119,9 +119,33 @@ já emitidos (`versao_schema` por diploma/arquivo).
 
 - **M1** ✅ XSDs oficiais + validação comprovada + tabelas + SQL nuvem + Storage + docs
 - **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
-- **M3** Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
+- **M3** ✅ Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
 - **M4** Assinatura XAdES (certificado real), registro assistido (retorno da registradora), consulta pública
 - **M5** Anulação/ListaDiplomasAnulados, ArquivoFiscalização, RVDD (PDF/A), validador oficial MEC no pipeline
+
+### Detalhe do M3 (implementado)
+
+- **Mapa de campos** (`mapeamento-campos.ts`): única fonte de verdade
+  CAMPO OFICIAL → TABELA → COLUNA → TRANSFORMAÇÃO → ELEMENTO XML, com enums
+  TTitulacao/TFormaAcessoCurso e derivação documentada (código de disciplina
+  por slug; endereço do curso com fallback para o da IES).
+- **Geradores** (funções puras sobre snapshot do banco):
+  `gerar-historico-xml.ts` → `DocumentoHistoricoEscolarFinal`;
+  `gerar-documentacao-academica.ts` → `DocumentacaoAcademicaRegistro/RegistroReq`
+  (DadosDiploma com `id="Dip{44}"`, Filiacao, histórico embutido e PDFs da
+  documentação comprobatória em base64). O **Diploma final** (DadosDiploma +
+  DadosRegistro) só é montado após o retorno da registradora (M4).
+- **Validação real**: os testes geram XML de fixture e validam contra os
+  **XSDs oficiais** (`geracao-xml.test.ts`) — ambos os artefatos PASSAM.
+- **Fluxo no handler** (`ipc/diplomas-digitais.ts` GERAR_XML): pendências
+  específicas → gerar → **validar XSD** → inválido NÃO continua (status
+  `xml_invalido`, erros persistidos) → válido: arquivo local
+  (`userData/diplomas-digitais/{id}/`), hash SHA-256, upload best-effort ao
+  bucket privado, chaves `Dip{44}`/código de validação do histórico
+  persistidos na 1ª geração, status `aguardando_assinatura`, auditoria.
+- **Esqueleto estrutural de assinatura**: os XSDs exigem `ds:Signature`
+  presente; até o M4 o XML carrega um esqueleto (digest/valor vazios) APENAS
+  para satisfazer o schema — o status deixa claro que NÃO há assinatura.
 
 ### Detalhe do M2 (implementado)
 

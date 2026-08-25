@@ -197,6 +197,7 @@ export interface DesktopApi {
       naturalidadeEstrangeira?: string;
       dataColacao?: string;
     }) => Promise<ApiResult<true>>;
+    gerarXml: (id: number, artefato: 'historico_escolar' | 'documentacao_academica') => Promise<ApiResult<{ valido: boolean; erros: string[]; arquivoId: number }>>;
     iesListar: () => Promise<ApiResult<any[]>>;
     iesSalvar: (input: any) => Promise<ApiResult<any>>;
     cursoGraduacaoListar: (iesId?: number) => Promise<ApiResult<any[]>>;

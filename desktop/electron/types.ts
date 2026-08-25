@@ -324,6 +324,7 @@ export const IPC_CHANNELS = {
   DIPLOMAS_DIGITAIS_OBTER: 'diplomas-digitais:obter',
   DIPLOMAS_DIGITAIS_PENDENCIAS: 'diplomas-digitais:pendencias',
   DIPLOMAS_DIGITAIS_COMPLETAR_ALUNO: 'diplomas-digitais:completar-aluno',
+  DIPLOMAS_DIGITAIS_GERAR_XML: 'diplomas-digitais:gerar-xml',
   IES_LISTAR: 'ies:listar',
   IES_SALVAR: 'ies:salvar',
   CURSO_GRADUACAO_LISTAR: 'curso-graduacao:listar',

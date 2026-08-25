@@ -7,7 +7,9 @@
 // pendências (verificarPendenciasDiploma) — nada é simulado.
 // Cadastro institucional (IES/cursos) exige admin.
 import type { IpcMainInvokeEvent } from 'electron';
-import { ipcMain } from 'electron';
+import { ipcMain, app } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
@@ -15,6 +17,11 @@ import { getSessao, requerAuth, requerAdmin } from './auth';
 import { verificarPendenciasDiploma, type PendenciaDiploma } from '../diploma-digital/pendencias';
 import { normalizarCnpj, normalizarCep, normalizarUf, normalizarCpf, normalizarData } from '../diploma-digital/normalizadores';
 import { logger } from '../utils/logger';
+import { coletarSnapshot, pendenciasHistorico, pendenciasDA } from '../diploma-digital/coletor';
+import { gerarHistoricoXml } from '../diploma-digital/gerar-historico-xml';
+import { gerarDocumentacaoAcademicaXml } from '../diploma-digital/gerar-documentacao-academica';
+import { validarXmlContraXsd, type ArtefatoXsd, type ResultadoValidacao } from '../diploma-digital/xsd-validator';
+import { getClient } from '../cloud';
 
 export interface DiplomaDigitalRow {
   id: number;
@@ -367,6 +374,136 @@ function cursoGraduacaoSalvar(
   return { ok: true, data: db.prepare('SELECT * FROM cursos WHERE id=?').get(info.lastInsertRowid) };
 }
 
+// ---------- Geração de XML oficial (M3): GERAR → VALIDAR XSD → PERSISTIR ----------
+
+const TIPO_DOC_XML: { padrao: RegExp; tipo: string }[] = [
+  { padrao: /rg|identidade|cpf/i, tipo: 'DocumentoIdentidadeDoAluno' },
+  { padrao: /ensafo|ensino m[\u00e9]dio/i, tipo: 'ProvaConclusaoEnsinoMedio' },
+  { padrao: /colacao|colação/i, tipo: 'ProvaColacao' },
+  { padrao: /estagio|estágio/i, tipo: 'ComprovacaoEstagioCurricular' },
+  { padrao: /nascimento/i, tipo: 'CertidaoNascimento' },
+  { padrao: /casamento/i, tipo: 'CertidaoCasamento' },
+  { padrao: /titulo|título eleitor/i, tipo: 'TituloEleitor' },
+  { padrao: /naturaliza/i, tipo: 'AtoNaturalizacao' },
+];
+
+function tipoDocumentoMec(nome: string): string {
+  for (const t of TIPO_DOC_XML) if (t.padrao.test(nome)) return t.tipo;
+  return 'Outros';
+}
+
+/** Upload best-effort para o bucket privado (diplomas-digitais). */
+async function subirXmlStorage(diplomaId: number, arquivo: string, conteudo: string): Promise<string | null> {
+  try {
+    const client = getClient();
+    if (!client) return null;
+    const caminho = `${diplomaId}/${arquivo}`;
+    const { error } = await client.storage
+      .from('diplomas-digitais')
+      .upload(caminho, Buffer.from(conteudo, 'utf8'), { contentType: 'application/xml', upsert: true });
+    if (error) {
+      logger.warn({ err: error.message, diplomaId }, 'Upload do XML ao Storage falhou (mantido local)');
+      return null;
+    }
+    return caminho;
+  } catch (e: any) {
+    logger.warn({ err: e?.message, diplomaId }, 'Storage indisponível — XML mantido apenas local');
+    return null;
+  }
+}
+
+function gerarXmlHandler(
+  _event: IpcMainInvokeEvent,
+  diplomaId: number,
+  artefato: 'historico_escolar' | 'documentacao_academica'
+): Promise<ApiResult<{ valido: boolean; erros: string[]; arquivoId: number }>> {
+  return (async () => {
+    const db = getDb();
+    const snapshot = coletarSnapshot(db as any, diplomaId);
+    if (!snapshot) return { ok: false, error: 'Processo de diploma não encontrado' };
+
+    // 1) Pendências específicas do artefato — nada é gerado com dado faltante
+    const pends: PendenciaDiploma[] =
+      artefato === 'historico_escolar' ? pendenciasHistorico(snapshot) : pendenciasDA(db as any, snapshot);
+    if (pends.length > 0) {
+      auditar(diplomaId, `geracao_xml_${artefato}`, 'bloqueado', { pendencias: pends.length });
+      return {
+        ok: false,
+        error: `XML não gerado: ${pends.length} pendência(s). ${pends.map((p) => p.campo).join('; ')}`,
+      };
+    }
+
+    // 2) GERA
+    let xml: string | null;
+    if (artefato === 'historico_escolar') {
+      xml = gerarHistoricoXml(snapshot);
+    } else {
+      const docs = (db
+        .prepare('SELECT * FROM aluno_documentos WHERE aluno_id = ? AND caminho IS NOT NULL')
+        .all(snapshot.aluno.id) as any[])
+        .map((d) => ({ caminho: d.caminho, tipo: tipoDocumentoMec(d.nome ?? '') }));
+      xml = gerarDocumentacaoAcademicaXml(snapshot, docs);
+    }
+    if (!xml) {
+      auditar(diplomaId, `geracao_xml_${artefato}`, 'erro_geracao');
+      return { ok: false, error: 'Falha ao montar o XML (dados insuficientes — verifique as pendências).' };
+    }
+
+    // 3) VALIDA contra o XSD oficial — inválido NÃO continua
+    const artefatoXsd: ArtefatoXsd = artefato === 'historico_escolar' ? 'historicoEscolar' : 'documentacaoAcademica';
+    let validacao: ResultadoValidacao;
+    try {
+      validacao = await validarXmlContraXsd(xml, artefatoXsd);
+    } catch (e: any) {
+      logger.error({ err: e?.message, diplomaId }, 'Validador XSD falhou');
+      return { ok: false, error: 'Falha ao executar a validação XSD: ' + (e?.message ?? '') };
+    }
+
+    // 4) PERSISTE (arquivo local + registro + status + auditoria) em qualquer resultado
+    const nomeArquivo = artefato === 'historico_escolar' ? 'historico-escolar-digital.xml' : 'documentacao-academica-registro.xml';
+    const dir = path.join(app.getPath('userData'), 'diplomas-digitais', String(diplomaId));
+    fs.mkdirSync(dir, { recursive: true });
+    const localPath = path.join(dir, nomeArquivo);
+    fs.writeFileSync(localPath, xml, 'utf8');
+    const { createHash } = await import('node:crypto');
+    const hash = createHash('sha256').update(xml, 'utf8').digest('hex');
+
+    const storagePath = await subirXmlStorage(diplomaId, nomeArquivo, xml);
+
+    // Persiste chaves/códigos na 1ª geração
+    if (artefato === 'historico_escolar' && !snapshot.processo?.codigo_validacao_historico) {
+      const m = /<CodigoValidacao>([^<]+)<\/CodigoValidacao>/.exec(xml);
+      if (m) db.prepare('UPDATE diplomas_digitais SET codigo_validacao_historico = ? WHERE id = ?').run(m[1], diplomaId);
+    }
+    if (artefato === 'documentacao_academica' && !snapshot.processo?.chave_acesso) {
+      const m = /<DadosDiploma id="Dip([0-9]{44})"/.exec(xml);
+      if (m) db.prepare('UPDATE diplomas_digitais SET chave_acesso = ? WHERE id = ?').run(`Dip${m[1]}`, diplomaId);
+    }
+
+    const info = db
+      .prepare(
+        `INSERT INTO diploma_arquivos (diploma_id, tipo_arquivo, nome, caminho_storage, hash, versao_schema, valido_xsd, erros_validacao_json)
+         VALUES (?, ?, ?, ?, ?, '1.05', ?, ?)`
+      )
+      .run(diplomaId, artefato, nomeArquivo, storagePath ?? localPath, hash, validacao.valido ? 1 : 0, JSON.stringify(validacao.erros));
+
+    const novoStatus = validacao.valido ? 'aguardando_assinatura' : 'xml_invalido';
+    db.prepare('UPDATE diplomas_digitais SET status = ?, updated_at = datetime(\'now\') WHERE id = ?').run(novoStatus, diplomaId);
+    auditar(diplomaId, `geracao_xml_${artefato}`, validacao.valido ? 'sucesso' : 'xml_invalido', {
+      erros: validacao.valido ? undefined : validacao.erros.slice(0, 10),
+    });
+
+    if (!validacao.valido) {
+      return {
+        ok: false,
+        error: `XML gerado porém INVÁLIDO contra o XSD ${validacao.versaoSchema}. Correção necessária antes de prosseguir.\n` +
+          validacao.erros.slice(0, 5).join('\n'),
+      };
+    }
+    return { ok: true, data: { valido: true, erros: [], arquivoId: info.lastInsertRowid as number } };
+  })();
+}
+
 export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR, requerAuth(listar));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR_APTOS, requerAuth(listarAptos));
@@ -378,4 +515,5 @@ export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.IES_SALVAR, requerAdmin(iesSalvar));
   ipcMain.handle(IPC_CHANNELS.CURSO_GRADUACAO_LISTAR, requerAuth(cursoGraduacaoListar));
   ipcMain.handle(IPC_CHANNELS.CURSO_GRADUACAO_SALVAR, requerAdmin(cursoGraduacaoSalvar));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_XML, requerAuth(gerarXmlHandler));
 }

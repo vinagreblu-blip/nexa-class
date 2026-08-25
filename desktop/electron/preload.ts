@@ -154,6 +154,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PENDENCIAS, alunoId),
     completarAluno: (input: any): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_COMPLETAR_ALUNO, input),
+    gerarXml: (id: number, artefato: string): Promise<ApiResult<any>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_XML, id, artefato),
     iesListar: (): Promise<ApiResult<any[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.IES_LISTAR),
     iesSalvar: (input: any): Promise<ApiResult<any>> =>
