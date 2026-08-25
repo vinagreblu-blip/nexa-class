@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado } from './assinatura-erros';
+import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado, erroChaveInacessivel } from './assinatura-erros';
 
 describe('traduzirErroA3', () => {
   it('timeout vem ANTES do ramo genérico de PIN (mensagem da falha real)', () => {
@@ -56,5 +56,13 @@ describe('mensagens de pré-check', () => {
   it('erroCertificadoExpirado informa a data de validade', () => {
     expect(erroCertificadoExpirado('20/10/2025')).toMatch(/20\/10\/2025/);
     expect(erroCertificadoExpirado('20/10/2025')).toMatch(/EXPIRADO/i);
+  });
+
+  it('erroChaveInacessivel orienta conectar o token nesta máquina', () => {
+    const r = erroChaveInacessivel();
+    expect(r).toMatch(/chave privada/i);
+    expect(r).toMatch(/nesta máquina/i);
+    expect(r).toMatch(/Conecte o token USB/i);
+    expect(r).toMatch(/middleware/i);
   });
 });

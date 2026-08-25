@@ -85,3 +85,19 @@ export function erroCertificadoExpirado(validoAte: string): string {
     'Renove o certificado com a autoridade certificadora (ex.: AC Link/SESCAP) e reimporte em Assinatura Digital.'
   );
 }
+
+/**
+ * Mensagem de erro de chave privada inacessível no pré-check: o certificado
+ * EXISTE no store (ex.: sobrou de quando o token esteve conectado), mas o
+ * Windows não consegue abrir a chave — token desconectado nesta máquina ou
+ * middleware do fabricante ausente/travado. Sem isso, a assinatura falhava
+ * com timeout mudo de 3 minutos.
+ */
+export function erroChaveInacessivel(): string {
+  return (
+    'Certificado encontrado, mas a chave privada do token NÃO está acessível nesta máquina.\n' +
+    'Conecte o token USB neste computador e tente novamente — um certificado A3 só assina onde o token está conectado.\n' +
+    'Se o token já está conectado: verifique se o middleware do fabricante (Safenet, Pronova, Gemalto, Watchdata…) está instalado; ' +
+    'se persistir, reinicie o computador com o token conectado.'
+  );
+}

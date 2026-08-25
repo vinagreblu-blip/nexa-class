@@ -9,7 +9,7 @@ import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { requerAuth } from './auth';
 import { logger } from '../utils/logger';
-import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado } from '../assinatura-erros';
+import { traduzirErroA3, erroCertificadoAusente, erroCertificadoExpirado, erroChaveInacessivel } from '../assinatura-erros';
 
 // Re-export para compatibilidade (pades.ts e outros importam daqui).
 export { traduzirErroA3 };
@@ -477,15 +477,17 @@ export function runPowerShellScriptAsync(
 
 
 // PowerShell: PRÉ-CHECK do certificado A3 — verifica se o thumbprint existe
-// no store DESTA máquina e se está dentro da validade. Só lê propriedades do
-// certificado (não toca a chave, não pede PIN, não assina). Serve para falhar
+// no store DESTA máquina, se está dentro da validade e se a chave privada
+// ABRE (adquire o contexto do CSP/KSP sem pedir PIN — mesmo teste do
+// PS_LISTAR_A3). Token desconectado => chave inacessível em segundos; sem
+// isso a assinatura falhava com timeout mudo de 3 minutos. Serve para falhar
 // rápido com mensagem clara quando o token/certificado está em outra máquina
 // ou o certificado venceu — em vez de travar 3 minutos esperando o PIN.
 const PS_PRECHECK_A3 = `
 param([string]$Thumbprint, [string]$OutFile)
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
-$result = [ordered]@{ Encontrado = $false; Subject = ''; NotBefore = ''; NotAfter = ''; Store = '' }
+$result = [ordered]@{ Encontrado = $false; Subject = ''; NotBefore = ''; NotAfter = ''; Store = ''; KeyAcessivel = $false }
 $locs = @('CurrentUser', 'LocalMachine')
 foreach ($locName in $locs) {
   $loc = [System.Security.Cryptography.X509Certificates.StoreLocation]::$locName
@@ -499,6 +501,16 @@ foreach ($locName in $locs) {
         $result.NotBefore = $c.NotBefore.ToString('o')
         $result.NotAfter = $c.NotAfter.ToString('o')
         $result.Store = $locName
+        # Testa abrir a chave (RSA OU ECDsa, fallback PrivateKey) — só adquire
+        # o handle do CSP/KSP, não pede PIN e não assina. Token desconectado
+        # ou middleware ausente => $null/false em segundos.
+        try {
+          $k = $null
+          try { $k = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($c) } catch { $k = $null }
+          if ($null -eq $k) { try { $k = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) } catch { $k = $null } }
+          if ($null -eq $k) { try { $k = $c.PrivateKey } catch { $k = $null } }
+          if ($null -ne $k) { $result.KeyAcessivel = $true; try { $k.Dispose() } catch {} }
+        } catch { $result.KeyAcessivel = $false }
         break
       }
     }
@@ -512,7 +524,7 @@ Write-Output 'OK'
 `.trim();
 
 export interface PrecheckA3 {
-  status: 'ok' | 'nao-encontrado' | 'expirado' | 'erro';
+  status: 'ok' | 'nao-encontrado' | 'expirado' | 'chave-inacessivel' | 'erro';
   /** Mensagem de erro pronta para exibir (quando status != 'ok'). */
   erro?: string;
   validoAte?: string;
@@ -520,8 +532,9 @@ export interface PrecheckA3 {
 
 /**
  * Valida o certificado A3 ANTES de qualquer operação de assinatura: existe no
- * store desta máquina? está válido? Retorna erro claro em ~20s no pior caso,
- * em vez do timeout mudo de 3 minutos quando o token está em outra máquina.
+ * store desta máquina? está válido? a chave privada abre (token conectado)?
+ * Retorna erro claro em ~20s no pior caso, em vez do timeout mudo de 3 minutos
+ * quando o token está em outra máquina ou desconectado.
  */
 export async function precheckCertificadoA3(thumbprint: string): Promise<PrecheckA3> {
   const outFile = path.join(os.tmpdir(), `nexa_precheck_a3_${Date.now()}_${Math.random().toString(36).slice(2)}.json`);
@@ -538,6 +551,12 @@ export async function precheckCertificadoA3(thumbprint: string): Promise<Prechec
     const validoAteFmt = notAfter ? notAfter.slice(0, 10).split('-').reverse().join('/') : 'desconhecida';
     if (notAfter && new Date(notAfter).getTime() < Date.now()) {
       return { status: 'expirado', erro: erroCertificadoExpirado(validoAteFmt), validoAte: validoAteFmt };
+    }
+    // Certificado existe e está válido, mas a chave não abre: token desconectado
+    // nesta máquina (sobra do store) ou middleware ausente/travado. Sem isso a
+    // assinatura esperava o PIN por 3 minutos e morria em timeout.
+    if (p.KeyAcessivel !== true) {
+      return { status: 'chave-inacessivel', erro: erroChaveInacessivel(), validoAte: validoAteFmt };
     }
     return { status: 'ok', validoAte: validoAteFmt };
   } catch (e: any) {
