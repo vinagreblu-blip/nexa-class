@@ -40,26 +40,22 @@ export function extrairDadosDiploma(xmlDaAssinada: string): string | null {
 }
 
 /**
- * Monta o Diploma final. @xmlDaAssinada = XML da Documentação
- * Acadêmica com a assinatura real da emissora (dadosDiploma extraído
- * de lá, byte-idêntico). @registradora = linha da tabela ies com
- * papel de registradora (dados oficiais completos).
+ * Bloco IES Registradora (TDadosIesRegistradora — exige mantenedora).
+ * @param tag nome do elemento no leiaute-alvo: 'IesRegistradora'
+ * (Diploma final) ou 'IESRegistradora' (Lista Anulados — o leiaute
+ * oficial usa grafia diferente!).
  */
-export function gerarDiplomaFinalXml(
-  s: SnapshotDiploma,
-  xmlDaAssinada: string,
-  registro: DadosRegistroRetorno,
-  registradora: any,
-  chaveVdip: string,
-  chaveRdip: string
-): string | null {
-  const dadosDiploma = extrairDadosDiploma(xmlDaAssinada);
-  if (!dadosDiploma) return null;
-
+export function blocoIesRegistradoraCompleta(registradora: any, tag = 'IesRegistradora'): string | null {
   const cnpjReg = normalizarCnpj(registradora?.cnpj);
   const credReg = blocoAto(registradora?.credenciamento_json, 'Credenciamento');
   const recredReg = blocoAto(registradora?.recredenciamento_json, 'Recredenciamento');
   const atoReg = blocoAto(registradora?.ato_autorizacao_registro_json, 'AtoRegulatorioAutorizacaoRegistro');
+  const endReg = blocoEndereco({
+    logradouro: registradora?.logradouro, numero: registradora?.numero,
+    complemento: registradora?.complemento, bairro: registradora?.bairro,
+    codigoMunicipio: registradora?.codigo_municipio,
+    nomeMunicipio: registradora?.nome_municipio, uf: registradora?.uf, cep: registradora?.cep,
+  });
   let mantenedora: string | null = null;
   if (registradora?.mantenedora_json) {
     try {
@@ -77,13 +73,40 @@ export function gerarDiplomaFinalXml(
       }
     } catch { /* ignora JSON inválido */ }
   }
-  const endReg = blocoEndereco({
-    logradouro: registradora?.logradouro, numero: registradora?.numero,
-    complemento: registradora?.complemento, bairro: registradora?.bairro,
-    codigoMunicipio: registradora?.codigo_municipio,
-    nomeMunicipio: registradora?.nome_municipio, uf: registradora?.uf, cep: registradora?.cep,
-  });
   if (!cnpjReg || !credReg || !endReg || !mantenedora) return null;
+  return (
+    `<${tag}>` +
+    el('Nome', registradora.nome) +
+    el('CodigoMEC', registradora.codigo_emec) +
+    el('CNPJ', cnpjReg) +
+    `<Endereco>${endReg}</Endereco>` +
+    credReg +
+    (recredReg ?? '') +
+    (atoReg ?? '') +
+    mantenedora +
+    `</${tag}>`
+  );
+}
+
+/**
+ * Monta o Diploma final. @xmlDaAssinada = XML da Documentação
+ * Acadêmica com a assinatura real da emissora (dadosDiploma extraído
+ * de lá, byte-idêntico). @registradora = linha da tabela ies com
+ * papel de registradora (dados oficiais completos).
+ */
+export function gerarDiplomaFinalXml(
+  s: SnapshotDiploma,
+  xmlDaAssinada: string,
+  registro: DadosRegistroRetorno,
+  registradora: any,
+  chaveVdip: string,
+  chaveRdip: string
+): string | null {
+  const dadosDiploma = extrairDadosDiploma(xmlDaAssinada);
+  if (!dadosDiploma) return null;
+
+  const iesReg = blocoIesRegistradoraCompleta(registradora, 'IesRegistradora');
+  if (!iesReg) return null;
 
   const a = s.aluno;
   const colacao = normalizarData(a?.data_colacao);
@@ -116,16 +139,7 @@ export function gerarDiplomaFinalXml(
 
   const dadosRegistro =
     elAttrs('DadosRegistro', { id: chaveRdip },
-      '<IesRegistradora>' +
-      el('Nome', registradora.nome) +
-      el('CodigoMEC', registradora.codigo_emec) +
-      el('CNPJ', cnpjReg) +
-      `<Endereco>${endReg}</Endereco>` +
-      credReg +
-      (recredReg ?? '') +
-      (atoReg ?? '') +
-      mantenedora +
-      '</IesRegistradora>' +
+      iesReg +
       livroRegistro +
       el('IdDocumentacaoAcademica', reqDip) +
       '<Seguranca>' + el('CodigoValidacao', registro.codigoValidacao) + '</Seguranca>' +

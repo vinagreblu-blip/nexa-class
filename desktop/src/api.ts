@@ -212,7 +212,12 @@ export interface DesktopApi {
       informacoesAdicionais?: string;
     }) => Promise<ApiResult<{ valido: boolean }>>;
     publicar: (id: number) => Promise<ApiResult<true>>;
-    anular: (id: number, motivo: string, senhaMaster: string) => Promise<ApiResult<true>>;
+    anular: (id: number, motivo: string, senhaMaster: string, anotacao?: string) => Promise<ApiResult<true>>;
+    gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }) => Promise<ApiResult<{ salvoPath: string; anulados: number }>>;
+    gerarRvdd: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+    gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }) => Promise<ApiResult<{ salvoPath: string; diplomas: number }>>;
+    abrirValidadorMec: () => Promise<ApiResult<true>>;
+    registrarValidacaoMec: (id: number, resultado: 'valido' | 'invalido', observacoes?: string) => Promise<ApiResult<true>>;
     iesListar: () => Promise<ApiResult<any[]>>;
     iesSalvar: (input: any) => Promise<ApiResult<any>>;
     cursoGraduacaoListar: (iesId?: number) => Promise<ApiResult<any[]>>;

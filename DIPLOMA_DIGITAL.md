@@ -1,8 +1,9 @@
 # DIPLOMA DIGITAL MEC — Documentação Técnica do Módulo
 
-> Estado: **M1–M4 concluídos** (fundação; UI+sync; geração/validação XML;
-> assinatura real + registro + consulta pública + anulação). M5 pendente
-> (ListaDiplomasAnulados, ArquivoFiscalização, RVDD/PDF-A, validador MEC).
+> Estado: **M1–M5 concluídos** — módulo completo: fundação, UI+sync,
+> geração/validação XML oficial, assinatura real + registro + consulta
+> pública, relatórios oficiais (Lista Anulados/Fiscalização), RVDD e
+> registro de validação manual no validador oficial do MEC.
 
 Este documento descreve a arquitetura do módulo de **Diploma Digital de
 graduação** conforme a especificação oficial do MEC (Sesu), que **substitui o
@@ -121,7 +122,7 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
 - **M3** ✅ Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
 - **M4** ✅ Assinatura XAdES-BES real (A1) / XMLDSig real (A3 token), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
-- **M5** Anulação em lote/ListaDiplomasAnulados (XML), ArquivoFiscalização, RVDD (PDF/A), validador oficial MEC no pipeline
+- **M5** ✅ ListaDiplomasAnulados (XML oficial, XSD-válido), ArquivoFiscalização (signed URLs https), RVDD (PDF+QR), validação manual no validador oficial MEC
 
 ### Detalhe do M3 (implementado)
 
@@ -179,6 +180,35 @@ já emitidos (`versao_schema` por diploma/arquivo).
   apagados.
 - **Nuvem**: `supabase-diploma-digital.sql` atualizado (chave_req,
   ato_autorizacao_registro_json — reaplicar).
+
+### Detalhe do M5 (implementado)
+
+- **Lista de Diplomas Anulados** (`gerar-lista-anulados.ts`): XML oficial
+  `ListaDiplomasAnulados` com NumeroDeSequencia + IESRegistradora completa +
+  anulados (código `eMEC.eMEC.hex`, data, **motivo da enumeração oficial
+  TMotivoAnulacao** — fora do enum rejeita — e anotação opcional) +
+  DataMaximaProximaAtualizacao. A assinatura fica ESQUELETO: quem assina é
+  a REGISTRADORA. **Valida contra o XSD oficial** (testes).
+- **Arquivo de Fiscalização** (`gerar-arquivo-fiscalizacao.ts`): XML oficial
+  `ArquivoFiscalizacao` (variante emissora) por período: cada diploma
+  registrado entra com CodigoDiploma, CPFDetentor, e-MEC do curso e **URLs
+  https** (THttpsURL obrigatório) — signed URLs do Supabase Storage (7 dias
+  de validade; limitação documentada). Sem RVDD gerada ou sem nuvem → o
+  diploma NÃO entra (anti-invenção). **Valida contra o XSD oficial**.
+- **RVDD** (`gerar-rvdd.ts`): PDF visual (pdfkit) com dados oficiais + QR
+  apontando para a consulta pública `/d/:codigo` + chave de acesso VDip.
+  Gravada no bucket privado (alimenta a URLRVDD da fiscalização).
+  **Pendência de conformidade**: PDF/A-1b não afirmado — exige OutputIntent
+  ICC + verificação veraPDF (registrado em `diploma_arquivos` com
+  `valido_xsd=NULL` e nota da pendência).
+- **Validador oficial MEC**: botão abre
+  `verificadordiplomadigital.mec.gov.br/diploma`; o resultado da conferência
+  MANUAL é registrado em `validado_mec_em` + auditoria (o app não integra
+  com o validador do MEC — a conformidade estrutural é uma etapa, e a
+  conferência oficial fica registrada como trilha).
+- **Anulação**: motivo passou a usar a enumeração oficial (6 motivos) +
+  anotação opcional; colunas `anotacao_anulacao`/`validado_mec_em`
+  (SQLite + Postgres).
 
 ### Detalhe do M2 (implementado)
 

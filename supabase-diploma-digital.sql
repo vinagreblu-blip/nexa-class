@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS diplomas_digitais (
   dados_registro_json JSONB,
   certidao_id BIGINT REFERENCES declaracoes(id),
   motivo_anulacao TEXT,
+  anotacao_anulacao TEXT,
+  validado_mec_em TEXT,
   anulado_em TIMESTAMPTZ,
   anulado_por BIGINT,
   criado_por BIGINT NOT NULL,
@@ -124,12 +126,14 @@ CREATE TABLE IF NOT EXISTS auditoria_diploma (
 CREATE INDEX IF NOT EXISTS idx_auditoria_diploma ON auditoria_diploma(diploma_id);
 
 -- ---------------------------------------------------------
--- 1.1) Migração de colunas adicionais (M3/M4 — idempotente)
+-- 1.1) Migração de colunas adicionais (M3/M4/M5 — idempotente)
 -- ---------------------------------------------------------
 ALTER TABLE ies ADD COLUMN IF NOT EXISTS ato_autorizacao_registro_json JSONB;
 ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS chave_req TEXT;
 ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS codigo_validacao_historico TEXT;
 ALTER TABLE cursos ADD COLUMN IF NOT EXISTS carga_horaria TEXT;
+ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS anotacao_anulacao TEXT;
+ALTER TABLE diplomas_digitais ADD COLUMN IF NOT EXISTS validado_mec_em TEXT;
 
 -- ---------------------------------------------------------
 -- 2) RLS: mesmo padrão das tabelas operacionais (só authenticated)

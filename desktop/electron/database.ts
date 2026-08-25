@@ -417,6 +417,8 @@ function createSchema(): void {
       dados_registro_json TEXT,
       certidao_id INTEGER,
       motivo_anulacao TEXT,
+      anotacao_anulacao TEXT,
+      validado_mec_em TEXT,
       anulado_em TEXT,
       anulado_por INTEGER,
       criado_por INTEGER NOT NULL,
@@ -506,6 +508,8 @@ function migrateDiplomasDigitais(): void {
   addCol('cursos', 'carga_horaria', 'carga_horaria TEXT');
   addCol('diplomas_digitais', 'codigo_validacao_historico', 'codigo_validacao_historico TEXT');
   addCol('diplomas_digitais', 'chave_req', 'chave_req TEXT');
+  addCol('diplomas_digitais', 'anotacao_anulacao', 'anotacao_anulacao TEXT');
+  addCol('diplomas_digitais', 'validado_mec_em', 'validado_mec_em TEXT');
   addCol('ies', 'ato_autorizacao_registro_json', 'ato_autorizacao_registro_json TEXT');
   addCol('alunos', 'mae_nome', 'mae_nome TEXT');
   addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');

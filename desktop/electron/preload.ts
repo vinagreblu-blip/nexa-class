@@ -162,8 +162,18 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR, id, registro),
     publicar: (id: number): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PUBLICAR, id),
-    anular: (id: number, motivo: string, senhaMaster: string): Promise<ApiResult<true>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ANULAR, id, motivo, senhaMaster),
+    anular: (id: number, motivo: string, senhaMaster: string, anotacao?: string): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ANULAR, id, motivo, senhaMaster, anotacao),
+    gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }): Promise<ApiResult<{ salvoPath: string; anulados: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_LISTA_ANULADOS, input),
+    gerarRvdd: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_RVDD, id),
+    gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }): Promise<ApiResult<{ salvoPath: string; diplomas: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, input),
+    abrirValidadorMec: (): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC),
+    registrarValidacaoMec: (id: number, resultado: string, observacoes?: string): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC, id, resultado, observacoes),
     iesListar: (): Promise<ApiResult<any[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.IES_LISTAR),
     iesSalvar: (input: any): Promise<ApiResult<any>> =>

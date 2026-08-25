@@ -68,6 +68,7 @@ export function DiplomasDigitais() {
   const [modalAbrir, setModalAbrir] = useState(false);
   const [modalInstitucional, setModalInstitucional] = useState(false);
   const [detalheId, setDetalheId] = useState<number | null>(null);
+  const [modalRelatorios, setModalRelatorios] = useState(false);
 
   const carregar = useCallback(async () => {
     const r = await api.diplomasDigitais.listar(buscaDebounced || undefined);
@@ -103,9 +104,14 @@ export function DiplomasDigitais() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           {usuario?.role === 'admin' && (
-            <button className="btn-ghost" onClick={() => setModalInstitucional(true)}>
-              Cadastro Institucional
-            </button>
+            <>
+              <button className="btn-ghost" onClick={() => setModalInstitucional(true)}>
+                Cadastro Institucional
+              </button>
+              <button className="btn-ghost" onClick={() => setModalRelatorios(true)}>
+                RelatÃ³rios Oficiais
+              </button>
+            </>
           )}
           <button className="btn-primary" onClick={() => setModalAbrir(true)}>
             + Abrir Processo
@@ -200,6 +206,13 @@ export function DiplomasDigitais() {
             void carregar();
           }}
           onErro={flashErro}
+        />
+      )}
+      {modalRelatorios && (
+        <ModalRelatoriosOficiais
+          onClose={() => setModalRelatorios(false)}
+          onErro={flashErro}
+          onOk={flashOk}
         />
       )}
       {detalheId != null && <ModalDetalhe id={detalheId} onClose={() => setDetalheId(null)} />}
@@ -506,6 +519,36 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     await carregar();
   };
 
+  const gerarRvddLocal = async () => {
+    setGerando('rvdd');
+    setMsg(null);
+    const r = await api.diplomasDigitais.gerarRvdd(id);
+    setGerando(null);
+    if (r.ok) {
+      setMsg({
+        tipo: 'ok',
+        texto: `RVDD gerada em "${r.data?.salvoPath}". PendÃªncia de conformidade: PDF/A-1b requer verificaÃ§Ã£o veraPDF (documentado em DIPLOMA_DIGITAL.md).`,
+      });
+    } else {
+      setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao gerar RVDD' });
+    }
+    await carregar();
+  };
+
+  const registrarValidacaoMec = async () => {
+    const resultado = window.confirm(
+      'ApÃ³s colar o XML no validador oficial do MEC (verificadordiplomadigital.mec.gov.br):\n\nOK = o validador aceitou o documento\nCancelar = o validador rejeitou\n\nRegistre somente apÃ³s conferir.'
+    ) ? 'valido' : 'invalido';
+    const obs = window.prompt('ObservaÃ§Ãµes da validaÃ§Ã£o (opcional):') ?? undefined;
+    const r = await api.diplomasDigitais.registrarValidacaoMec(id, resultado, obs);
+    if (r.ok) {
+      setMsg({ tipo: resultado === 'valido' ? 'ok' : 'erro', texto: `Resultado da validaÃ§Ã£o manual no MEC registrado: ${resultado === 'valido' ? 'VÃLIDO' : 'INVÃLIDO'} (auditoria).` });
+    } else {
+      setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao registrar' });
+    }
+    await carregar();
+  };
+
   const carregar = useCallback(async () => {
     const r = await api.diplomasDigitais.obter(id);
     if (r.ok && r.data) setDados(r.data);
@@ -576,6 +619,29 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
           <button className="btn-primary btn-sm" disabled={gerando !== null} onClick={() => void publicar()}>
             {gerando === 'publicar' ? 'Publicandoâ€¦' : 'Publicar consulta pÃºblica'}
           </button>
+        )}
+        {['registrado', 'publicado'].includes(dados.status) && (
+          <button className="btn-ghost btn-sm" disabled={gerando !== null} onClick={() => void gerarRvddLocal()}>
+            {gerando === 'rvdd' ? 'Gerando RVDDâ€¦' : 'Gerar RVDD (PDF)'}
+          </button>
+        )}
+        {dados.validado_mec_em ? (
+          <span className="badge" style={{ color: dados.validado_mec_em.startsWith('INVALIDO') ? '#b91c1c' : '#15803d', background: 'rgba(22,163,74,.12)', alignSelf: 'center' }}>
+            Validador MEC: {dados.validado_mec_em.startsWith('INVALIDO') ? 'invÃ¡lido' : 'ok'}
+          </span>
+        ) : (
+          <>
+            <button className="btn-ghost btn-sm" onClick={() => void api.diplomasDigitais.abrirValidadorMec()}>
+              Validador oficial MEC â†—
+            </button>
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => void registrarValidacaoMec()}
+              title="ApÃ³s conferir manualmente no validador do MEC, registre o resultado"
+            >
+              Registrar validaÃ§Ã£o MEC
+            </button>
+          </>
         )}
         {usuario?.role === 'admin' && !['anulado', 'cancelado'].includes(dados.status) && (
           <button className="btn-danger btn-sm" onClick={() => setModalAnular(true)}>
@@ -1038,7 +1104,7 @@ function ModalRegistro({
 
   const salvar = async () => {
     if (!form.livro || !form.dataExpedicaoDiploma || !form.dataRegistroDiploma || !form.respNome || !form.respCpf || !form.codigoValidacao) {
-      onErro('Preencha livro, datas, responsável e o código de validação oficial.');
+      onErro('Preencha livro, datas, responsï¿½vel e o cï¿½digo de validaï¿½ï¿½o oficial.');
       return;
     }
     setSalvando(true);
@@ -1059,31 +1125,31 @@ function ModalRegistro({
   };
 
   return (
-    <Modal title="Registrar Diploma — retorno da IES Registradora" onClose={onClose} width={720}>
+    <Modal title="Registrar Diploma ï¿½ retorno da IES Registradora" onClose={onClose} width={720}>
       <div className="alert alert-warning" style={{ marginBottom: 12 }}>
-        Preencha com o <strong>retorno oficial da Registradora</strong> (livro, registro, datas, responsável e código de
-        validação). Nada é pré-preenchido: o sistema nunca assina nem registra por conta da registradora.
+        Preencha com o <strong>retorno oficial da Registradora</strong> (livro, registro, datas, responsï¿½vel e cï¿½digo de
+        validaï¿½ï¿½o). Nada ï¿½ prï¿½-preenchido: o sistema nunca assina nem registra por conta da registradora.
       </div>
       <div className="form-grid">
         <div><label style={labelStyle}>Livro *</label><input value={form.livro} onChange={(e) => set('livro', e.target.value)} /></div>
-        <div><label style={labelStyle}>Nº de registro</label><input value={form.numeroRegistro} onChange={(e) => set('numeroRegistro', e.target.value)} placeholder="ou use folha+sequência" /></div>
-        <div><label style={labelStyle}>Folha (se sem nº registro)</label><input value={form.numeroFolha} onChange={(e) => set('numeroFolha', e.target.value)} disabled={!!form.numeroRegistro} /></div>
-        <div><label style={labelStyle}>Sequência (se sem nº registro)</label><input value={form.numeroSequencia} onChange={(e) => set('numeroSequencia', e.target.value)} disabled={!!form.numeroRegistro} /></div>
+        <div><label style={labelStyle}>Nï¿½ de registro</label><input value={form.numeroRegistro} onChange={(e) => set('numeroRegistro', e.target.value)} placeholder="ou use folha+sequï¿½ncia" /></div>
+        <div><label style={labelStyle}>Folha (se sem nï¿½ registro)</label><input value={form.numeroFolha} onChange={(e) => set('numeroFolha', e.target.value)} disabled={!!form.numeroRegistro} /></div>
+        <div><label style={labelStyle}>Sequï¿½ncia (se sem nï¿½ registro)</label><input value={form.numeroSequencia} onChange={(e) => set('numeroSequencia', e.target.value)} disabled={!!form.numeroRegistro} /></div>
         <div><label style={labelStyle}>Processo do diploma</label><input value={form.processoDiploma} onChange={(e) => set('processoDiploma', e.target.value)} /></div>
-        <div><label style={labelStyle}>Data expedição (AAAA-MM-DD) *</label><input value={form.dataExpedicaoDiploma} onChange={(e) => set('dataExpedicaoDiploma', e.target.value)} placeholder="2026-08-25" /></div>
+        <div><label style={labelStyle}>Data expediï¿½ï¿½o (AAAA-MM-DD) *</label><input value={form.dataExpedicaoDiploma} onChange={(e) => set('dataExpedicaoDiploma', e.target.value)} placeholder="2026-08-25" /></div>
         <div><label style={labelStyle}>Data registro (AAAA-MM-DD) *</label><input value={form.dataRegistroDiploma} onChange={(e) => set('dataRegistroDiploma', e.target.value)} placeholder="2026-08-25" /></div>
-        <div><label style={labelStyle}>Responsável — nome *</label><input value={form.respNome} onChange={(e) => set('respNome', e.target.value)} /></div>
-        <div><label style={labelStyle}>Responsável — CPF (11 díg.) *</label><input value={form.respCpf} onChange={(e) => set('respCpf', e.target.value)} /></div>
-        <div><label style={labelStyle}>Responsável — matrícula</label><input value={form.respMatricula} onChange={(e) => set('respMatricula', e.target.value)} /></div>
+        <div><label style={labelStyle}>Responsï¿½vel ï¿½ nome *</label><input value={form.respNome} onChange={(e) => set('respNome', e.target.value)} /></div>
+        <div><label style={labelStyle}>Responsï¿½vel ï¿½ CPF (11 dï¿½g.) *</label><input value={form.respCpf} onChange={(e) => set('respCpf', e.target.value)} /></div>
+        <div><label style={labelStyle}>Responsï¿½vel ï¿½ matrï¿½cula</label><input value={form.respMatricula} onChange={(e) => set('respMatricula', e.target.value)} /></div>
         <div className="full">
-          <label style={labelStyle}>Código de validação oficial * (eMEC-emissora.eMEC-registradora.hex — retornado pela registradora)</label>
+          <label style={labelStyle}>Cï¿½digo de validaï¿½ï¿½o oficial * (eMEC-emissora.eMEC-registradora.hex ï¿½ retornado pela registradora)</label>
           <input value={form.codigoValidacao} onChange={(e) => set('codigoValidacao', e.target.value)} placeholder="1234.5678.abcdef0123456789" style={{ fontFamily: 'monospace' }} />
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
         <button className="btn-ghost" onClick={onClose}>Cancelar</button>
         <button className="btn-primary" disabled={salvando} onClick={() => void salvar()}>
-          {salvando ? 'Montando e validando…' : 'Registrar e montar Diploma final'}
+          {salvando ? 'Montando e validandoï¿½' : 'Registrar e montar Diploma final'}
         </button>
       </div>
     </Modal>
@@ -1091,7 +1157,7 @@ function ModalRegistro({
 }
 
 // ============================================================
-// Modal: Anulação (admin + senha master; soft — nunca apaga)
+// Modal: Anulaï¿½ï¿½o (admin + senha master; soft ï¿½ nunca apaga)
 // ============================================================
 
 function ModalAnular({
@@ -1106,12 +1172,22 @@ function ModalAnular({
   onErro: (msg: string) => void;
 }) {
   const [motivo, setMotivo] = useState('');
+  const [anotacao, setAnotacao] = useState('');
   const [senha, setSenha] = useState('');
   const [anulando, setAnulando] = useState(false);
 
+  const MOTIVOS = [
+    'Erro de Fato',
+    'Erro de Direito',
+    'DecisÃ£o Judicial',
+    'ReemissÃ£o para Complemento de InformaÃ§Ã£o',
+    'ReemissÃ£o para InclusÃ£o de HabilitaÃ§Ã£o',
+    'ReemissÃ£o para AnotaÃ§ao de Registro',
+  ];
+
   const anular = async () => {
     setAnulando(true);
-    const r = await api.diplomasDigitais.anular(id, motivo, senha);
+    const r = await api.diplomasDigitais.anular(id, motivo, senha, anotacao || undefined);
     setAnulando(false);
     if (r.ok) await onAnulado();
     else onErro(r.error ?? 'Falha ao anular');
@@ -1120,13 +1196,21 @@ function ModalAnular({
   return (
     <Modal title="Anular Diploma Digital" onClose={onClose} width={560}>
       <div className="alert alert-error" style={{ marginBottom: 12 }}>
-        A anulação é permanente no fluxo, mas <strong>nunca apaga</strong> o processo: documento, motivo, data, usuário e
-        auditoria ficam preservados (exigência oficial). Confirme com a senha master.
+        A anulaÃ§Ã£o Ã© permanente no fluxo, mas <strong>nunca apaga</strong> o processo: documento, motivo, data, usuÃ¡rio e
+        auditoria ficam preservados (exigÃªncia oficial). O motivo usa a enumeraÃ§Ã£o oficial do MEC (alimenta a Lista de
+        Diplomas Anulados).
       </div>
       <div className="form-row" style={{ flexDirection: 'column', gap: 10 }}>
         <div style={{ width: '100%' }}>
-          <label style={labelStyle}>Motivo (mín. 10 caracteres — registrado na auditoria) *</label>
-          <textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={3} style={{ width: '100%' }} />
+          <label style={labelStyle}>Motivo oficial *</label>
+          <select value={motivo} onChange={(e) => setMotivo(e.target.value)} style={{ width: '100%' }}>
+            <option value="">Selecioneâ€¦</option>
+            {MOTIVOS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div style={{ width: '100%' }}>
+          <label style={labelStyle}>AnotaÃ§Ã£o (opcional â€” mÃ­n. 10 caracteres; registrada na auditoria)</label>
+          <textarea value={anotacao} onChange={(e) => setAnotacao(e.target.value)} rows={3} style={{ width: '100%' }} />
         </div>
         <div style={{ width: '100%' }}>
           <label style={labelStyle}>Senha master *</label>
@@ -1135,8 +1219,91 @@ function ModalAnular({
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
         <button className="btn-ghost" onClick={onClose}>Cancelar</button>
-        <button className="btn-danger" disabled={anulando || motivo.trim().length < 10 || !senha} onClick={() => void anular()}>
-          {anulando ? 'Anulando…' : 'Anular diploma'}
+        <button className="btn-danger" disabled={anulando || !motivo || !senha} onClick={() => void anular()}>
+          {anulando ? 'Anulandoâ€¦' : 'Anular diploma'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ============================================================
+// Modal: Relatórios Oficiais (Lista Anulados / Fiscalização)
+// ============================================================
+
+function ModalRelatoriosOficiais({
+  onClose,
+  onErro,
+  onOk,
+}: {
+  onClose: () => void;
+  onErro: (m: string) => void;
+  onOk: (m: string) => void;
+}) {
+  const [seq, setSeq] = useState('1');
+  const [dataMax, setDataMax] = useState('');
+  const [gerandoLista, setGerandoLista] = useState(false);
+  const [inicio, setInicio] = useState('');
+  const [fim, setFim] = useState('');
+  const [gerandoFisc, setGerandoFisc] = useState(false);
+
+  const gerarLista = async () => {
+    setGerandoLista(true);
+    const r = await api.diplomasDigitais.gerarListaAnulados({ numeroSequencia: Number(seq), dataMaximaProximaAtualizacao: dataMax });
+    setGerandoLista(false);
+    if (r.ok) onOk(`Lista de Diplomas Anulados gerada e VÁLIDA (XSD 1.05): ${r.data?.anulados} anulados — ${r.data?.salvoPath}. A assinatura é da IES Registradora (esqueleto preservado).`);
+    else onErro(r.error ?? 'Falha');
+  };
+
+  const gerarFisc = async () => {
+    setGerandoFisc(true);
+    const r = await api.diplomasDigitais.gerarFiscalizacao({ dataInicio: inicio, dataFim: fim });
+    setGerandoFisc(false);
+    if (r.ok) onOk(`Arquivo de Fiscalização gerado e VÁLIDO (XSD 1.05): ${r.data?.diplomas} diplomas — ${r.data?.salvoPath}. URLs assinadas do Storage expiram em 7 dias (documentado).`);
+    else onErro(r.error ?? 'Falha');
+  };
+
+  return (
+    <Modal title="Relatórios Oficiais MEC" onClose={onClose} width={640}>
+      <div style={secaoStyle}>Lista de Diplomas Anulados</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+        Gera o XML oficial com os diplomas anulados (motivos da enumeração MEC). O arquivo é preparado para a IES
+        Registradora assinar — o sistema nunca assina por ela.
+      </p>
+      <div className="form-grid">
+        <div>
+          <label style={labelStyle}>Nº de sequência *</label>
+          <input value={seq} onChange={(e) => setSeq(e.target.value.replace(/\D/g, ''))} />
+        </div>
+        <div>
+          <label style={labelStyle}>Data máx. próxima atualização (AAAA-MM-DD) *</label>
+          <input value={dataMax} onChange={(e) => setDataMax(e.target.value)} placeholder="2026-11-23" />
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 18 }}>
+        <button className="btn-primary btn-sm" disabled={gerandoLista || !seq || !dataMax} onClick={() => void gerarLista()}>
+          {gerandoLista ? 'Gerando…' : 'Gerar Lista de Anulados'}
+        </button>
+      </div>
+
+      <div style={secaoStyle}>Arquivo de Fiscalização (emissora)</div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+        Exportação para fiscalização do MEC: exige diplomas REGISTRADOS com RVDD gerada e nuvem ativa (URLs https do
+        Storage — expiram em 7 dias).
+      </p>
+      <div className="form-grid">
+        <div>
+          <label style={labelStyle}>Início do período (AAAA-MM-DD) *</label>
+          <input value={inicio} onChange={(e) => setInicio(e.target.value)} placeholder="2026-01-01" />
+        </div>
+        <div>
+          <label style={labelStyle}>Fim do período (AAAA-MM-DD) *</label>
+          <input value={fim} onChange={(e) => setFim(e.target.value)} placeholder="2026-12-31" />
+        </div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+        <button className="btn-accent btn-sm" disabled={gerandoFisc || !inicio || !fim} onClick={() => void gerarFisc()}>
+          {gerandoFisc ? 'Gerando…' : 'Gerar Arquivo de Fiscalização'}
         </button>
       </div>
     </Modal>

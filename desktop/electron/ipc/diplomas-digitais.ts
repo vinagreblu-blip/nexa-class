@@ -22,6 +22,9 @@ import { coletarSnapshot, pendenciasHistorico, pendenciasDA } from '../diploma-d
 import { gerarHistoricoXml } from '../diploma-digital/gerar-historico-xml';
 import { gerarDocumentacaoAcademicaXml } from '../diploma-digital/gerar-documentacao-academica';
 import { gerarDiplomaFinalXml, type DadosRegistroRetorno } from '../diploma-digital/gerar-diploma-xml';
+import { gerarListaDiplomasAnuladosXml } from '../diploma-digital/gerar-lista-anulados';
+import { gerarArquivoFiscalizacaoXml, type DiplomaFiscalizadoEntrada } from '../diploma-digital/gerar-arquivo-fiscalizacao';
+import { gerarRvddPdf } from '../diploma-digital/gerar-rvdd';
 import { assinarTodosEsqueletos, contarEsqueletos } from '../diploma-digital/xades-signer';
 import { assinarXmlA3 } from './assinatura';
 import { validarXmlContraXsd, type ArtefatoXsd, type ResultadoValidacao } from '../diploma-digital/xsd-validator';
@@ -741,12 +744,23 @@ function publicarHandler(_event: IpcMainInvokeEvent, diplomaId: number): Promise
   })();
 }
 
+/** Motivos de anulação da enumeração oficial TMotivoAnulacao (XSD v1.05). */
+export const MOTIVOS_ANULACAO_MEC = [
+  'Erro de Fato',
+  'Erro de Direito',
+  'Decisão Judicial',
+  'Reemissão para Complemento de Informação',
+  'Reemissão para Inclusão de Habilitação',
+  'Reemissão para Anotaçao de Registro',
+] as const;
+
 /** Anulação: soft — preserva documento, motivo, data e usuário. Nunca apaga. */
 function anularHandler(
   _event: IpcMainInvokeEvent,
   diplomaId: number,
   motivo: string,
-  senhaMaster: string
+  senhaMaster: string,
+  anotacao?: string
 ): ApiResult<true> {
   const sessao = getSessao();
   if (!sessao || sessao.usuario.role !== 'admin') {
@@ -755,17 +769,263 @@ function anularHandler(
   if (!validarSenhaMaster(senhaMaster, CONFIG.SENHA_EXCLUSAO_DECLARACAO_HASH)) {
     return { ok: false, error: 'Senha master incorreta.' };
   }
-  if (!motivo?.trim() || motivo.trim().length < 10) {
-    return { ok: false, error: 'Informe o motivo da anulação (mínimo 10 caracteres — fica registrado na auditoria).' };
+  if (!MOTIVOS_ANULACAO_MEC.includes(motivo as any)) {
+    return { ok: false, error: 'Motivo inválido — use um dos motivos oficiais (enumeração do MEC).' };
+  }
+  if (anotacao && anotacao.trim().length < 10) {
+    return { ok: false, error: 'Anotação da anulação deve ter ao menos 10 caracteres (ou ficar vazia).' };
   }
   const db = getDb();
   const proc = db.prepare('SELECT status FROM diplomas_digitais WHERE id = ?').get(diplomaId) as any;
   if (!proc) return { ok: false, error: 'Processo não encontrado' };
   if (proc.status === 'anulado') return { ok: false, error: 'Diploma já está anulado.' };
   db.prepare(
-    `UPDATE diplomas_digitais SET status = 'anulado', motivo_anulacao = ?, anulado_em = datetime('now'), anulado_por = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(motivo.trim(), sessao.usuario.id, diplomaId);
-  auditar(diplomaId, 'anulacao', 'sucesso', { motivo: motivo.trim() });
+    `UPDATE diplomas_digitais SET status = 'anulado', motivo_anulacao = ?, anotacao_anulacao = ?, anulado_em = datetime('now'), anulado_por = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(motivo, anotacao?.trim() || null, sessao.usuario.id, diplomaId);
+  auditar(diplomaId, 'anulacao', 'sucesso', { motivo, anotacao: anotacao?.trim() || undefined });
+  return { ok: true, data: true };
+}
+
+// ---------- M5: LISTA ANULADOS / FISCALIZAÇÃO / RVDD / VALIDADOR MEC ----------
+
+/** Signed URL (https) do arquivo no bucket privado — máximo do Supabase: 7 dias. */
+async function signedUrlStorage(caminho: string): Promise<string | null> {
+  try {
+    const client = getClient();
+    if (!client) return null;
+    const { data, error } = await client.storage
+      .from('diplomas-digitais')
+      .createSignedUrl(caminho, 604800);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl;
+  } catch {
+    return null;
+  }
+}
+
+/** Gera a Lista de Diplomas Anulados (preparada para a REGISTRADORA assinar). */
+function gerarListaAnuladosHandler(
+  _event: IpcMainInvokeEvent,
+  input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }
+): Promise<ApiResult<{ salvoPath: string; anulados: number }>> {
+  return (async () => {
+    const db = getDb();
+    const sessao = getSessao();
+    if (!sessao || sessao.usuario.role !== 'admin') {
+      return { ok: false, error: 'Somente administrador gera a Lista de Diplomas Anulados.' };
+    }
+    const registradora = db
+      .prepare("SELECT * FROM ies WHERE papel IN ('registradora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1")
+      .get() as any;
+    if (!registradora) {
+      return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: cadastre a IES Registradora (com mantenedora) no Cadastro Institucional.' };
+    }
+    const rows = db
+      .prepare(
+        `SELECT dd.motivo_anulacao, dd.anotacao_anulacao, dd.anulado_em, a.cpf,
+                dd.dados_registro_json
+         FROM diplomas_digitais dd JOIN alunos a ON a.id = dd.aluno_id
+         WHERE dd.status = 'anulado' AND dd.dados_registro_json IS NOT NULL
+         ORDER BY dd.anulado_em`
+      )
+      .all() as any[];
+
+    const anulados = rows
+      .map((r) => {
+        const reg = JSON.parse(r.dados_registro_json);
+        return {
+          codigoValidacao: reg?.codigoValidacao ?? '',
+          dataAnulacao: String(r.anulado_em ?? ''),
+          motivo: r.motivo_anulacao ?? '',
+          anotacao: r.anotacao_anulacao ?? null,
+        };
+      })
+      .filter((x) => x.codigoValidacao);
+
+    const xml = gerarListaDiplomasAnuladosXml({
+      numeroSequencia: input.numeroSequencia,
+      registradora,
+      anulados,
+      dataMaximaProximaAtualizacao: input.dataMaximaProximaAtualizacao,
+    });
+    if (!xml) {
+      return {
+        ok: false,
+        error:
+          anulados.length === 0
+            ? 'Nenhum diploma anulado com registro para listar.'
+            : 'Dados insuficientes/inconsistentes para a lista (verifique motivo oficial e datas AAAA-MM-DD).',
+      };
+    }
+    const validacao = await validarXmlContraXsd(xml, 'listaDiplomasAnulados');
+    const dir = path.join(app.getPath('userData'), 'diplomas-digitais', 'relatorios');
+    fs.mkdirSync(dir, { recursive: true });
+    const salvoPath = path.join(dir, `lista-diplomas-anulados-seq${input.numeroSequencia}.xml`);
+    fs.writeFileSync(salvoPath, xml, 'utf8');
+    auditar(null, 'lista_anulados', validacao.valido ? 'sucesso' : 'xml_invalido', {
+      seq: input.numeroSequencia, total: anulados.length, erros: validacao.erros.slice(0, 8),
+    });
+    if (!validacao.valido) {
+      return { ok: false, error: 'Lista inválida contra o XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
+    }
+    return { ok: true, data: { salvoPath, anulados: anulados.length } };
+  })();
+}
+
+/** Gera a RVDD (PDF) do diploma registrado e a publica no bucket privado. */
+function gerarRvddHandler(_event: IpcMainInvokeEvent, diplomaId: number): Promise<ApiResult<{ salvoPath: string }>> {
+  return (async () => {
+    const db = getDb();
+    const snapshot = coletarSnapshot(db as any, diplomaId);
+    if (!snapshot) return { ok: false, error: 'Processo não encontrado' };
+    if (!['registrado', 'publicado'].includes(snapshot.processo.status)) {
+      return { ok: false, error: 'A RVDD só é gerada para diplomas REGISTRADOS.' };
+    }
+    const reg = snapshot.processo.dados_registro_json ? JSON.parse(snapshot.processo.dados_registro_json) : null;
+    if (!reg?.codigoValidacao) return { ok: false, error: 'Registro sem código de validação.' };
+
+    const { normalizarCpf, normalizarData } = await import('../diploma-digital/normalizadores');
+    const pdf = await gerarRvddPdf({
+      alunoNome: snapshot.aluno.nome,
+      cpf: normalizarCpf(snapshot.aluno.cpf) ?? '',
+      cursoNome: snapshot.aluno.curso ?? '',
+      grauConferido: snapshot.curso?.grau_conferido ?? '',
+      tituloConferido: snapshot.curso?.outro_titulo ?? snapshot.curso?.titulo_conferido ?? '',
+      iesNome: snapshot.ies.nome,
+      iesCodigoEmec: snapshot.ies.codigo_emec ?? '',
+      livroRegistro: reg.livro ?? '',
+      numeroRegistro: reg.numeroRegistro ?? `${reg.numeroFolha ?? ''}/${reg.numeroSequencia ?? ''}`,
+      dataColacao: normalizarData(snapshot.aluno.data_colacao) ?? '',
+      dataExpedicao: reg.dataExpedicaoDiploma ?? '',
+      dataRegistro: reg.dataRegistroDiploma ?? '',
+      codigoValidacao: reg.codigoValidacao,
+      chaveAcesso: `VDip${String(snapshot.processo.chave_acesso ?? '').replace(/^Dip/, '')}`,
+      urlConsulta: `${CONFIG.VERIFICACAO_BASE_URL.replace(/\/+$/, '')}/d/${encodeURIComponent(reg.codigoValidacao)}`,
+    });
+
+    const dir = path.join(app.getPath('userData'), 'diplomas-digitais', String(diplomaId));
+    fs.mkdirSync(dir, { recursive: true });
+    const salvoPath = path.join(dir, 'rvdd.pdf');
+    fs.writeFileSync(salvoPath, pdf);
+
+    // Bucket privado (mesmo path do XML) — alimenta a URLRVDD da fiscalização.
+    const storagePath = await subirXmlStorage(diplomaId, 'rvdd.pdf', pdf.toString('binary')).catch(() => null);
+
+    db.prepare(
+      `INSERT INTO diploma_arquivos (diploma_id, tipo_arquivo, nome, caminho_storage, hash, versao_schema, valido_xsd, erros_validacao_json)
+       VALUES (?, 'rvdd', 'rvdd.pdf', ?, ?, '1.05', NULL, ?)`
+    ).run(
+      diplomaId,
+      salvoPath,
+      createHash('sha256').update(pdf).digest('hex'),
+      JSON.stringify({ pendencia: 'Conformidade PDF/A-1b não verificada (exige veraPDF + OutputIntent ICC) — ver DIPLOMA_DIGITAL.md' })
+    );
+    auditar(diplomaId, 'geracao_rvdd', 'sucesso', { bytes: pdf.length, storage: !!storagePath });
+    return { ok: true, data: { salvoPath } };
+  })();
+}
+
+/** Gera o Arquivo de Fiscalização (emissora) para o período informado. */
+function gerarFiscalizacaoHandler(
+  _event: IpcMainInvokeEvent,
+  input: { dataInicio: string; dataFim: string }
+): Promise<ApiResult<{ salvoPath: string; diplomas: number }>> {
+  return (async () => {
+    const db = getDb();
+    const sessao = getSessao();
+    if (!sessao || sessao.usuario.role !== 'admin') {
+      return { ok: false, error: 'Somente administrador gera o Arquivo de Fiscalização.' };
+    }
+    const emissora = db
+      .prepare("SELECT id FROM ies WHERE papel IN ('emissora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1")
+      .get() as any;
+    if (!emissora) return { ok: false, error: 'IES emissora não cadastrada.' };
+
+    const rows = db
+      .prepare(
+        `SELECT dd.*, a.cpf AS aluno_cpf, a.curso AS aluno_curso FROM diplomas_digitais dd
+         JOIN alunos a ON a.id = dd.aluno_id
+         WHERE dd.status IN ('registrado','publicado') AND dd.dados_registro_json IS NOT NULL`
+      )
+      .all() as any[];
+    if (rows.length === 0) {
+      return { ok: false, error: 'Nenhum diploma registrado no período — o arquivo exige ao menos 1.' };
+    }
+
+    const semRvdd: number[] = [];
+    const semUrl: number[] = [];
+    const diplomas: DiplomaFiscalizadoEntrada[] = [];
+    for (const r of rows) {
+      const reg = JSON.parse(r.dados_registro_json);
+      const rvdd = db
+        .prepare("SELECT id FROM diploma_arquivos WHERE diploma_id = ? AND tipo_arquivo = 'rvdd' ORDER BY id DESC LIMIT 1")
+        .get(r.id) as any;
+      if (!rvdd) { semRvdd.push(r.id); continue; }
+      const urlXml = await signedUrlStorage(`${r.id}/diploma-digital-final.xml`);
+      const urlRvdd = await signedUrlStorage(`${r.id}/rvdd.pdf`);
+      if (!urlXml || !urlRvdd) { semUrl.push(r.id); continue; }
+      const curso = r.aluno_curso
+        ? (db.prepare('SELECT codigo_emec FROM cursos WHERE LOWER(nome) = LOWER(?) AND ativo = 1 LIMIT 1').get(r.aluno_curso) as any)
+        : null;
+      diplomas.push({
+        codigoValidacao: reg.codigoValidacao,
+        cpfDetentor: r.aluno_cpf ?? '',
+        codigoEmecCurso: curso?.codigo_emec ?? null,
+        dataEmissao: reg.dataExpedicaoDiploma ?? '',
+        dataRegistro: reg.dataRegistroDiploma ?? '',
+        urlXmlDiplomado: urlXml,
+        urlRvdd,
+        urlXmlRegistroAcademico: null,
+      });
+    }
+    if (semRvdd.length > 0) {
+      return { ok: false, error: `Gere a RVDD antes (processos sem RVDD: ${semRvdd.join(', ')}).` };
+    }
+    if (diplomas.length === 0) {
+      return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: nuvem/Storage indisponível — as URLs https do arquivo não puderam ser geradas (processos: ' + semUrl.join(', ') + ').' };
+    }
+
+    const snapshotIes = coletarSnapshot(db as any, rows[0].id);
+    if (!snapshotIes) return { ok: false, error: 'Snapshot indisponível' };
+    const xml = gerarArquivoFiscalizacaoXml({ dataInicio: input.dataInicio, dataFim: input.dataFim, snapshotIes, diplomas });
+    if (!xml) return { ok: false, error: 'Dados insuficientes para o arquivo de fiscalização.' };
+
+    const validacao = await validarXmlContraXsd(xml, 'arquivoFiscalizacao');
+    const dir = path.join(app.getPath('userData'), 'diplomas-digitais', 'relatorios');
+    fs.mkdirSync(dir, { recursive: true });
+    const salvoPath = path.join(dir, `arquivo-fiscalizacao-${input.dataInicio}_a_${input.dataFim}.xml`);
+    fs.writeFileSync(salvoPath, xml, 'utf8');
+    auditar(null, 'arquivo_fiscalizacao', validacao.valido ? 'sucesso' : 'xml_invalido', {
+      periodo: `${input.dataInicio}..${input.dataFim}`, total: diplomas.length, erros: validacao.erros.slice(0, 8),
+    });
+    if (!validacao.valido) {
+      return { ok: false, error: 'Arquivo inválido contra o XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
+    }
+    return { ok: true, data: { salvoPath, diplomas: diplomas.length } };
+  })();
+}
+
+/** Abre o validador oficial do MEC no navegador (verificação MANUAL). */
+function abrirValidadorMecHandler(_event: IpcMainInvokeEvent): ApiResult<true> {
+  const { shell } = require('electron');
+  void shell.openExternal('https://verificadordiplomadigital.mec.gov.br/diploma');
+  return { ok: true, data: true };
+}
+
+/** Registra o RESULTADO MANUAL da validação no validador oficial do MEC. */
+function registrarValidacaoMecHandler(
+  _event: IpcMainInvokeEvent,
+  diplomaId: number,
+  resultado: 'valido' | 'invalido',
+  observacoes?: string
+): ApiResult<true> {
+  const sessao = getSessao();
+  if (!sessao) return { ok: false, error: 'Não autenticado' };
+  const db = getDb();
+  const agora = new Date().toISOString();
+  db.prepare('UPDATE diplomas_digitais SET validado_mec_em = ?, updated_at = datetime(\'now\') WHERE id = ?')
+    .run(resultado === 'valido' ? agora : `INVALIDO:${agora}`, diplomaId);
+  auditar(diplomaId, 'validacao_manual_mec', resultado, { observacoes: observacoes?.slice(0, 500) });
   return { ok: true, data: true };
 }
 
@@ -785,4 +1045,9 @@ export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR, requerAuth(registrarHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PUBLICAR, requerAuth(publicarHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ANULAR, requerAuth(anularHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_LISTA_ANULADOS, requerAuth(gerarListaAnuladosHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_RVDD, requerAuth(gerarRvddHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, requerAuth(gerarFiscalizacaoHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC, requerAuth(abrirValidadorMecHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC, requerAuth(registrarValidacaoMecHandler));
 }

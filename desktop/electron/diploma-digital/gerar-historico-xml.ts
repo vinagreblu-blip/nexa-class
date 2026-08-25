@@ -29,13 +29,18 @@ import { mapearTitulacao, mapearFormaAcesso, codigoDisciplinaDerivado } from './
 import type { SnapshotDiploma } from './coletor';
 import { randomBytes } from 'node:crypto';
 
-function blocoIesEmissora(s: SnapshotDiploma): string {
+/**
+ * Bloco IesEmissora (TDadosIesEmissora).
+ * @param tag 'IesEmissora' (Histórico/DA/Diploma) ou 'IESEmissora'
+ * (ArquivoFiscalizacao — grafia diferente no leiaute oficial!).
+ */
+export function blocoIesEmissora(s: SnapshotDiploma, tag = 'IesEmissora'): string {
   const ies = s.ies;
   const cred = blocoAto(ies.credenciamento_json, 'Credenciamento');
   const recred = blocoAto(ies.recredenciamento_json, 'Recredenciamento');
   const renov = blocoAto(ies.renovacao_recredenciamento_json, 'RenovacaoDeRecredenciamento');
   return (
-    '<IesEmissora>' +
+    `<${tag}>` +
     el('Nome', ies.nome) +
     el('CodigoMEC', ies.codigo_emec) +
     el('CNPJ', normalizarCnpj(ies.cnpj) ?? '') +
@@ -47,7 +52,7 @@ function blocoIesEmissora(s: SnapshotDiploma): string {
     (cred ?? '') +
     (recred ?? '') +
     (renov ?? '') +
-    '</IesEmissora>'
+    `</${tag}>`
   );
 }
 
