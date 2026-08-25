@@ -293,7 +293,8 @@ async function emitir(
   semAssinatura = false,
   tipo: TipoDeclaracao = 'generico',
   diplomaId?: number,
-  senhaPfx?: string
+  senhaPfx?: string,
+  salvarXml = false
 ): Promise<ApiResult<DeclaracaoEmitida>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -445,11 +446,63 @@ async function emitir(
   // baixam ao clicar em "Baixar". Fire-and-forget: não afeta a emissão.
   agendarCompartilharPdf('declaracoes', declaracao.id, caminhoInterno);
 
+  // XML espelho (formato próprio — NÃO é documento do padrão MEC):
+  // mesmos código/hash/URL do PDF; diálogo "Salvar XML"; cancelamento
+  // do diálogo NÃO desfaz a emissão (o PDF já está pronto).
+  let xmlPath: string | undefined;
+  if (salvarXml) {
+    const { gerarXmlEspelho } = await import('../certidao-xml');
+    const facX = getFaculdadeInfo(aluno.faculdade);
+    const situacao = !aluno.ano_conclusao || aluno.ano_conclusao === 'Cursando' ? 'Cursando' : 'Concluído';
+    const xml = gerarXmlEspelho({
+      root: tipo === 'historico' ? 'declaracaoAutenticidadeHistorico' : 'certidaoConclusao',
+      tituloDocumento:
+        tipo === 'historico'
+          ? 'Declaração de Autenticidade de Histórico Escolar'
+          : 'Certidão de Conclusão de Curso',
+      instituicao: { nome: facX.nome || aluno.faculdade || '—', cnpj: facX.cnpj || null },
+      aluno: {
+        nome: aluno.nome,
+        matricula: aluno.matricula,
+        cpf: aluno.cpf,
+        rg: aluno.rg,
+        curso: aluno.curso,
+        faculdade: aluno.faculdade,
+        situacao,
+        anoConclusao: aluno.ano_conclusao,
+        dataColacao: aluno.data_colacao,
+      },
+      documento: {
+        codigoVerificacao: codigo,
+        hashConteudo: hash,
+        emitidoPor: sessao.usuario.nome,
+        emitidoEm: agora,
+        urlVerificacao,
+      },
+    });
+    if (xml) {
+      const nomeXml = nomeArquivo.replace(/\.pdf$/i, '.xml');
+      const destinoXml =
+        win != null
+          ? await dialog.showSaveDialog(win, {
+              title: 'Salvar XML (formato próprio do sistema)',
+              defaultPath: nomeXml,
+              filters: [{ name: 'XML', extensions: ['xml'] }],
+            })
+          : { canceled: true, filePath: '' };
+      if (!destinoXml.canceled && destinoXml.filePath) {
+        fs.writeFileSync(destinoXml.filePath, xml, 'utf8');
+        xmlPath = destinoXml.filePath;
+      }
+    }
+  }
+
   return {
     ok: true,
     data: {
       declaracao,
       pdfPath: destino.filePath,
+      xmlPath,
       enviadoWeb: webResult.ok,
     },
   };

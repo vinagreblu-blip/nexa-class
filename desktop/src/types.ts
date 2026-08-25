@@ -163,6 +163,8 @@ export interface DeclaracaoEmitida {
     enviado_web: number;
   };
   pdfPath: string;
+  /** Caminho do XML espelho (formato próprio), quando solicitado. */
+  xmlPath?: string;
   enviadoWeb: boolean;
 }
 

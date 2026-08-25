@@ -232,6 +232,8 @@ export interface AtaColacaoDados {
 export interface DeclaracaoEmitida {
   declaracao: Declaracao;
   pdfPath: string;
+  /** Caminho do XML espelho (formato próprio), quando solicitado. */
+  xmlPath?: string;
   enviadoWeb: boolean;
 }
 

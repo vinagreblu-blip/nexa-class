@@ -15,7 +15,7 @@ export function DocumentosInstitucionais() {
   );
 
   if (vista === 'certidao') {
-    return <div>{voltar}<Declaracoes labels={{
+    return <div>{voltar}<Declaracoes comXml labels={{
       titulo: 'Certidão de Autenticidade',
       subtitulo: 'Emita certidões em PDF com QR Code e código de verificação.',
       btnEmitir: '+ Emitir Nova Certidão',
@@ -39,6 +39,7 @@ export function DocumentosInstitucionais() {
       <div>
         {voltar}
         <Declaracoes
+          comXml
           labels={{
             titulo: 'Declaração de Autenticidade de Histórico Escolar',
             subtitulo:

@@ -144,7 +144,8 @@ export interface DesktopApi {
       semAssinatura?: boolean,
       tipo?: 'generico' | 'historico' | 'diploma',
       diplomaId?: number,
-      senhaPfx?: string
+      senhaPfx?: string,
+      salvarXml?: boolean
     ) => Promise<ApiResult<DeclaracaoEmitida>>;
     listar: (alunoId?: number) => Promise<ApiResult<DeclaracaoRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<{ webOk: boolean }>>;

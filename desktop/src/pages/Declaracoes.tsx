@@ -28,13 +28,18 @@ const LABELS_PADRAO: DeclaracoesLabels = {
  * Página genérica de declarações. Aceita `tipo` para diferenciar:
  *  - 'generico' (default): declaração de autenticidade atual
  *  - 'historico': declaração específica de autenticidade de histórico escolar
+ * `comXml`: exibe o botão "Emitir arquivo XML" no seletor (Certidão e
+ * Declaração de Histórico) — salva, além do PDF, um XML espelho em
+ * formato próprio do sistema (não é documento do padrão MEC).
  */
 export function Declaracoes({
   labels,
   tipo = 'generico',
+  comXml = false,
 }: {
   labels?: Partial<DeclaracoesLabels>;
   tipo?: 'generico' | 'historico';
+  comXml?: boolean;
 }) {
   const L = { ...LABELS_PADRAO, ...labels };
   const { usuario } = useAuth();
@@ -48,6 +53,7 @@ export function Declaracoes({
   const [emitindo, setEmitindo] = useState(false);
   const [semAssinatura, setSemAssinatura] = useState(false);
   const [modalSenha, setModalSenha] = useState(false);
+  const [xmlPendente, setXmlPendente] = useState(false);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [excluirAlvo, setExcluirAlvo] = useState<DeclaracaoRow | null>(null);
@@ -92,21 +98,27 @@ export function Declaracoes({
     setSeletorAberto(true);
   }
 
-  async function emitir(senhaPfx?: string) {
+  async function emitir(senhaPfx?: string, salvarXml = false) {
     if (!alunoSelecionado) return;
     setEmitindo(true);
     setErro(null);
     setSucesso(null);
     setModalSenha(false);
     // Passa o tipo para o handler (default 'generico').
-    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo, undefined, senhaPfx);
+    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo, undefined, senhaPfx, salvarXml);
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);
+      const comXml = salvarXml && res.data.xmlPath;
+      const base = res.data.enviadoWeb
+        ? `${L.docSingular} gerada com sucesso em: ${res.data.pdfPath}`
+        : `${L.docSingular} gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`;
       setSucesso(
-        res.data.enviadoWeb
-          ? `${L.docSingular} gerada com sucesso em: ${res.data.pdfPath}`
-          : `${L.docSingular} gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`
+        comXml
+          ? base +
+            `\nXML salvo em: ${res.data.xmlPath}` +
+            '\n(Aviso: XML em formato próprio do sistema — não é documento do padrão MEC; para o XML oficial use Diplomas Digitais)'
+          : base
       );
       await carregarHistorico();
     } else {
@@ -114,9 +126,10 @@ export function Declaracoes({
     }
   }
 
-  function iniciarEmitir() {
+  function iniciarEmitir(salvarXml = false) {
     if (!alunoSelecionado) return;
-    if (semAssinatura) { void emitir(); return; }
+    if (semAssinatura) { void emitir(undefined, salvarXml); return; }
+    setXmlPendente(salvarXml);
     setModalSenha(true);
   }
 
@@ -251,7 +264,17 @@ export function Declaracoes({
               <button className="btn-ghost" onClick={() => { setSeletorAberto(false); setSemAssinatura(false); }} disabled={emitindo}>
                 Cancelar
               </button>
-              <button className="btn-primary" onClick={iniciarEmitir} disabled={emitindo || !alunoSelecionado}>
+              {comXml && (
+                <button
+                  className="btn-accent"
+                  onClick={() => iniciarEmitir(true)}
+                  disabled={emitindo || !alunoSelecionado}
+                  title="Emite o PDF (assinado, quando configurado) e salva também um XML espelho em formato próprio do sistema (não é documento do padrão MEC)"
+                >
+                  {emitindo ? 'Emitindo…' : 'Emitir arquivo XML'}
+                </button>
+              )}
+              <button className="btn-primary" onClick={() => iniciarEmitir(false)} disabled={emitindo || !alunoSelecionado}>
                 {emitindo ? 'Emitindo…' : semAssinatura ? 'Emitir PDF (SA)' : 'Emitir PDF'}
               </button>
             </>
@@ -352,7 +375,7 @@ export function Declaracoes({
       {modalSenha && !emitindo && alunoSelecionado && (
         <ModalSenhaCertificado
           documento={L.docSingular}
-          onConfirm={(senha) => void emitir(senha)}
+          onConfirm={(senha) => void emitir(senha, xmlPendente)}
           onClose={() => setModalSenha(false)}
         />
       )}
