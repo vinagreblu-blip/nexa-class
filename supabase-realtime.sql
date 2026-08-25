@@ -94,4 +94,4 @@ CREATE TRIGGER trg_limpar_delecoes
 -- ---------------------------------------------------------
 -- Deve retornar 12:
 -- SELECT count(*) FROM pg_publication_tables
---  WHERE publication_name = 'supabase_realtime';
+--  WHERE pubname = 'supabase_realtime';
