@@ -6,7 +6,7 @@ import path from 'node:path';
 import PDFDocument from 'pdfkit';
 import { getDb } from '../database';
 import { IPC_CHANNELS } from '../types';
-import type { ApiResult } from '../types';
+import type { Aluno, ApiResult } from '../types';
 import { getSessao, requerAuth } from './auth';
 import { getAssinaturaAtiva } from './assinatura';
 import { assinarPdfSeConfigurado } from '../pades';
@@ -15,6 +15,8 @@ import { montarNomePdf } from '../utils/sistema';
 import { getImageSize, getPngContentBounds } from '../image-size';
 import { gerarQrPng, formatarDataExtensoBrasilia } from '../utils';
 import { agendarCompartilharPdf, garantirPdfLocal } from '../pdf-sync';
+import { logger } from '../utils/logger';
+import { registrarDeclaracaoWeb } from '../web-registro';
 
 export interface CertificadoRow {
   id: number;
@@ -160,9 +162,7 @@ async function certificadoGerar(
     | undefined;
   if (!curso) return { ok: false, error: 'Curso livre não encontrado' };
 
-  const aluno = db.prepare('SELECT id, nome, matricula, cpf FROM alunos WHERE id = ?').get(alunoId) as
-    | { id: number; nome: string; matricula: string; cpf: string | null }
-    | undefined;
+  const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(alunoId) as Aluno | undefined;
   if (!aluno) return { ok: false, error: 'Aluno não encontrado' };
 
   const codigo = randomUUID();
@@ -245,6 +245,21 @@ async function certificadoGerar(
 
   // Compartilha o PDF assinado na nuvem (as outras máquinas baixam no "Baixar").
   agendarCompartilharPdf('certificados', certId, caminhoInterno);
+
+  // Registra no serviço web de verificação (QR válido de qualquer celular).
+  // Mesmo padrão de declaracao/diploma/histórico — falha não bloqueia a emissão;
+  // o serviço embarcado (fallback local) continua cobrindo a rede interna.
+  const webResult = await registrarDeclaracaoWeb({
+    codigo_verificacao: codigo,
+    hash_conteudo: hash,
+    aluno: { ...aluno, curso: `Curso Livre: ${curso.nome}` },
+    emitidoEm: agora,
+  });
+  if (webResult.ok) {
+    db.prepare('UPDATE certificados SET enviado_web = 1 WHERE id = ?').run(certId);
+  } else {
+    logger.warn({ certId, erro: webResult.error }, 'Falha ao enviar certificado para web');
+  }
 
   return { ok: true, data: { id: certId, pdfPath: destino.filePath, codigo_verificacao: codigo } };
 }
