@@ -63,20 +63,27 @@ CREATE POLICY "delecoes_auth" ON delecoes
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON delecoes TO authenticated;
 
--- Limpeza automática de tombstones antigos (roda 1x por dia).
+-- Limpeza automática de tombstones antigos (roda a cada INSERT na tabela).
+-- Função de TRIGGER precisa declarar RETURNS trigger (não void) — senão o
+-- Postgres rejeita com erro 42P17 "must return type trigger".
+-- DROP FUNCTION é necessário porque CREATE OR REPLACE não pode mudar o
+-- tipo de retorno de uma função já criada (ex.: correção de um script antigo).
 -- Security definer + fixed search_path: padrão exigido pelo Supabase.
+DROP TRIGGER IF EXISTS trg_limpar_delecoes ON delecoes;
+DROP FUNCTION IF EXISTS limpar_delecoes_antigas();
+
 CREATE OR REPLACE FUNCTION limpar_delecoes_antigas()
-RETURNS void
+RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
   DELETE FROM delecoes WHERE deleted_at < NOW() - INTERVAL '90 days';
+  RETURN NULL;
 END;
 $$;
 
-DROP TRIGGER IF EXISTS trg_limpar_delecoes ON delecoes;
 CREATE TRIGGER trg_limpar_delecoes
   AFTER INSERT ON delecoes
   FOR EACH STATEMENT
