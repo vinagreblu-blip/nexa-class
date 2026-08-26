@@ -101,8 +101,12 @@ CREATE TABLE IF NOT EXISTS declaracoes (
   emitido_em TIMESTAMPTZ DEFAULT NOW(),
   enviado_web INTEGER NOT NULL DEFAULT 0,
   pdf_caminho TEXT,
+  formato TEXT NOT NULL DEFAULT 'pdf',
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Migração para installs já existentes (rode uma vez no SQL Editor):
+-- ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS formato TEXT NOT NULL DEFAULT 'pdf';
 
 -- Tabela: assinaturas
 CREATE TABLE IF NOT EXISTS assinaturas (

@@ -10,7 +10,7 @@ import { getFaculdadeInfo } from '../faculdades';
 import { IPC_CHANNELS } from '../types';
 import type { Aluno, ApiResult, Declaracao, DeclaracaoEmitida, TipoDeclaracao } from '../types';
 import { getSessao, requerAuth } from './auth';
-import { getAssinaturaAtiva } from './assinatura';
+import { getAssinaturaAtiva, assinarXml } from './assinatura';
 import { assinarPdfSeConfigurado } from '../pades';
 import { gerarUrlValidacao } from '../qr-validador';
 import { getImageSize, getPngContentBounds } from '../image-size';
@@ -294,7 +294,7 @@ async function emitir(
   tipo: TipoDeclaracao = 'generico',
   diplomaId?: number,
   senhaPfx?: string,
-  salvarXml = false
+  formato: 'pdf' | 'xml' = 'pdf'
 ): Promise<ApiResult<DeclaracaoEmitida>> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
@@ -365,6 +365,110 @@ async function emitir(
   const win = BrowserWindow.fromWebContents(event.sender);
   const nomeArquivo = montarNomePdf('declaracao', aluno.nome, aluno.matricula, declaracao.id);
 
+  const urlVerificacao = gerarUrlValidacao({
+    n: aluno.nome,
+    m: aluno.matricula || String(aluno.id),
+    c: aluno.curso || undefined,
+    f: aluno.faculdade || undefined,
+    t: tipo === 'diploma' ? 'Declaração de Autenticidade de Diploma' : tipo === 'historico' ? 'Declaração de Autenticidade de Histórico Escolar' : 'Declaração de Autenticidade',
+    e: agora,
+    k: codigo,
+  });
+
+  // ======================= FORMATO XML (somente o XML) =======================
+  // Botão "Emitir arquivo XML": UM diálogo "Salvar XML". Nenhum PDF é
+  // gerado/assinado/compartilhado. O registro (código/hash/serviço web)
+  // torna o documento verificável; cópia interna para re-download.
+  if (formato === 'xml') {
+    const { gerarXmlEspelho } = await import('../certidao-xml');
+    const facX = getFaculdadeInfo(aluno.faculdade);
+    const situacao = !aluno.ano_conclusao || aluno.ano_conclusao === 'Cursando' ? 'Cursando' : 'Concluído';
+    let xml = gerarXmlEspelho({
+      root: tipo === 'historico' ? 'declaracaoAutenticidadeHistorico' : 'certidaoConclusao',
+      tituloDocumento:
+        tipo === 'historico'
+          ? 'Declaração de Autenticidade de Histórico Escolar'
+          : 'Certidão de Conclusão de Curso',
+      instituicao: { nome: facX.nome || aluno.faculdade || '—', cnpj: facX.cnpj || null },
+      aluno: {
+        nome: aluno.nome,
+        matricula: aluno.matricula,
+        cpf: aluno.cpf,
+        rg: aluno.rg,
+        curso: aluno.curso,
+        faculdade: aluno.faculdade,
+        situacao,
+        anoConclusao: aluno.ano_conclusao,
+        dataColacao: aluno.data_colacao,
+      },
+      documento: {
+        codigoVerificacao: codigo,
+        hashConteudo: hash,
+        emitidoPor: sessao.usuario.nome,
+        emitidoEm: agora,
+        urlVerificacao,
+      },
+    });
+    if (!xml) {
+      db.prepare('DELETE FROM declaracoes WHERE id = ?').run(declaracao.id);
+      if (webResult.ok) removerDeclaracaoWeb(codigo).catch(() => {});
+      return { ok: false, error: 'Falha ao montar o XML (dados insuficientes do aluno).' };
+    }
+
+    // Assinatura XMLDSig real quando há certificado ativo (A1 forge/A3
+    // token via assinarXml — mesmíssima infra do XML de Diploma).
+    const assinatura = getAssinaturaAtiva();
+    if (assinatura && !semAssinatura) {
+      const r = await assinarXml(xml, senhaPfx ?? '');
+      if (r.ok && r.xml) xml = r.xml;
+      // falha de assinatura não aborta: o XML segue sem assinatura e a
+      // mensagem do motivo vem no log (o usuário pode rever com a senha).
+      else logger.warn({ err: r.error }, 'Certidão XML: assinatura falhou — arquivo sem assinatura');
+    }
+
+    const nomeXml = nomeArquivo.replace(/\.pdf$/i, '.xml');
+    const destinoXml =
+      win != null
+        ? await dialog.showSaveDialog(win, {
+            title: 'Salvar XML (formato próprio do sistema)',
+            defaultPath: nomeXml,
+            filters: [{ name: 'XML', extensions: ['xml'] }],
+          })
+        : { canceled: true, filePath: '' };
+
+    if (destinoXml.canceled || !destinoXml.filePath) {
+      db.prepare('DELETE FROM declaracoes WHERE id = ?').run(declaracao.id);
+      if (webResult.ok) removerDeclaracaoWeb(codigo).catch(() => {});
+      return { ok: false, error: 'Operação cancelada pelo usuário' };
+    }
+
+    fs.writeFileSync(destinoXml.filePath, xml, 'utf8');
+
+    // Cópia interna (.xml) para o "Baixar" da lista funcionar.
+    const xmlDir = path.join(app.getPath('userData'), 'declaracoes-xml');
+    if (!fs.existsSync(xmlDir)) fs.mkdirSync(xmlDir, { recursive: true });
+    const xmlInterno = path.join(xmlDir, `${declaracao.id}.xml`);
+    try {
+      fs.copyFileSync(destinoXml.filePath, xmlInterno);
+      db.prepare('UPDATE declaracoes SET pdf_caminho = ?, formato = ? WHERE id = ?').run(xmlInterno, 'xml', declaracao.id);
+    } catch {
+      db.prepare('UPDATE declaracoes SET formato = ? WHERE id = ?').run('xml', declaracao.id);
+    }
+
+    logger.info({ declaracaoId: declaracao.id, alunoId }, 'Declaração emitida em XML (formato próprio)');
+    return {
+      ok: true,
+      data: {
+        declaracao: { ...declaracao, formato: 'xml' },
+        pdfPath: '',
+        xmlPath: destinoXml.filePath,
+        enviadoWeb: webResult.ok,
+      },
+    };
+  }
+
+  // ======================= FORMATO PDF (fluxo original) =======================
+
   // Salva uma cópia interna em userData/declaracoes/ (para re-download posterior)
   const declaracoesDir = path.join(app.getPath('userData'), 'declaracoes');
   if (!fs.existsSync(declaracoesDir)) fs.mkdirSync(declaracoesDir, { recursive: true });
@@ -386,15 +490,6 @@ async function emitir(
     return { ok: false, error: 'Operação cancelada pelo usuário' };
   };
 
-  const urlVerificacao = gerarUrlValidacao({
-    n: aluno.nome,
-    m: aluno.matricula || String(aluno.id),
-    c: aluno.curso || undefined,
-    f: aluno.faculdade || undefined,
-    t: tipo === 'diploma' ? 'Declaração de Autenticidade de Diploma' : tipo === 'historico' ? 'Declaração de Autenticidade de Histórico Escolar' : 'Declaração de Autenticidade',
-    e: agora,
-    k: codigo,
-  });
   const qrBuffer = await gerarQrPng(urlVerificacao);
 
   // dados complementares para o texto da declaração
@@ -446,63 +541,11 @@ async function emitir(
   // baixam ao clicar em "Baixar". Fire-and-forget: não afeta a emissão.
   agendarCompartilharPdf('declaracoes', declaracao.id, caminhoInterno);
 
-  // XML espelho (formato próprio — NÃO é documento do padrão MEC):
-  // mesmos código/hash/URL do PDF; diálogo "Salvar XML"; cancelamento
-  // do diálogo NÃO desfaz a emissão (o PDF já está pronto).
-  let xmlPath: string | undefined;
-  if (salvarXml) {
-    const { gerarXmlEspelho } = await import('../certidao-xml');
-    const facX = getFaculdadeInfo(aluno.faculdade);
-    const situacao = !aluno.ano_conclusao || aluno.ano_conclusao === 'Cursando' ? 'Cursando' : 'Concluído';
-    const xml = gerarXmlEspelho({
-      root: tipo === 'historico' ? 'declaracaoAutenticidadeHistorico' : 'certidaoConclusao',
-      tituloDocumento:
-        tipo === 'historico'
-          ? 'Declaração de Autenticidade de Histórico Escolar'
-          : 'Certidão de Conclusão de Curso',
-      instituicao: { nome: facX.nome || aluno.faculdade || '—', cnpj: facX.cnpj || null },
-      aluno: {
-        nome: aluno.nome,
-        matricula: aluno.matricula,
-        cpf: aluno.cpf,
-        rg: aluno.rg,
-        curso: aluno.curso,
-        faculdade: aluno.faculdade,
-        situacao,
-        anoConclusao: aluno.ano_conclusao,
-        dataColacao: aluno.data_colacao,
-      },
-      documento: {
-        codigoVerificacao: codigo,
-        hashConteudo: hash,
-        emitidoPor: sessao.usuario.nome,
-        emitidoEm: agora,
-        urlVerificacao,
-      },
-    });
-    if (xml) {
-      const nomeXml = nomeArquivo.replace(/\.pdf$/i, '.xml');
-      const destinoXml =
-        win != null
-          ? await dialog.showSaveDialog(win, {
-              title: 'Salvar XML (formato próprio do sistema)',
-              defaultPath: nomeXml,
-              filters: [{ name: 'XML', extensions: ['xml'] }],
-            })
-          : { canceled: true, filePath: '' };
-      if (!destinoXml.canceled && destinoXml.filePath) {
-        fs.writeFileSync(destinoXml.filePath, xml, 'utf8');
-        xmlPath = destinoXml.filePath;
-      }
-    }
-  }
-
   return {
     ok: true,
     data: {
       declaracao,
       pdfPath: destino.filePath,
-      xmlPath,
       enviadoWeb: webResult.ok,
     },
   };
@@ -569,20 +612,23 @@ async function baixar(
   id: number
 ): Promise<ApiResult<{ salvoPath: string }>> {
   const db = getDb();
-  const decl = db.prepare('SELECT * FROM declaracoes WHERE id = ?').get(id) as (Declaracao & { pdf_caminho?: string | null }) | undefined;
+  const decl = db.prepare('SELECT * FROM declaracoes WHERE id = ?').get(id) as (Declaracao & { pdf_caminho?: string | null; formato?: string | null }) | undefined;
   if (!decl) return { ok: false, error: 'Declaração não encontrada' };
 
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return { ok: false, error: 'Janela não disponível' };
 
-  // Tenta o caminho salvo, senão o padrão em userData
-  let pdfPath = decl.pdf_caminho || '';
-  if (!pdfPath || !fs.existsSync(pdfPath)) {
-    pdfPath = path.join(app.getPath('userData'), 'declaracoes', `${id}.pdf`);
+  const ehXml = decl.formato === 'xml';
+  // Tenta o caminho salvo, senão o padrão em userData (pasta por formato)
+  let filePath = decl.pdf_caminho || '';
+  if (!filePath || !fs.existsSync(filePath)) {
+    filePath = ehXml
+      ? path.join(app.getPath('userData'), 'declaracoes-xml', `${id}.xml`)
+      : path.join(app.getPath('userData'), 'declaracoes', `${id}.pdf`);
   }
-  if (!fs.existsSync(pdfPath)) {
+  if (!fs.existsSync(filePath) && !ehXml) {
     // Emitido em outra máquina (o token A3 é de uma máquina só): baixa da nuvem.
-    const baixou = await garantirPdfLocal('declaracoes', id, pdfPath);
+    const baixou = await garantirPdfLocal('declaracoes', id, filePath);
     if (!baixou) {
       return {
         ok: false,
@@ -592,19 +638,29 @@ async function baixar(
       };
     }
   }
+  if (!fs.existsSync(filePath)) {
+    return {
+      ok: false,
+      error: ehXml
+        ? 'Arquivo XML não encontrado nesta máquina. Solicite a reemissão em XML.'
+        : 'Arquivo PDF não encontrado nesta máquina nem na nuvem.',
+    };
+  }
 
   const aluno = db.prepare('SELECT nome, matricula FROM alunos WHERE id = ?').get(decl.aluno_id) as { nome: string; matricula: string } | undefined;
-  const nomeSugerido = `declaracao-${aluno?.matricula || id}.pdf`;
+  const nomeSugerido = `declaracao-${aluno?.matricula || id}.${ehXml ? 'xml' : 'pdf'}`;
 
   const res = await dialog.showSaveDialog(win, {
-    title: 'Salvar Cópia da Declaração',
+    title: ehXml ? 'Salvar Cópia do XML' : 'Salvar Cópia da Declaração',
     defaultPath: nomeSugerido,
-    filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    filters: ehXml
+      ? [{ name: 'XML', extensions: ['xml'] }]
+      : [{ name: 'PDF', extensions: ['pdf'] }],
   });
 
   if (res.canceled || !res.filePath) return { ok: false, error: 'Operação cancelada' };
 
-  fs.copyFileSync(pdfPath, res.filePath);
+  fs.copyFileSync(filePath, res.filePath);
   return { ok: true, data: { salvoPath: res.filePath } };
 }
 

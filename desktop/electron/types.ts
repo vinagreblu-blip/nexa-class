@@ -153,6 +153,8 @@ export interface Declaracao {
   tipo?: TipoDeclaracao;
   /** Quando tipo='diploma', referência ao diploma que esta declaração atesta. */
   diploma_id?: number | null;
+  /** Formato em que foi emitida: 'pdf' (default) | 'xml' (botão Emitir arquivo XML). */
+  formato?: 'pdf' | 'xml';
 }
 
 /** Linha de declaração com JOIN de aluno/usuário (usada na listagem da UI). */

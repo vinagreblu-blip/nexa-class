@@ -149,6 +149,7 @@ export interface DeclaracaoRow {
   emitido_por: number;
   emitido_em: string;
   enviado_web: number;
+  formato?: 'pdf' | 'xml';
   aluno_nome: string;
   aluno_matricula: string;
   emitido_por_nome: string;

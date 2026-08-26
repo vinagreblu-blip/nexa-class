@@ -53,7 +53,7 @@ export function Declaracoes({
   const [emitindo, setEmitindo] = useState(false);
   const [semAssinatura, setSemAssinatura] = useState(false);
   const [modalSenha, setModalSenha] = useState(false);
-  const [xmlPendente, setXmlPendente] = useState(false);
+  const [formatoPendente, setFormatoPendente] = useState<'pdf' | 'xml'>('pdf');
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [excluirAlvo, setExcluirAlvo] = useState<DeclaracaoRow | null>(null);
@@ -98,38 +98,42 @@ export function Declaracoes({
     setSeletorAberto(true);
   }
 
-  async function emitir(senhaPfx?: string, salvarXml = false) {
+  async function emitir(senhaPfx?: string, formato: 'pdf' | 'xml' = 'pdf') {
     if (!alunoSelecionado) return;
     setEmitindo(true);
     setErro(null);
     setSucesso(null);
     setModalSenha(false);
-    // Passa o tipo para o handler (default 'generico').
-    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo, undefined, senhaPfx, salvarXml);
+    // Passa o tipo e o formato para o handler (default 'generico'/'pdf').
+    const res = await api.declaracoes.emitir(alunoSelecionado.id, semAssinatura, tipo, undefined, senhaPfx, formato);
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);
-      const comXml = salvarXml && res.data.xmlPath;
-      const base = res.data.enviadoWeb
-        ? `${L.docSingular} gerada com sucesso em: ${res.data.pdfPath}`
-        : `${L.docSingular} gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`;
-      setSucesso(
-        comXml
-          ? base +
-            `\nXML salvo em: ${res.data.xmlPath}` +
+      if (formato === 'xml') {
+        setSucesso(
+          (res.data.enviadoWeb
+            ? 'Certidão/Declaração XML gerada com sucesso em: '
+            : 'XML gerado (não registrado no serviço web — verifique a conexão). Caminho: ') +
+            res.data.xmlPath +
             '\n(Aviso: XML em formato próprio do sistema — não é documento do padrão MEC; para o XML oficial use Diplomas Digitais)'
-          : base
-      );
+        );
+      } else {
+        setSucesso(
+          res.data.enviadoWeb
+            ? `${L.docSingular} gerada com sucesso em: ${res.data.pdfPath}`
+            : `${L.docSingular} gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`
+        );
+      }
       await carregarHistorico();
     } else {
       setErro(res.error ?? `Erro ao emitir ${L.docPlural.toLowerCase()}`);
     }
   }
 
-  function iniciarEmitir(salvarXml = false) {
+  function iniciarEmitir(formato: 'pdf' | 'xml' = 'pdf') {
     if (!alunoSelecionado) return;
-    if (semAssinatura) { void emitir(undefined, salvarXml); return; }
-    setXmlPendente(salvarXml);
+    if (semAssinatura) { void emitir(undefined, formato); return; }
+    setFormatoPendente(formato);
     setModalSenha(true);
   }
 
@@ -219,7 +223,11 @@ export function Declaracoes({
                 <td>{d.emitido_por_nome}{d.emitido_por_codigo ? ` (${d.emitido_por_codigo})` : ''}</td>
                 <td>{new Date(d.emitido_em).toLocaleString('pt-BR')}</td>
                 <td>
-                  <span className="badge badge-ok">Emitida</span>
+                  {d.formato === 'xml' ? (
+                    <span className="badge" style={{ color: '#1d4ed8', background: 'rgba(59,130,246,.14)' }}>XML</span>
+                  ) : (
+                    <span className="badge badge-ok">Emitida</span>
+                  )}
                 </td>
                 <td>
                   <div style={{ display: 'flex', gap: 6 }}>
@@ -237,9 +245,9 @@ export function Declaracoes({
                           setTimeout(() => setErro(null), 5000);
                         }
                       }}
-                      title="Baixar PDF"
+                      title={d.formato === 'xml' ? 'Baixar XML' : 'Baixar PDF'}
                     >
-                      ⬇️ Baixar
+                      {d.formato === 'xml' ? '⬇️ Baixar' : '⬇️ Baixar'}
                     </button>
                     {podeExcluir && (
                       <button className="btn-danger btn-sm" onClick={() => abrirExclusao(d)}>
@@ -267,14 +275,14 @@ export function Declaracoes({
               {comXml && (
                 <button
                   className="btn-accent"
-                  onClick={() => iniciarEmitir(true)}
+                  onClick={() => iniciarEmitir('xml')}
                   disabled={emitindo || !alunoSelecionado}
-                  title="Emite o PDF (assinado, quando configurado) e salva também um XML espelho em formato próprio do sistema (não é documento do padrão MEC)"
+                  title="Emite apenas o arquivo XML (formato próprio do sistema, com código de verificação válido). Nenhum PDF é gerado neste fluxo."
                 >
                   {emitindo ? 'Emitindo…' : 'Emitir arquivo XML'}
                 </button>
               )}
-              <button className="btn-primary" onClick={() => iniciarEmitir(false)} disabled={emitindo || !alunoSelecionado}>
+              <button className="btn-primary" onClick={() => iniciarEmitir('pdf')} disabled={emitindo || !alunoSelecionado}>
                 {emitindo ? 'Emitindo…' : semAssinatura ? 'Emitir PDF (SA)' : 'Emitir PDF'}
               </button>
             </>
@@ -374,8 +382,8 @@ export function Declaracoes({
 
       {modalSenha && !emitindo && alunoSelecionado && (
         <ModalSenhaCertificado
-          documento={L.docSingular}
-          onConfirm={(senha) => void emitir(senha, xmlPendente)}
+          documento={formatoPendente === 'xml' ? `${L.docSingular} (XML)` : L.docSingular}
+          onConfirm={(senha) => void emitir(senha, formatoPendente)}
           onClose={() => setModalSenha(false)}
         />
       )}

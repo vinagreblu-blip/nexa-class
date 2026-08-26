@@ -145,7 +145,7 @@ export interface DesktopApi {
       tipo?: 'generico' | 'historico' | 'diploma',
       diplomaId?: number,
       senhaPfx?: string,
-      salvarXml?: boolean
+      formato?: 'pdf' | 'xml'
     ) => Promise<ApiResult<DeclaracaoEmitida>>;
     listar: (alunoId?: number) => Promise<ApiResult<DeclaracaoRow[]>>;
     excluir: (id: number, senha: string) => Promise<ApiResult<{ webOk: boolean }>>;

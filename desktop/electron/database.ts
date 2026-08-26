@@ -511,6 +511,13 @@ function migrateDiplomasDigitais(): void {
   addCol('diplomas_digitais', 'anotacao_anulacao', 'anotacao_anulacao TEXT');
   addCol('diplomas_digitais', 'validado_mec_em', 'validado_mec_em TEXT');
   addCol('ies', 'ato_autorizacao_registro_json', 'ato_autorizacao_registro_json TEXT');
+  // Certidão/Declaração emitida apenas em XML (botão "Emitir arquivo XML"):
+  // formato do documento ('pdf' default | 'xml') — o XML é verificável
+  // (código/hash no serviço web) e tem cópia interna para re-download.
+  const colsDecl2 = db.prepare('PRAGMA table_info(declaracoes)').all() as { name: string }[];
+  if (colsDecl2.length > 0 && !colsDecl2.some((c) => c.name === 'formato')) {
+    db.exec("ALTER TABLE declaracoes ADD COLUMN formato TEXT NOT NULL DEFAULT 'pdf'");
+  }
   addCol('alunos', 'mae_nome', 'mae_nome TEXT');
   addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');
   addCol('alunos', 'pai_nome', 'pai_nome TEXT');

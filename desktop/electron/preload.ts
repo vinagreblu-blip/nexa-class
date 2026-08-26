@@ -84,9 +84,9 @@ const api = {
       tipo?: 'generico' | 'historico' | 'diploma',
       diplomaId?: number,
       senhaPfx?: string,
-      salvarXml?: boolean
+      formato?: 'pdf' | 'xml'
     ): Promise<ApiResult<DeclaracaoEmitida>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura, tipo, diplomaId, senhaPfx, salvarXml),
+      ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_EMITIR, alunoId, semAssinatura, tipo, diplomaId, senhaPfx, formato),
     listar: (alunoId?: number): Promise<ApiResult<DeclaracaoRow[]>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DECLARACAO_LISTAR, alunoId),
     excluir: (id: number, senha: string): Promise<ApiResult<{ webOk: boolean }>> =>
