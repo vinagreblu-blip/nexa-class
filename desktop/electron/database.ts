@@ -517,6 +517,9 @@ function migrateDiplomasDigitais(): void {
   const colsDecl2 = db.prepare('PRAGMA table_info(declaracoes)').all() as { name: string }[];
   if (colsDecl2.length > 0 && !colsDecl2.some((c) => c.name === 'formato')) {
     db.exec("ALTER TABLE declaracoes ADD COLUMN formato TEXT NOT NULL DEFAULT 'pdf'");
+    // Linhas antigas precisam re-sincronizar (agora com a coluna nova):
+    // bump de updated_at para o push incremental pegá-las de novo.
+    db.exec("UPDATE declaracoes SET updated_at = datetime('now') WHERE updated_at IS NOT NULL OR updated_at IS NULL");
   }
   addCol('alunos', 'mae_nome', 'mae_nome TEXT');
   addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');

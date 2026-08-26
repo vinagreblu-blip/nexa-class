@@ -106,3 +106,26 @@ export async function garantirPdfLocal(tabela: string, registroId: number, desti
     return false;
   }
 }
+
+/**
+ * Verifica se o registro tem arquivo na nuvem (sem baixar). Usado pelo
+ * backfill do boot: `existeNaNuvem === false` + arquivo local existente
+ * => reenviar.
+ */
+export async function existeArquivoNaNuvem(tabela: string, registroId: number): Promise<boolean | null> {
+  const client = getClient();
+  if (!client) return null; // nuvem indisponível/desativada — não decide
+  try {
+    const { data, error } = await client
+      .from('arquivos_pdf')
+      .select('registro_id')
+      .eq('tabela', tabela)
+      .eq('registro_id', registroId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return !!data;
+  } catch (e: any) {
+    logger.warn({ err: e, tabela, registroId }, 'Falha ao checar arquivo na nuvem (backfill)');
+    return null;
+  }
+}

@@ -19,7 +19,7 @@ import { validarExclusaoDeclaracao } from '../utils/regras';
 import { montarNomePdf } from '../utils/sistema';
 import { logger } from '../utils/logger';
 import { registrarDeclaracaoWeb, removerDeclaracaoWeb } from '../web-registro';
-import { agendarCompartilharPdf, garantirPdfLocal } from '../pdf-sync';
+import { agendarCompartilharPdf, garantirPdfLocal, compartilharPdf, existeArquivoNaNuvem } from '../pdf-sync';
 
 function gerarPdf(opts: {
   aluno: Aluno;
@@ -633,14 +633,29 @@ async function baixar(
   }
   if (!fs.existsSync(filePath)) {
     // Emitido em outra máquina (ou pasta movida): baixa da nuvem —
-    // arquivos_pdf guarda PDF E XML (base64) por registro.
+    // arquivos_pdf guarda PDF E XML (base64) por registro. Diagnóstico
+    // do motivo exato vai para o log (nuvem off / ausente / falha).
+    const client = (await import('../cloud')).getClient();
+    if (!client) {
+      logger.warn({ declaracaoId: id, formato: decl.formato }, 'Baixar: nuvem desativada/indisponível nesta máquina');
+    }
     const baixou = await garantirPdfLocal('declaracoes', id, filePath);
     if (!baixou) {
+      if (client) {
+        // distingue "linha não existe na nuvem" de "download falhou"
+        const naNuvem = await existeArquivoNaNuvem('declaracoes', id);
+        logger.warn(
+          { declaracaoId: id, formato: decl.formato, naNuvem },
+          naNuvem === false
+            ? 'Baixar: registro sem arquivo na nuvem (emissão com upload falho — backfill do boot corrige na máquina emissora)'
+            : 'Baixar: download da nuvem falhou (verificar conectividade/RLS)'
+        );
+      }
       return {
         ok: false,
         error: ehXml
           ? 'Arquivo XML não encontrado nesta máquina nem na nuvem. ' +
-            'Solicite a reemissão ou verifique se a máquina que emitiu está conectada à internet.'
+            'Solicite a reemissão ou verifique se a máquina que emitiu está conectada à internet e tente novamente.'
           : 'Arquivo PDF não encontrado nesta máquina nem na nuvem. ' +
             'Se foi emitido em outro computador, peça para que ele esteja conectado à internet e tente novamente.',
       };
@@ -662,6 +677,47 @@ async function baixar(
 
   fs.copyFileSync(filePath, res.filePath);
   return { ok: true, data: { salvoPath: res.filePath } };
+}
+
+/**
+ * BACKFILL (boot): reenvia para a nuvem os arquivos de declarações que
+ * faltam lá (emissão com a máquina offline/falha silenciosa do upload
+ * fire-and-forget). Cada máquina cobre os arquivos que possui — o
+ * caminho interno por formato (declaracoes/ .pdf, declaracoes-xml/ .xml)
+ * é a fonte; sem arquivo local não há nada a recuperar aqui.
+ */
+export async function reenviarDeclaracoesSemArquivoNuvem(): Promise<void> {
+  const db = getDb();
+  let rows: any[];
+  try {
+    rows = db
+      .prepare('SELECT id, formato, pdf_caminho FROM declaracoes ORDER BY id')
+      .all() as any[];
+  } catch {
+    return; // tabela sem coluna formato ainda (app antigo) — nada a fazer
+  }
+  for (const row of rows) {
+    try {
+      // caminho candidato: salvo -> padrão por formato
+      let arquivo = row.pdf_caminho || '';
+      if (!arquivo || !fs.existsSync(arquivo)) {
+        arquivo =
+          row.formato === 'xml'
+            ? path.join(app.getPath('userData'), 'declaracoes-xml', `${row.id}.xml`)
+            : path.join(app.getPath('userData'), 'declaracoes', `${row.id}.pdf`);
+      }
+      if (!fs.existsSync(arquivo)) continue; // esta máquina não tem o arquivo
+
+      const naNuvem = await existeArquivoNaNuvem('declaracoes', row.id);
+      if (naNuvem === null) return; // nuvem indisponível — tenta no próximo boot
+      if (naNuvem) continue;
+
+      await compartilharPdf('declaracoes', row.id, arquivo, { retry: false });
+      logger.info({ declaracaoId: row.id, formato: row.formato }, 'Backfill: arquivo da declaração reenviado à nuvem');
+    } catch (e: any) {
+      logger.warn({ err: e?.message, declaracaoId: row.id }, 'Backfill declaração: falha (continua)');
+    }
+  }
 }
 
 export function registrarDeclaracaoHandlers(): void {

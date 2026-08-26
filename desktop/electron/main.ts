@@ -23,7 +23,7 @@ import { initDatabase } from './database';
 import { registrarAuthHandlers } from './ipc/auth';
 import { registrarAlunosHandlers } from './ipc/alunos';
 import { registrarUsuariosHandlers } from './ipc/usuarios';
-import { registrarDeclaracaoHandlers } from './ipc/declaracao';
+import { registrarDeclaracaoHandlers, reenviarDeclaracoesSemArquivoNuvem } from './ipc/declaracao';
 import { registrarDiplomaHandlers, reenviarDiplomasPendentesWeb } from './ipc/diploma';
 import { registrarAtaColacaoHandlers } from './ipc/ata-colacao';
 import { registrarCursosLivresHandlers } from './ipc/cursos-livres';
@@ -287,7 +287,10 @@ app.whenReady().then(async () => {
     // Reenvia diplomas cujo QR ainda não foi registrado no serviço de
     // verificação web (emissões offline ou de versões antigas).
     reenviarDiplomasPendentesWeb().catch(() => {});
-  }, 5000);
+    // Backfill: reenvia à nuvem arquivos de declarações (PDF/XML) cujo
+    // upload falhou na emissão — o "Baixar" entre máquinas depende disso.
+    reenviarDeclaracoesSemArquivoNuvem().catch(() => {});
+  }, 15000);
   } catch (e: any) {
     // Antes: falha silenciosa deixava o app abrir em estado quebrado.
     // Agora: loga e segue — o app pode funcionar offline mesmo sem sync.
