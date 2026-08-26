@@ -25,7 +25,20 @@ interface AdapterDb {
   prepare(sql: string): { all?: (...a: any[]) => any[]; get: (...a: any[]) => any };
 }
 
-import { normalizarCpf, normalizarData, normalizarSexo, normalizarRg, normalizarUf } from './normalizadores';
+import { normalizarCpf, normalizarCnpj, normalizarCep, normalizarData, normalizarSexo, normalizarRg, normalizarUf } from './normalizadores';
+
+/** Ato regulatório válido = JSON parseável com tipo+numero+data AAAA-MM-DD
+ *  (exigência do XSD: o ato completo ou nada — gate de mera presença do
+ *  TEXT não-nulo deixava passar JSON incompleto/inválido). */
+function atoRegulatorioOk(json: unknown): boolean {
+  if (!json) return false;
+  try {
+    const ato = JSON.parse(String(json));
+    return !!ato?.tipo && !!ato?.numero && !!normalizarData(ato.data);
+  } catch {
+    return false;
+  }
+}
 
 export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): PendenciaDiploma[] {
   const pend: PendenciaDiploma[] = [];
@@ -132,7 +145,7 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
   // --- DadosCurso (TDadosCurso): precisa de curso cadastrado e completo ---
   const curso = aluno.curso
     ? (db
-        .prepare('SELECT c.*, i.nome AS ies_nome, i.codigo_emec AS ies_codigo_emec, i.cnpj AS ies_cnpj, i.logradouro AS ies_logradouro, i.bairro AS ies_bairro, i.codigo_municipio AS ies_codigo_municipio, i.uf AS ies_uf, i.cep AS ies_cep, i.credenciamento_json AS ies_credenciamento FROM cursos c JOIN ies i ON i.id = c.ies_id WHERE LOWER(c.nome) = LOWER(?) AND c.ativo = 1 ORDER BY c.id LIMIT 1')
+        .prepare('SELECT c.*, i.nome AS ies_nome, i.codigo_emec AS ies_codigo_emec, i.cnpj AS ies_cnpj, i.logradouro AS ies_logradouro, i.bairro AS ies_bairro, i.codigo_municipio AS ies_codigo_municipio, i.nome_municipio AS ies_nome_municipio, i.uf AS ies_uf, i.cep AS ies_cep, i.credenciamento_json AS ies_credenciamento FROM cursos c JOIN ies i ON i.id = c.ies_id WHERE LOWER(c.nome) = LOWER(?) AND c.ativo = 1 ORDER BY c.id LIMIT 1')
         .get(aluno.curso) as any)
     : undefined;
   if (!aluno.curso) {
@@ -188,21 +201,21 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
         comoObter: 'Informe o grau conferido pelo curso.',
       });
     }
-    if (!curso.autorizacao_json) {
+    if (!atoRegulatorioOk(curso.autorizacao_json)) {
       pend.push({
         campo: 'Ato de autorização do curso',
         elementoXml: 'DadosCurso.Autorizacao',
         origem: 'cursos.autorizacao_json',
-        motivo: 'não cadastrado',
+        motivo: !curso.autorizacao_json ? 'não cadastrado' : 'incompleto/inválido (exige tipo, número e data AAAA-MM-DD)',
         comoObter: 'Informe o ato regulatório de autorização (tipo, número e data — DOU quando houver).',
       });
     }
-    if (!curso.reconhecimento_json) {
+    if (!atoRegulatorioOk(curso.reconhecimento_json)) {
       pend.push({
         campo: 'Ato de reconhecimento do curso',
         elementoXml: 'DadosCurso.Reconhecimento',
         origem: 'cursos.reconhecimento_json',
-        motivo: 'não cadastrado',
+        motivo: !curso.reconhecimento_json ? 'não cadastrado' : 'incompleto/inválido (exige tipo, número e data AAAA-MM-DD)',
         comoObter: 'Informe o ato regulatório de reconhecimento (tipo, número e data).',
       });
     }
@@ -218,32 +231,33 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
       comoObter: 'Informe o código e-MEC da IES no Cadastro Institucional.',
     });
   }
-  if (!curso || !curso.ies_cnpj) {
+  if (!curso || !normalizarCnpj(curso.ies_cnpj)) {
     pend.push({
       campo: 'CNPJ da IES emissora',
       elementoXml: 'IesEmissora.CNPJ',
       origem: 'ies.cnpj',
-      motivo: !curso ? 'IES não identificada' : 'não cadastrado',
+      motivo: !curso ? 'IES não identificada' : !curso.ies_cnpj ? 'não cadastrado' : 'formato inválido (esperado 14 dígitos)',
       comoObter: 'Informe o CNPJ (14 dígitos) da IES.',
     });
   }
-  if (!curso || !curso.ies_credenciamento) {
+  if (!atoRegulatorioOk(curso?.ies_credenciamento)) {
     pend.push({
       campo: 'Credenciamento da IES',
       elementoXml: 'IesEmissora.Credenciamento',
       origem: 'ies.credenciamento_json',
-      motivo: !curso ? 'IES não identificada' : 'ato de credenciamento não cadastrado',
+      motivo: !curso ? 'IES não identificada' : !curso?.ies_credenciamento ? 'ato de credenciamento não cadastrado' : 'ato incompleto/inválido (exige tipo, número e data AAAA-MM-DD)',
       comoObter: 'Informe o ato de credenciamento da IES (tipo, número e data).',
     });
   }
   const iesEndOk =
-    !!curso && !!curso.ies_logradouro && !!curso.ies_bairro && !!curso.ies_codigo_municipio && !!curso.ies_uf && !!curso.ies_cep;
+    !!curso && !!curso.ies_logradouro && !!curso.ies_bairro && !!curso.ies_codigo_municipio &&
+    !!curso.ies_nome_municipio && !!curso.ies_uf && !!normalizarCep(curso.ies_cep);
   if (!iesEndOk) {
     pend.push({
       campo: 'Endereço da IES emissora',
       elementoXml: 'IesEmissora.Endereco',
-      origem: 'ies.logradouro/bairro/codigo_municipio/uf/cep',
-      motivo: !curso ? 'IES não identificada' : 'endereço incompleto (logradouro, bairro, município IBGE, UF e CEP)',
+      origem: 'ies.logradouro/bairro/codigo_municipio/nome_municipio/uf/cep',
+      motivo: !curso ? 'IES não identificada' : 'endereço incompleto (logradouro, bairro, município IBGE, nome do município, UF e CEP)',
       comoObter: 'Complete o endereço da IES no Cadastro Institucional.',
     });
   }

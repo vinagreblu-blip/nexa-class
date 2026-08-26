@@ -7,7 +7,7 @@
 // pendências (verificarPendenciasDiploma) — nada é simulado.
 // Cadastro institucional (IES/cursos) exige admin.
 import type { IpcMainInvokeEvent } from 'electron';
-import { ipcMain, app } from 'electron';
+import { ipcMain, app, dialog, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -276,6 +276,12 @@ function iesSalvar(
     cep?: string;
     papel?: string;
     credenciamentoJson?: string;
+    recredenciamentoJson?: string;
+    renovacaoRecredenciamentoJson?: string;
+    /** Mantenedora da registradora (obrigatória no XSD do Diploma):
+     *  { razaoSocial, cnpj, endereco: {logradouro, numero?, complemento?,
+     *    bairro, codigoMunicipio, nomeMunicipio, uf, cep} }. */
+    mantenedoraJson?: string;
   }
 ): ApiResult<any> {
   if (!input.nome?.trim()) return { ok: false, error: 'Nome da IES é obrigatório' };
@@ -283,6 +289,62 @@ function iesSalvar(
   if (input.cep && !normalizarCep(input.cep)) return { ok: false, error: 'CEP inválido — informe 8 dígitos' };
   if (input.uf && !normalizarUf(input.uf)) return { ok: false, error: 'UF inválida' };
   if (input.codigoMunicipio && !/^\d{7}$/.test(input.codigoMunicipio)) return { ok: false, error: 'Código IBGE do município deve ter 7 dígitos' };
+  // Ato regulatório: JSON parseável com tipo+numero+data (o XSD exige o ato
+  // completo — gate de mera presença deixava passar JSON incompleto).
+  const validarAto = (json: string | undefined, rotulo: string): string | null => {
+    if (!json?.trim()) return null;
+    try {
+      const ato = JSON.parse(json);
+      if (!ato?.tipo || !ato?.numero || !normalizarData(ato.data)) {
+        return `${rotulo}: informe tipo, número e data (AAAA-MM-DD) do ato`;
+      }
+      return null;
+    } catch {
+      return `${rotulo}: conteúdo inválido`;
+    }
+  };
+  for (const [json, rotulo] of [
+    [input.credenciamentoJson, 'Credenciamento'],
+    [input.recredenciamentoJson, 'Recredenciamento'],
+    [input.renovacaoRecredenciamentoJson, 'Renovação de recredenciamento'],
+  ] as const) {
+    const erro = validarAto(json, rotulo);
+    if (erro) return { ok: false, error: erro };
+  }
+  // Mantenedora (obrigatória p/ registradora no Diploma final): valida
+  // completude — RazaoSocial + CNPJ + endereço estruturado.
+  let mantenedoraNorm: string | null = null;
+  if (input.mantenedoraJson?.trim()) {
+    try {
+      const m = JSON.parse(input.mantenedoraJson);
+      if (!m?.razaoSocial?.trim() || !normalizarCnpj(m.cnpj)) {
+        return { ok: false, error: 'Mantenedora: razão social e CNPJ (14 dígitos) são obrigatórios' };
+      }
+      const e = m.endereco ?? {};
+      if (!e.logradouro?.trim() || !e.bairro?.trim() || !e.nomeMunicipio?.trim() || !normalizarCep(e.cep)) {
+        return { ok: false, error: 'Mantenedora: endereço incompleto (logradouro, bairro, município e CEP)' };
+      }
+      if (e.codigoMunicipio && !/^\d{7}$/.test(String(e.codigoMunicipio))) {
+        return { ok: false, error: 'Mantenedora: código IBGE do município deve ter 7 dígitos' };
+      }
+      mantenedoraNorm = JSON.stringify({
+        razaoSocial: String(m.razaoSocial).trim(),
+        cnpj: normalizarCnpj(m.cnpj),
+        endereco: {
+          logradouro: String(e.logradouro).trim(),
+          numero: e.numero?.trim() || undefined,
+          complemento: e.complemento?.trim() || undefined,
+          bairro: String(e.bairro).trim(),
+          codigoMunicipio: e.codigoMunicipio ? String(e.codigoMunicipio).trim() : undefined,
+          nomeMunicipio: String(e.nomeMunicipio).trim(),
+          uf: e.uf ? normalizarUf(e.uf) ?? '' : '',
+          cep: normalizarCep(e.cep),
+        },
+      });
+    } catch {
+      return { ok: false, error: 'Mantenedora: conteúdo inválido' };
+    }
+  }
   const db = getDb();
   const vals = [
     input.nome.trim(),
@@ -298,12 +360,16 @@ function iesSalvar(
     input.cep ? normalizarCep(input.cep) : null,
     input.papel ?? 'emissora',
     input.credenciamentoJson?.trim() || null,
+    input.recredenciamentoJson?.trim() || null,
+    input.renovacaoRecredenciamentoJson?.trim() || null,
+    mantenedoraNorm,
   ];
   if (input.id) {
     db.prepare(
       `UPDATE ies SET nome=?, codigo_emec=?, cnpj=?, logradouro=?, numero=?, complemento=?, bairro=?,
-       codigo_municipio=?, nome_municipio=?, uf=?, cep=?, papel=?, credenciamento_json=?, updated_at=datetime('now')
-       WHERE id=?`
+       codigo_municipio=?, nome_municipio=?, uf=?, cep=?, papel=?, credenciamento_json=?,
+       recredenciamento_json=?, renovacao_recredenciamento_json=?, mantenedora_json=?,
+       updated_at=datetime('now') WHERE id=?`
     ).run(...vals, input.id);
     auditar(null, 'ies_atualizacao', 'sucesso', { iesId: input.id });
     return { ok: true, data: db.prepare('SELECT * FROM ies WHERE id=?').get(input.id) };
@@ -311,7 +377,9 @@ function iesSalvar(
   const info = db
     .prepare(
       `INSERT INTO ies (nome, codigo_emec, cnpj, logradouro, numero, complemento, bairro,
-       codigo_municipio, nome_municipio, uf, cep, papel, credenciamento_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       codigo_municipio, nome_municipio, uf, cep, papel, credenciamento_json,
+       recredenciamento_json, renovacao_recredenciamento_json, mantenedora_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(...vals);
   auditar(null, 'ies_cadastro', 'sucesso', { iesId: info.lastInsertRowid });
@@ -482,6 +550,12 @@ function gerarXmlHandler(
     if (artefato === 'historico_escolar' && !snapshot.processo?.codigo_validacao_historico) {
       const m = /<CodigoValidacao>([^<]+)<\/CodigoValidacao>/.exec(xml);
       if (m) db.prepare('UPDATE diplomas_digitais SET codigo_validacao_historico = ? WHERE id = ?').run(m[1], diplomaId);
+    }
+    // Data de expedição: gravada UMA vez na 1ª geração válida do histórico
+    // (antes era "fabricada" como data do dia a cada regeneração).
+    if (artefato === 'historico_escolar' && validacao.valido && !snapshot.processo?.data_expedicao) {
+      const m = /<DataExpedicaoDiploma>([^<]+)<\/DataExpedicaoDiploma>/.exec(xml);
+      if (m) db.prepare('UPDATE diplomas_digitais SET data_expedicao = ? WHERE id = ?').run(m[1], diplomaId);
     }
     if (artefato === 'documentacao_academica') {
       if (!snapshot.processo?.chave_acesso) {
@@ -719,6 +793,22 @@ function registrarHandler(
     }
     if (!/^\d{1,}\.\d{1,}\.[a-f0-9]{12,}$/.test(registro.codigoValidacao ?? '')) {
       return { ok: false, error: 'Código de validação inválido — formato oficial: eMEC-emissora.eMEC-registradora.hexadecimal (retornado pela registradora).' };
+    }
+    // Validações imediatas do retorno da registradora (antes eram pegas só
+    // na revalidação XSD, com mensagem tardia e genérica).
+    if (!registro.livro?.trim()) return { ok: false, error: 'Livro de registro é obrigatório.' };
+    if (!registro.numeroRegistro?.trim() && !(registro.numeroFolha?.trim() && registro.numeroSequencia?.trim())) {
+      return { ok: false, error: 'Informe o nº de registro OU o par folha + sequência.' };
+    }
+    if (!normalizarData(registro.dataExpedicaoDiploma)) {
+      return { ok: false, error: 'Data de expedição inválida — use AAAA-MM-DD (ou DD/MM/AAAA).' };
+    }
+    if (!normalizarData(registro.dataRegistroDiploma)) {
+      return { ok: false, error: 'Data de registro inválida — use AAAA-MM-DD (ou DD/MM/AAAA).' };
+    }
+    if (!registro.responsavel?.nome?.trim()) return { ok: false, error: 'Nome do responsável pelo registro é obrigatório.' };
+    if (!normalizarCpf(registro.responsavel?.cpf)) {
+      return { ok: false, error: 'CPF do responsável inválido — informe 11 dígitos.' };
     }
     const registradora = db
       .prepare("SELECT * FROM ies WHERE papel IN ('registradora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1")
@@ -1063,6 +1153,39 @@ function registrarValidacaoMecHandler(
   return { ok: true, data: true };
 }
 
+/** Baixa um XML/PDF do processo (diálogo "Salvar como") — o arquivo do
+ *  validador oficial do MEC é o "diploma_final" (raiz <Diploma>). */
+function baixarArquivoHandler(
+  event: IpcMainInvokeEvent,
+  arquivoId: number
+): Promise<ApiResult<{ salvoPath: string }>> {
+  return (async () => {
+    const db = getDb();
+    const row = db
+      .prepare('SELECT * FROM diploma_arquivos WHERE id = ?')
+      .get(arquivoId) as { id: number; diploma_id: number; tipo_arquivo: string; caminho_local: string | null } | undefined;
+    if (!row) return { ok: false, error: 'Arquivo não encontrado.' };
+    if (!row.caminho_local || !fs.existsSync(row.caminho_local)) {
+      return {
+        ok: false,
+        error: 'Arquivo não encontrado nesta máquina (gerado em outro computador?). Regenere ou sincronize a nuvem.',
+      };
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const ext = row.tipo_arquivo.endsWith('rvdd') ? 'pdf' : 'xml';
+    const destino = win
+      ? await dialog.showSaveDialog(win, {
+          title: 'Salvar arquivo do Diploma Digital',
+          defaultPath: path.basename(row.caminho_local),
+          filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+        })
+      : { canceled: true, filePath: '' };
+    if (destino.canceled || !destino.filePath) return { ok: false, error: 'Cancelado' };
+    fs.copyFileSync(row.caminho_local, destino.filePath);
+    return { ok: true, data: { salvoPath: destino.filePath } };
+  })();
+}
+
 export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR, requerAuth(listar));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR_APTOS, requerAuth(listarAptos));
@@ -1083,5 +1206,6 @@ export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_RVDD, requerAuth(gerarRvddHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, requerAuth(gerarFiscalizacaoHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC, requerAuth(abrirValidadorMecHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_BAIXAR_ARQUIVO, requerAuth(baixarArquivoHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC, requerAuth(registrarValidacaoMecHandler));
 }

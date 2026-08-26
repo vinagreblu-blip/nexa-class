@@ -47,8 +47,11 @@ export function extrairDadosDiploma(xmlDaAssinada: string): string | null {
  */
 export function blocoIesRegistradoraCompleta(registradora: any, tag = 'IesRegistradora'): string | null {
   const cnpjReg = normalizarCnpj(registradora?.cnpj);
+  const codEmecReg = registradora?.codigo_emec;
+  const nomeReg = registradora?.nome?.trim();
   const credReg = blocoAto(registradora?.credenciamento_json, 'Credenciamento');
   const recredReg = blocoAto(registradora?.recredenciamento_json, 'Recredenciamento');
+  const renovReg = blocoAto(registradora?.renovacao_recredenciamento_json, 'RenovacaoDeRecredenciamento');
   const atoReg = blocoAto(registradora?.ato_autorizacao_registro_json, 'AtoRegulatorioAutorizacaoRegistro');
   const endReg = blocoEndereco({
     logradouro: registradora?.logradouro, numero: registradora?.numero,
@@ -73,15 +76,18 @@ export function blocoIesRegistradoraCompleta(registradora: any, tag = 'IesRegist
       }
     } catch { /* ignora JSON inválido */ }
   }
-  if (!cnpjReg || !credReg || !endReg || !mantenedora) return null;
+  // TUDO que o XSD exige da registradora entra no null-check — nome/e-MEC
+  // vazios sairiam como elemento vazio e reprovariam na validação tardia.
+  if (!nomeReg || !codEmecReg || !cnpjReg || !credReg || !endReg || !mantenedora) return null;
   return (
     `<${tag}>` +
-    el('Nome', registradora.nome) +
-    el('CodigoMEC', registradora.codigo_emec) +
+    el('Nome', nomeReg) +
+    el('CodigoMEC', codEmecReg) +
     el('CNPJ', cnpjReg) +
     `<Endereco>${endReg}</Endereco>` +
     credReg +
     (recredReg ?? '') +
+    (renovReg ?? '') +
     (atoReg ?? '') +
     mantenedora +
     `</${tag}>`

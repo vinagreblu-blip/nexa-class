@@ -24,12 +24,16 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
   const c = s.curso;
   const ies = s.ies;
   if (!a || !c || !ies) return null;
+  // Sexo/naturalidade: o gate de pendências bloqueia valor inválido ANTES
+  // da geração — aqui NÃO há fallback inventado (?? 'M' fabricava sexo).
+  const sexo = normalizarSexo(a.sexo);
+  if (!sexo) return null;
 
   const diplomado = blocoDiplomado({
     matricula: a.matricula,
     nome: a.nome,
     nomeSocial: a.nome_social,
-    sexo: normalizarSexo(a.sexo) ?? 'M',
+    sexo,
     nacionalidade: a.nacionalidade,
     naturalidade: a.naturalidade_estrangeira
       ? { nome: a.naturalidade_estrangeira }
@@ -72,6 +76,7 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
     `<EnderecoCurso>${endCurso}</EnderecoCurso>` +
     (blocoAto(c.autorizacao_json, 'Autorizacao') ?? '') +
     (blocoAto(c.reconhecimento_json, 'Reconhecimento') ?? '') +
+    (blocoAto(c.renovacao_reconhecimento_json, 'RenovacaoReconhecimento') ?? '') +
     '</DadosCurso>';
 
   const iesEmissora = (() => {
@@ -83,6 +88,24 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
       nomeMunicipio: ies.nome_municipio, uf: ies.uf, cep: ies.cep,
     });
     if (!end) return null;
+    // Opcionais do XSD (TDadosIesEmissora) — emitidos quando persistidos
+    // no cadastro institucional (antes eram descartados silenciosamente).
+    const mantenedora = (() => {
+      if (!ies.mantenedora_json) return null;
+      try {
+        const m = JSON.parse(ies.mantenedora_json);
+        if (!m.razaoSocial || !m.cnpj) return null;
+        const endM = m.endereco ? blocoEndereco(m.endereco) : null;
+        if (!endM) return null;
+        return (
+          '<Mantenedora>' +
+          el('RazaoSocial', m.razaoSocial) +
+          el('CNPJ', normalizarCnpj(m.cnpj) ?? '') +
+          `<Endereco>${endM}</Endereco>` +
+          '</Mantenedora>'
+        );
+      } catch { return null; }
+    })();
     return (
       '<IesEmissora>' +
       el('Nome', ies.nome) +
@@ -90,6 +113,9 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
       el('CNPJ', normalizarCnpj(ies.cnpj) ?? '') +
       `<Endereco>${end}</Endereco>` +
       (blocoAto(ies.credenciamento_json, 'Credenciamento') ?? '') +
+      (blocoAto(ies.recredenciamento_json, 'Recredenciamento') ?? '') +
+      (blocoAto(ies.renovacao_recredenciamento_json, 'RenovacaoDeRecredenciamento') ?? '') +
+      (mantenedora ?? '') +
       '</IesEmissora>'
     );
   })();

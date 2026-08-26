@@ -510,7 +510,14 @@ function migrateDiplomasDigitais(): void {
   addCol('diplomas_digitais', 'chave_req', 'chave_req TEXT');
   addCol('diplomas_digitais', 'anotacao_anulacao', 'anotacao_anulacao TEXT');
   addCol('diplomas_digitais', 'validado_mec_em', 'validado_mec_em TEXT');
+  // Data de expedição do diploma (DataExpedicaoDiploma do histórico/Formado):
+  // gravada uma única vez na 1ª geração — antes era "fabricada" como a data
+  // do dia a cada regeneração (divergia do mapeamento oficial).
+  addCol('diplomas_digitais', 'data_expedicao', 'data_expedicao TEXT');
   addCol('ies', 'ato_autorizacao_registro_json', 'ato_autorizacao_registro_json TEXT');
+  addCol('ies', 'recredenciamento_json', 'recredenciamento_json TEXT');
+  addCol('ies', 'renovacao_recredenciamento_json', 'renovacao_recredenciamento_json TEXT');
+  addCol('ies', 'mantenedora_json', 'mantenedora_json TEXT');
   // Certidão/Declaração emitida apenas em XML (botão "Emitir arquivo XML"):
   // formato do documento ('pdf' default | 'xml') — o XML é verificável
   // (código/hash no serviço web) e tem cópia interna para re-download.

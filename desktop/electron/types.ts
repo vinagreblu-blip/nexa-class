@@ -337,6 +337,7 @@ export const IPC_CHANNELS = {
   DIPLOMAS_DIGITAIS_GERAR_RVDD: 'diplomas-digitais:gerar-rvdd',
   DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO: 'diplomas-digitais:gerar-fiscalizacao',
   DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC: 'diplomas-digitais:abrir-validador-mec',
+  DIPLOMAS_DIGITAIS_BAIXAR_ARQUIVO: 'diplomas-digitais:baixar-arquivo',
   DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC: 'diplomas-digitais:registrar-validacao-mec',
   IES_LISTAR: 'ies:listar',
   IES_SALVAR: 'ies:salvar',

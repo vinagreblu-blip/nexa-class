@@ -504,6 +504,25 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     await carregar();
   };
 
+  const baixarArquivo = async (arquivoId: number, tipoArquivo: string) => {
+    setMsg(null);
+    const r = await api.diplomasDigitais.baixarArquivo(arquivoId);
+    if (r.ok) {
+      setMsg({
+        tipo: 'ok',
+        texto:
+          `Salvo em "${r.data?.salvoPath}".` +
+          (tipoArquivo === 'diploma_final'
+            ? ' Este é o arquivo para o validador oficial do MEC (verificadordiplomadigital.mec.gov.br).'
+            : tipoArquivo.includes('assinad')
+              ? ' Para o validador do MEC, use o diploma-digital-final.xml (gerado na etapa Registrar) — este arquivo é para a IES Registradora.'
+              : ''),
+      });
+    } else {
+      setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao baixar' });
+    }
+  };
+
   const publicar = async () => {
     setGerando('publicar');
     setMsg(null);
@@ -655,7 +674,7 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
       )}
       {!!dados.arquivos?.length && (
         <table>
-          <thead><tr><th>Tipo</th><th>Versão</th><th>Válido (XSD)</th><th>Gerado em</th></tr></thead>
+          <thead><tr><th>Tipo</th><th>Versão</th><th>Válido (XSD)</th><th>Gerado em</th><th></th></tr></thead>
           <tbody>
             {dados.arquivos.map((a: any) => (
               <tr key={a.id}>
@@ -671,6 +690,11 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
                   )}
                 </td>
                 <td>{a.created_at}</td>
+                <td>
+                  <button className="btn-ghost btn-sm" onClick={() => void baixarArquivo(a.id, a.tipo_arquivo)}>
+                    Baixar XML
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -797,6 +821,13 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
     codigoMunicipio: '', nomeMunicipio: '', uf: '', cep: '',
   });
   const [credenciamento, setCredenciamento] = useState({ tipo: '', numero: '', data: '' });
+  const [recredenciamento, setRecredenciamento] = useState({ tipo: '', numero: '', data: '' });
+  const [renovacaoRecred, setRenovacaoRecred] = useState({ tipo: '', numero: '', data: '' });
+  const [mantenedora, setMantenedora] = useState({
+    razaoSocial: '', cnpj: '',
+    logradouro: '', numero: '', complemento: '', bairro: '',
+    codigoMunicipio: '', nomeMunicipio: '', uf: '', cep: '',
+  });
 
   const [cursos, setCursos] = useState<any[]>([]);
   const [curso, setCurso] = useState({
@@ -829,6 +860,24 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
         if (emissora.credenciamento_json) {
           try { setCredenciamento(JSON.parse(emissora.credenciamento_json)); } catch { /* ignora */ }
         }
+        if (emissora.recredenciamento_json) {
+          try { setRecredenciamento(JSON.parse(emissora.recredenciamento_json)); } catch { /* ignora */ }
+        }
+        if (emissora.renovacao_recredenciamento_json) {
+          try { setRenovacaoRecred(JSON.parse(emissora.renovacao_recredenciamento_json)); } catch { /* ignora */ }
+        }
+        if (emissora.mantenedora_json) {
+          try {
+            const m = JSON.parse(emissora.mantenedora_json);
+            const e = m.endereco ?? {};
+            setMantenedora({
+              razaoSocial: m.razaoSocial ?? '', cnpj: m.cnpj ?? '',
+              logradouro: e.logradouro ?? '', numero: e.numero ?? '', complemento: e.complemento ?? '',
+              bairro: e.bairro ?? '', codigoMunicipio: e.codigoMunicipio ?? '',
+              nomeMunicipio: e.nomeMunicipio ?? '', uf: e.uf ?? '', cep: e.cep ?? '',
+            });
+          } catch { /* ignora */ }
+        }
       }
     }
     const c = await api.diplomasDigitais.cursoGraduacaoListar();
@@ -857,6 +906,24 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
       uf: ies.uf || undefined,
       cep: ies.cep || undefined,
       credenciamentoJson: atoJson(credenciamento),
+      recredenciamentoJson: atoJson(recredenciamento),
+      renovacaoRecredenciamentoJson: atoJson(renovacaoRecred),
+      mantenedoraJson: mantenedora.razaoSocial.trim()
+        ? JSON.stringify({
+            razaoSocial: mantenedora.razaoSocial,
+            cnpj: mantenedora.cnpj,
+            endereco: {
+              logradouro: mantenedora.logradouro,
+              numero: mantenedora.numero || undefined,
+              complemento: mantenedora.complemento || undefined,
+              bairro: mantenedora.bairro,
+              codigoMunicipio: mantenedora.codigoMunicipio || undefined,
+              nomeMunicipio: mantenedora.nomeMunicipio,
+              uf: mantenedora.uf,
+              cep: mantenedora.cep,
+            },
+          })
+        : undefined,
     });
     setSalvando(false);
     if (!r.ok) {
@@ -980,6 +1047,59 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
             </div>
           </div>
           <CampoAto titulo="Credenciamento da IES" valor={credenciamento} onChange={setCredenciamento} />
+          <CampoAto titulo="Recredenciamento (opcional)" valor={recredenciamento} onChange={setRecredenciamento} />
+          <CampoAto titulo="Renovação de recredenciamento (opcional)" valor={renovacaoRecred} onChange={setRenovacaoRecred} />
+          {(ies.papel === 'registradora' || ies.papel === 'emissora_registradora') && (
+            <div style={{ marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                Mantenedora da Registradora (obrigatória no Diploma final)
+              </div>
+              <div className="form-grid">
+                <div className="full">
+                  <label style={labelStyle}>Razão social *</label>
+                  <input value={mantenedora.razaoSocial} onChange={(e) => setMantenedora({ ...mantenedora, razaoSocial: e.target.value })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>CNPJ (14 dígitos) *</label>
+                  <input value={mantenedora.cnpj} onChange={(e) => setMantenedora({ ...mantenedora, cnpj: e.target.value })} placeholder="00.000.000/0000-00" />
+                </div>
+                <div>
+                  <label style={labelStyle}>Logradouro *</label>
+                  <input value={mantenedora.logradouro} onChange={(e) => setMantenedora({ ...mantenedora, logradouro: e.target.value })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Número</label>
+                  <input value={mantenedora.numero} onChange={(e) => setMantenedora({ ...mantenedora, numero: e.target.value })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Complemento</label>
+                  <input value={mantenedora.complemento} onChange={(e) => setMantenedora({ ...mantenedora, complemento: e.target.value })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Bairro *</label>
+                  <input value={mantenedora.bairro} onChange={(e) => setMantenedora({ ...mantenedora, bairro: e.target.value })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Município — código IBGE (7)</label>
+                  <input value={mantenedora.codigoMunicipio} onChange={(e) => setMantenedora({ ...mantenedora, codigoMunicipio: e.target.value.replace(/\D/g, '').slice(0, 7) })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Nome do município *</label>
+                  <input value={mantenedora.nomeMunicipio} onChange={(e) => setMantenedora({ ...mantenedora, nomeMunicipio: e.target.value })} />
+                </div>
+                <div>
+                  <label style={labelStyle}>UF</label>
+                  <select value={mantenedora.uf} onChange={(e) => setMantenedora({ ...mantenedora, uf: e.target.value })}>
+                    {UFS_BR.map((u) => <option key={u} value={u}>{u || '—'}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>CEP (8 dígitos) *</label>
+                  <input value={mantenedora.cep} onChange={(e) => setMantenedora({ ...mantenedora, cep: e.target.value })} placeholder="00000000" />
+                </div>
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <button className="btn-primary" disabled={salvando || !ies.nome.trim()} onClick={() => void salvarIes()}>
               {salvando ? 'Salvando…' : ies.id ? 'Atualizar IES' : 'Cadastrar IES'}

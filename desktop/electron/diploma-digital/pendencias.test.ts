@@ -97,6 +97,7 @@ function dbFake({ aluno, curso, ies }: { aluno: any; curso?: any; ies?: any }) {
           ies_logradouro: ies.logradouro,
           ies_bairro: ies.bairro,
           ies_codigo_municipio: ies.codigo_municipio,
+          ies_nome_municipio: ies.nome_municipio,
           ies_uf: ies.uf,
           ies_cep: ies.cep,
           ies_credenciamento: ies.credenciamento_json,
@@ -119,7 +120,7 @@ function dbFake({ aluno, curso, ies }: { aluno: any; curso?: any; ies?: any }) {
 
 const IES_COMPLETA = {
   id: 1, nome: 'INSTITUTO ERICH FROMM', codigo_emec: 1234, cnpj: '03466601000182',
-  logradouro: 'Rua A', bairro: 'Centro', codigo_municipio: '2927408', uf: 'BA', cep: '40000000',
+  logradouro: 'Rua A', bairro: 'Centro', codigo_municipio: '2927408', nome_municipio: 'Salvador', uf: 'BA', cep: '40000000',
   credenciamento_json: '{"tipo":"Portaria","numero":"100","data":"2010-01-01"}',
 };
 
@@ -216,5 +217,41 @@ describe('verificarPendenciasDiploma', () => {
       ies: IES_COMPLETA,
     });
     expect(verificarPendenciasDiploma(db as any, 1).some((x) => x.elementoXml.includes('Naturalidade'))).toBe(false);
+  });
+
+  // --- gates endurecidos (conformidade XSD pegava tardio antes) ---
+
+  it('CNPJ da IES com dígitos a menos → pendência (formato, não só presença)', () => {
+    const db = dbFake({ aluno: ALUNO_COMPLETO, curso: CURSO_COMPLETO, ies: { ...IES_COMPLETA, cnpj: '0346660100' } });
+    const p = verificarPendenciasDiploma(db as any, 1).find((x) => x.elementoXml === 'IesEmissora.CNPJ');
+    expect(p).toBeTruthy();
+    expect(p?.motivo).toMatch(/14 dígitos/);
+  });
+
+  it('ato de autorização com JSON incompleto (sem data) → pendência específica', () => {
+    const db = dbFake({
+      aluno: ALUNO_COMPLETO,
+      curso: { ...CURSO_COMPLETO, autorizacao_json: '{"tipo":"Portaria","numero":"10"}' },
+      ies: IES_COMPLETA,
+    });
+    const p = verificarPendenciasDiploma(db as any, 1).find((x) => x.elementoXml === 'DadosCurso.Autorizacao');
+    expect(p).toBeTruthy();
+    expect(p?.motivo).toMatch(/incompleto\/inválido/);
+  });
+
+  it('credenciamento da IES com data ilegível → pendência específica', () => {
+    const db = dbFake({
+      aluno: ALUNO_COMPLETO,
+      curso: CURSO_COMPLETO,
+      ies: { ...IES_COMPLETA, credenciamento_json: '{"tipo":"Portaria","numero":"100","data":"01/2010"}' },
+    });
+    const p = verificarPendenciasDiploma(db as any, 1).find((x) => x.elementoXml === 'IesEmissora.Credenciamento');
+    expect(p).toBeTruthy();
+    expect(p?.motivo).toMatch(/incompleto\/inválido/);
+  });
+
+  it('endereço da IES sem nome do município → pendência de endereço', () => {
+    const db = dbFake({ aluno: ALUNO_COMPLETO, curso: CURSO_COMPLETO, ies: { ...IES_COMPLETA, nome_municipio: null } });
+    expect(verificarPendenciasDiploma(db as any, 1).some((x) => x.elementoXml === 'IesEmissora.Endereco')).toBe(true);
   });
 });

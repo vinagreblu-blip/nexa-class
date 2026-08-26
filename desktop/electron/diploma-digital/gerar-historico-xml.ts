@@ -103,6 +103,10 @@ export function blocoHistoricoEscolar(s: SnapshotDiploma, agora: Date): string |
   }
   if (disciplinasXml.length === 0) return null;
 
+  // CH integralizada > 0 é exigida pelo XSD (TNumeroPositivo) — aluno sem
+  // nenhuma aprovação não pode gerar histórico (antes emitia HoraAula 0).
+  if (chIntegralizada <= 0) return null;
+
   const chCurso = normalizarCargaHoraria(c.carga_horaria);
   const formaAcesso = mapearFormaAcesso(a.forma_ingresso);
   const ingresso =
@@ -145,13 +149,18 @@ export function gerarHistoricoXml(s: SnapshotDiploma, agora = new Date()): strin
   const c = s.curso;
   const ies = s.ies;
   if (!a || !c || !ies) return null;
+  // Sexo inválido → não gera (o gate de pendências deve bloquear antes;
+  // gerar com 'M' fabricado seria simulação).
+  if (!normalizarSexo(a.sexo)) return null;
 
   const diplomado =
     blocoDiplomado({
       matricula: a.matricula,
       nome: a.nome,
       nomeSocial: a.nome_social,
-      sexo: normalizarSexo(a.sexo) ?? 'M',
+      // O gate de pendências bloqueia sexo inválido ANTES — aqui não há
+      // fallback inventado (?? 'M' fabricava sexo); o guard acima garante.
+      sexo: normalizarSexo(a.sexo) as 'M' | 'F',
       nacionalidade: a.nacionalidade,
       naturalidade: a.naturalidade_estrangeira
         ? { nome: a.naturalidade_estrangeira }

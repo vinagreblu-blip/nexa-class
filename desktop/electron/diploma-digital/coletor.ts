@@ -60,6 +60,31 @@ export function pendenciasHistorico(s: SnapshotDiploma): PendenciaDiploma[] {
       comoObter: 'Lance o histórico acadêmico do aluno (Histórico Acadêmico → aluno → disciplinas).',
     });
   }
+  // Linhas ilegíveis não podem ser descartadas em silêncio pelo gerador —
+  // viram pendência com a disciplina exata (CH e nota).
+  const chInvalidas = s.disciplinas.filter((d) => !normalizarCargaHoraria(d.ch));
+  for (const d of chInvalidas.slice(0, 5)) {
+    p.push({
+      campo: `Carga horária da disciplina "${d.disciplina}"`,
+      elementoXml: 'ElementosHistorico.Disciplina.CargaHoraria',
+      origem: 'historico_disciplinas.ch',
+      motivo: !d.ch ? 'não cadastrada' : `"${d.ch}" não reconhecida (ex.: 80, 80H, 80:30)`,
+      comoObter: 'Corrija a carga horária da disciplina no histórico acadêmico.',
+    });
+  }
+  let aprovadas = 0;
+  for (const d of s.disciplinas) {
+    const ch = normalizarCargaHoraria(d.ch);
+    if (ch && (d.status === 'AP' || d.status === 'CUMP')) aprovadas++;
+  }
+  if (s.disciplinas.length > 0 && aprovadas === 0) {
+    p.push({
+      campo: 'Carga horária integralizada', elementoXml: 'HistoricoEscolar.CargaHorariaCursoIntegralizada',
+      origem: 'historico_disciplinas.status',
+      motivo: 'nenhuma disciplina aprovada — o XSD exige CH integralizada > 0',
+      comoObter: 'Confirme os status das disciplinas (AP/CUMP para aprovadas).',
+    });
+  }
   const chCurso = normalizarCargaHoraria(s.curso?.carga_horaria);
   if (!chCurso) {
     p.push({

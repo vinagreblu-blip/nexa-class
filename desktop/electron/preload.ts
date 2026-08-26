@@ -173,6 +173,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, input),
     abrirValidadorMec: (): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC),
+    baixarArquivo: (arquivoId: number): Promise<ApiResult<{ salvoPath: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_BAIXAR_ARQUIVO, arquivoId),
     registrarValidacaoMec: (id: number, resultado: string, observacoes?: string): Promise<ApiResult<true>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC, id, resultado, observacoes),
     iesListar: (): Promise<ApiResult<any[]>> =>
