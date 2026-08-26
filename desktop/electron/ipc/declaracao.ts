@@ -455,6 +455,11 @@ async function emitir(
       db.prepare('UPDATE declaracoes SET formato = ? WHERE id = ?').run('xml', declaracao.id);
     }
 
+    // Compartilha o XML na nuvem (arquivos_pdf, base64) — as outras
+    // máquinas conseguem baixar no "Baixar". Fire-and-forget com retry,
+    // igual ao fluxo de PDF: nunca falha a emissão.
+    agendarCompartilharPdf('declaracoes', declaracao.id, xmlInterno);
+
     logger.info({ declaracaoId: declaracao.id, alunoId }, 'Declaração emitida em XML (formato próprio)');
     return {
       ok: true,
@@ -626,25 +631,20 @@ async function baixar(
       ? path.join(app.getPath('userData'), 'declaracoes-xml', `${id}.xml`)
       : path.join(app.getPath('userData'), 'declaracoes', `${id}.pdf`);
   }
-  if (!fs.existsSync(filePath) && !ehXml) {
-    // Emitido em outra máquina (o token A3 é de uma máquina só): baixa da nuvem.
+  if (!fs.existsSync(filePath)) {
+    // Emitido em outra máquina (ou pasta movida): baixa da nuvem —
+    // arquivos_pdf guarda PDF E XML (base64) por registro.
     const baixou = await garantirPdfLocal('declaracoes', id, filePath);
     if (!baixou) {
       return {
         ok: false,
-        error:
-          'Arquivo PDF não encontrado nesta máquina nem na nuvem. ' +
-          'Se foi emitido em outro computador, peça para que ele esteja conectado à internet e tente novamente.',
+        error: ehXml
+          ? 'Arquivo XML não encontrado nesta máquina nem na nuvem. ' +
+            'Solicite a reemissão ou verifique se a máquina que emitiu está conectada à internet.'
+          : 'Arquivo PDF não encontrado nesta máquina nem na nuvem. ' +
+            'Se foi emitido em outro computador, peça para que ele esteja conectado à internet e tente novamente.',
       };
     }
-  }
-  if (!fs.existsSync(filePath)) {
-    return {
-      ok: false,
-      error: ehXml
-        ? 'Arquivo XML não encontrado nesta máquina. Solicite a reemissão em XML.'
-        : 'Arquivo PDF não encontrado nesta máquina nem na nuvem.',
-    };
   }
 
   const aluno = db.prepare('SELECT nome, matricula FROM alunos WHERE id = ?').get(decl.aluno_id) as { nome: string; matricula: string } | undefined;

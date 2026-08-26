@@ -109,21 +109,7 @@ export function Declaracoes({
     setEmitindo(false);
     if (res.ok && res.data) {
       setSeletorAberto(false);
-      if (formato === 'xml') {
-        setSucesso(
-          (res.data.enviadoWeb
-            ? 'Certidão/Declaração XML gerada com sucesso em: '
-            : 'XML gerado (não registrado no serviço web — verifique a conexão). Caminho: ') +
-            res.data.xmlPath +
-            '\n(Aviso: XML em formato próprio do sistema — não é documento do padrão MEC; para o XML oficial use Diplomas Digitais)'
-        );
-      } else {
-        setSucesso(
-          res.data.enviadoWeb
-            ? `${L.docSingular} gerada com sucesso em: ${res.data.pdfPath}`
-            : `${L.docSingular} gerada (não registrada no serviço web — verifique a conexão). PDF: ${res.data.pdfPath}`
-        );
-      }
+      setSucesso(`${L.docSingular} gerada com sucesso!`);
       await carregarHistorico();
     } else {
       setErro(res.error ?? `Erro ao emitir ${L.docPlural.toLowerCase()}`);
