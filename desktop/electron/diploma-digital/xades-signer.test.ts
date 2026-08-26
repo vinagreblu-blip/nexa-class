@@ -5,11 +5,14 @@
 // Histórico Escolar Digital e verifica com o xml-crypto
 // (checkSignature — motor independente usado para validar XMLDSig)
 // além de revalidar o XML assinado contra o XSD OFICIAL.
-import { describe, expect, it } from 'vitest';
-import { SignedXml } from 'xml-crypto';
+// Também cobre: conformidade X509 (serial DECIMAL + IssuerSerial
+// RFC2253) e o caminho A3 (assinarHashA3 mockado com node:crypto —
+// mesma semântica do SignHash do token: PKCS#1 v1.5 sobre o digest).
+import { describe, expect, it, vi } from 'vitest';
 import { assinarProximoEsqueleto } from './xades-signer';
 import { gerarHistoricoXml } from './gerar-historico-xml';
 import { validarXmlContraXsd } from './xsd-validator';
+import { novoVerificador } from './verificador-teste';
 
 const ALUNO = {
   id: 7, matricula: '202012345', nome: 'MARIA DA SILVA', nome_social: null,
@@ -40,7 +43,7 @@ const DISCIPLINAS = [
 const PROCESSO = { id: 42, aluno_id: 7, ies_emissora_id: 1, chave_acesso: null, codigo_validacao_historico: null, data_expedicao: null };
 
 /** Certificado X509 auto-assinado APENAS PARA TESTE (não é ICP-Brasil). */
-function gerarCertTeste(): { certPem: string; chavePem: string } {
+function gerarCertTeste(): { certPem: string; chavePem: string; serialHex: string } {
   const forge = require('node-forge');
   const pair = forge.pki.rsa.generateKeyPair(2048);
   const cert = forge.pki.createCertificate();
@@ -51,15 +54,42 @@ function gerarCertTeste(): { certPem: string; chavePem: string } {
   const attrs = [
     { name: 'commonName', value: 'NEXA CLASS TESTE' },
     { name: 'organizationName', value: 'Teste' },
-    { shortName: 'OU', value: 'TI' },
     { name: 'countryName', value: 'BR' },
   ];
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
   cert.setExtensions([{ name: 'basicConstraints', cA: false }, { name: 'keyUsage', digitalSignature: true }]);
   cert.sign(pair.privateKey, forge.md.sha256.create());
-  return { certPem: forge.pki.certificateToPem(cert), chavePem: forge.pki.privateKeyToPem(pair.privateKey) };
+  return {
+    certPem: forge.pki.certificateToPem(cert),
+    chavePem: forge.pki.privateKeyToPem(pair.privateKey),
+    serialHex: cert.serialNumber,
+  };
 }
+
+// ---- Mock do caminho A3: assinarHashA3 no lugar do PowerShell/SignHash.
+// Mesma semântica do RSACryptoServiceProvider.SignHash(SHA256, Pkcs1):
+// monta o DigestInfo DER (header SHA-256 || hash) e aplica PKCS#1 v1.5
+// — privateEncrypt com RSA_PKCS1_PADDING É a primitiva RSASSA-PKCS1-v1_5
+// (bloco type-1, comprovado igual ao forge.sign no teste).
+const holder = vi.hoisted(() => ({
+  chavePem: '',
+  chamadas: 0,
+  hashRecebido: Buffer.alloc(0),
+  digestInfo: Buffer.from('3031300d060960864801650304020105000420', 'hex'),
+}));
+vi.mock('../ipc/assinatura', () => ({
+  assinarHashA3: async (_thumbprint: string, hash: Buffer): Promise<Buffer> => {
+    const { createPrivateKey, privateEncrypt, constants } = await import('node:crypto');
+    holder.chamadas++;
+    holder.hashRecebido = Buffer.from(hash);
+    const key = createPrivateKey(holder.chavePem);
+    return privateEncrypt(
+      { key, padding: constants.RSA_PKCS1_PADDING },
+      Buffer.concat([holder.digestInfo, hash]),
+    );
+  },
+}));
 
 describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
   it('assina o Histórico Escolar Digital e PASSA na verificação independente (xml-crypto)', async () => {
@@ -67,7 +97,7 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
     expect(xml).toBeTruthy();
 
-    const assinado = assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
 
     // Estrutura: assinatura real presente
     expect(assinado).toContain('<ds:SignatureValue>');
@@ -76,13 +106,13 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
     expect(assinado).toContain('<ds:X509Certificate>');
 
     // Verificação INDEPENDENTE: xml-crypto valida digests + assinatura RSA
+    // (transform enveloped estendido p/ namespace https do MEC — ver helper)
     const { DOMParser } = await import('@xmldom/xmldom');
     const docFinal = new DOMParser().parseFromString(assinado, 'text/xml');
     const sigNode = docFinal.getElementsByTagName('ds:Signature')[0];
-    const sig = new SignedXml({ publicCert: certPem });
-    sig.loadSignature(sigNode);
-    let ok = false;
-    try { ok = sig.checkSignature(assinado); } catch (e) { console.error('EXC:', (e as Error).message); }
+    const sig = novoVerificador(certPem, sigNode);
+    const ok = sig.checkSignature(assinado);
+    if (!ok) for (const r of sig.getReferences()) console.error('REF', r.uri, '→', r.validationError);
     expect(ok).toBe(true);
     // As duas references (documento + SignedProperties XAdES) válidas
     for (const r of sig.getReferences()) {
@@ -90,10 +120,26 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
     }
   }, 60000);
 
+  it('X509SerialNumber DECIMAL e X509IssuerName RFC2253 (ordem invertida)', async () => {
+    const { certPem, chavePem, serialHex } = gerarCertTeste();
+    const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+
+    // Serial: xs:integer → decimal (forge devolve hex)
+    const serialEsperado = BigInt('0x' + serialHex).toString();
+    expect(assinado).toContain(`<X509SerialNumber>${serialEsperado}</X509SerialNumber>`);
+    expect(assinado).not.toContain(`<X509SerialNumber>${serialHex}</X509SerialNumber>`);
+    const mSerial = /<X509SerialNumber>([^<]+)<\/X509SerialNumber>/.exec(assinado)!;
+    expect(mSerial[1]).toMatch(/^\d+$/);
+
+    // IssuerSerial RFC2253: ordem INVERSA do ASN.1 ([CN,O,C] → C,O,CN)
+    expect(assinado).toContain('<X509IssuerName>C=BR,O=Teste,CN=NEXA CLASS TESTE</X509IssuerName>');
+  }, 60000);
+
   it('XML assinado continua VÁLIDO contra o XSD oficial v1.05', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
-    const assinado = assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
     const r = await validarXmlContraXsd(assinado, 'historicoEscolar');
     if (!r.valido) console.error('ERROS XSD:', r.erros);
     expect(r.valido).toBe(true);
@@ -102,15 +148,41 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
   it('alterar UM caractere do documento invalida a assinatura (integridade)', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
-    const assinado = assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
     const adulterado = assinado.replace('MARIA DA SILVA', 'MARIA DA SILVA X');
     const { DOMParser } = await import('@xmldom/xmldom');
     const docFinal = new DOMParser().parseFromString(adulterado, 'text/xml');
     const sigNode = docFinal.getElementsByTagName('ds:Signature')[0];
-    const sig = new SignedXml({ publicCert: certPem });
-    sig.loadSignature(sigNode);
+    const sig = novoVerificador(certPem, sigNode);
     let ok = true;
     try { ok = sig.checkSignature(adulterado); } catch { ok = false; }
     expect(ok).toBe(false);
+  }, 60000);
+});
+
+describe('M4: caminho A3 (thumbprintA3 → assinarHashA3/SignHash)', () => {
+  it('assina pelo token (mock) com o mesmo resultado verificável do A1', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    holder.chavePem = chavePem;
+    holder.chamadas = 0;
+    const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
+
+    const assinado = await assinarProximoEsqueleto(xml!, {
+      signatureId: 'Sign-Hist-A3',
+      certPem, // A3: só a parte pública; a chave está "no token" (mock)
+      thumbprintA3: 'AABBCC00112233445566778899AABBCCDDEEFF00',
+    });
+
+    expect(holder.chamadas).toBe(1); // o digest foi ao "token"
+    expect(holder.hashRecebido.length).toBe(32); // SHA-256
+
+    // Verificação independente idêntica à do A1
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const docFinal = new DOMParser().parseFromString(assinado, 'text/xml');
+    const sigNode = docFinal.getElementsByTagName('ds:Signature')[0];
+    const sig = novoVerificador(certPem, sigNode);
+    const ok = sig.checkSignature(assinado);
+    if (!ok) for (const r of sig.getReferences()) console.error('REF', r.uri, '→', r.validationError);
+    expect(ok).toBe(true);
   }, 60000);
 });

@@ -14,7 +14,7 @@
 // Registro assistido: os dados vêm do formulário preenchido com o que
 // a registradora devolveu. Nada é simulado nem pré-preenchido.
 import { el, elAttrs, documentoXml, assinaturaEstrutural, blocoAto, blocoEndereco } from './xml-utils';
-import { normalizarCnpj, normalizarData } from './normalizadores';
+import { normalizarCnpj, normalizarCpf, normalizarData } from './normalizadores';
 import type { SnapshotDiploma } from './coletor';
 
 export interface DadosRegistroRetorno {
@@ -118,17 +118,24 @@ export function gerarDiplomaFinalXml(
       : el('NumeroFolhaDoDiploma', registro.numeroFolha ?? '') + el('NumeroSequenciaDoDiploma', registro.numeroSequencia ?? '');
   if (!registro.numeroRegistro && !(registro.numeroFolha && registro.numeroSequencia)) return null;
 
+  // Normaliza o retorno da registradora (formulário aceita DD/MM/YYYY
+  // e CPF mascarado; XSD exige AAAA-MM-DD/11 dígitos). Valor não
+  // normalizável segue cru — a revalidação XSD reporta o campo exato.
+  const dataExp = normalizarData(registro.dataExpedicaoDiploma) ?? registro.dataExpedicaoDiploma;
+  const dataReg = normalizarData(registro.dataRegistroDiploma) ?? registro.dataRegistroDiploma;
+  const cpfResp = normalizarCpf(registro.responsavel.cpf) ?? registro.responsavel.cpf;
+
   const livroRegistro =
     '<LivroRegistro>' +
     el('LivroRegistro', registro.livro) +
     identificador +
     (registro.processoDiploma ? el('ProcessoDoDiploma', registro.processoDiploma) : '') +
     el('DataColacaoGrau', colacao) +
-    el('DataExpedicaoDiploma', registro.dataExpedicaoDiploma) +
-    el('DataRegistroDiploma', registro.dataRegistroDiploma) +
+    el('DataExpedicaoDiploma', dataExp) +
+    el('DataRegistroDiploma', dataReg) +
     '<ResponsavelRegistro>' +
     el('Nome', registro.responsavel.nome) +
-    el('CPF', registro.responsavel.cpf) +
+    el('CPF', cpfResp) +
     (registro.responsavel.matricula ? el('IDouNumeroMatricula', registro.responsavel.matricula) : '') +
     '</ResponsavelRegistro>' +
     '</LivroRegistro>';

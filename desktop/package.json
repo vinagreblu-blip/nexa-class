@@ -1,6 +1,6 @@
 {
   "name": "desktop",
-  "version": "1.2.25",
+  "version": "1.2.26",
   "private": true,
   "author": "vinagreblu-blip <vinagreblu-blip@users.noreply.github.com>",
   "description": "NEXA CLASS - Network for Education and Academic Excellence Class. App desktop para cadastro de alunos e emissao de declaracoes",
@@ -84,6 +84,16 @@
       "dist/**/*",
       "dist-electron/**/*",
       "db/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../schemas",
+        "to": "schemas",
+        "filter": [
+          "**/*",
+          "!**/README.md"
+        ]
+      }
     ],
     "win": {
       "target": "nsis"

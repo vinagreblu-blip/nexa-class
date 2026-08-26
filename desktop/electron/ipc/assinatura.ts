@@ -270,6 +270,77 @@ public static class NexaPinWatchdog {
 [NexaPinWatchdog]::Iniciar()
 `.trim();
 
+// PowerShell: SIGNHASH A3 — assina o DIGEST SHA-256 com a chave do token e
+// devolve a assinatura RSA BRUTA (base64). Necessário para o Diploma
+// Digital: o assinador XAdES do Node monta o SignedInfo com o namespace
+// XMLDSig em https (exigência do validador do MEC), o que o SignedXml do
+// .NET não produz (namespace interno http fixo). Com o SignHash bruto, a
+// chave NUNCA sai do hardware — o Node só recebe a assinatura do digest
+// que ele próprio computou (C14N do SignedInfo + SHA-256).
+const PS_SIGNHASH_A3 = `
+param([string]$Thumbprint, [string]$HashFile, [string]$OutFile)
+$ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+Add-Type -AssemblyName System.Security
+
+${PS_VIGIA_PIN}
+Write-Output 'FASE:assinando'
+
+# Localiza o certificado cuja chave abre (mesma lógica dos outros scripts)
+$candidatos = @()
+$locs = @(([System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser), ([System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine))
+foreach ($loc in $locs) {
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) { if ($c.Thumbprint -ieq $Thumbprint) { $candidatos += $c } }
+    $store.Close()
+  } catch {}
+}
+if ($candidatos.Count -eq 0) { throw 'Certificado nao encontrado no repositorio do Windows (CurrentUser/LocalMachine).' }
+
+$hash = [System.IO.File]::ReadAllBytes($HashFile)
+foreach ($cand in $candidatos) {
+  try {
+    $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cand)
+    if ($null -eq $rsa) { continue }
+    # PKCS#1 v1.5 sobre o digest SHA-256 (equivale a rsa-sha256 do XMLDSig)
+    $sig = $rsa.SignHash($hash, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    [System.IO.File]::WriteAllBytes($OutFile, $sig)
+    Write-Output 'OK'
+    exit 0
+  } catch { continue }
+}
+throw 'Chave privada nao acessivel para assinar o digest (token conectado e middleware ativo?).'
+`.trim();
+
+/** Assina um digest SHA-256 (32 bytes) com o token A3 → assinatura RSA bruta. */
+export async function assinarHashA3(thumbprint: string, hash: Buffer): Promise<Buffer> {
+  const pre = await precheckCertificadoA3(thumbprint);
+  if (pre.status !== 'ok') {
+    throw new Error(pre.erro ?? 'Certificado A3 indisponível nesta máquina.');
+  }
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const hashFile = path.join(os.tmpdir(), `nexa_sh_in_${id}.bin`);
+  const outFile = path.join(os.tmpdir(), `nexa_sh_out_${id}.bin`);
+  fs.writeFileSync(hashFile, hash);
+  try {
+    await runPowerShellScriptAsync(
+      PS_SIGNHASH_A3,
+      { Thumbprint: thumbprint, HashFile: hashFile, OutFile: outFile },
+      180000,
+      { exibirDialogos: true } // o diálogo de PIN do driver deve nascer visível
+    );
+    if (!fs.existsSync(outFile)) throw new Error('O token não gerou a assinatura.');
+    const sig = fs.readFileSync(outFile);
+    if (sig.length === 0) throw new Error('Assinatura vazia.');
+    return sig;
+  } finally {
+    try { fs.unlinkSync(hashFile); } catch { /* noop */ }
+    try { fs.unlinkSync(outFile); } catch { /* noop */ }
+  }
+}
+
 // PowerShell: assina o XML (enveloped, C14N, SHA-256) com a chave do token.
 const PS_ASSINAR_A3 = `
 param([string]$Thumbprint, [string]$InFile, [string]$OutFile)

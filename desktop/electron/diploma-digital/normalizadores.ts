@@ -70,6 +70,25 @@ export function normalizarUf(v: string | null | undefined): string | null {
   return UFS.has(s) ? s : null;
 }
 
+/** Data/hora de BRASÍLIA (America/Sao_Paulo) para os campos de emissão
+ *  do histórico — o mapeamento oficial declara hora local; usar UTC
+ *  deslocaria data/hora em até 3h (THora/TData não carregam fuso). */
+export function dataHoraBrasilia(agora = new Date()): { data: string; hora: string } {
+  const fmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const partes: Record<string, string> = {};
+  for (const p of fmt.formatToParts(agora)) partes[p.type] = p.value;
+  const hh = partes.hour === '24' ? '00' : (partes.hour ?? '00');
+  return {
+    data: `${partes.year}-${partes.month}-${partes.day}`,
+    hora: `${hh}:${partes.minute ?? '00'}:${partes.second ?? '00'}`,
+  };
+}
+
 /**
  * Carga horária → TCargaHoraria XSD. O banco guarda texto livre
  * ("80H", "80", "80,5h", "2.300"...). Devolve HoraAula (inteiro)

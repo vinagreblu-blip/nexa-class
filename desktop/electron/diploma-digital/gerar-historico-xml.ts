@@ -23,7 +23,7 @@ import {
 } from './xml-utils';
 import {
   normalizarCpf, normalizarCnpj, normalizarData, normalizarSexo, normalizarRg, normalizarUf,
-  normalizarCargaHoraria, normalizarNota,
+  normalizarCargaHoraria, normalizarNota, dataHoraBrasilia,
 } from './normalizadores';
 import { mapearTitulacao, mapearFormaAcesso, codigoDisciplinaDerivado } from './mapeamento-campos';
 import type { SnapshotDiploma } from './coletor';
@@ -34,21 +34,25 @@ import { randomBytes } from 'node:crypto';
  * @param tag 'IesEmissora' (Histórico/DA/Diploma) ou 'IESEmissora'
  * (ArquivoFiscalizacao — grafia diferente no leiaute oficial!).
  */
-export function blocoIesEmissora(s: SnapshotDiploma, tag = 'IesEmissora'): string {
+export function blocoIesEmissora(s: SnapshotDiploma, tag = 'IesEmissora'): string | null {
   const ies = s.ies;
   const cred = blocoAto(ies.credenciamento_json, 'Credenciamento');
   const recred = blocoAto(ies.recredenciamento_json, 'Recredenciamento');
   const renov = blocoAto(ies.renovacao_recredenciamento_json, 'RenovacaoDeRecredenciamento');
+  // Endereço incompleto → null (pendência): interpolar null geraria
+  // o texto literal "null" e rejeição XSD fora do gate de pendências.
+  const end = blocoEndereco({
+    logradouro: ies.logradouro, numero: ies.numero, complemento: ies.complemento,
+    bairro: ies.bairro, codigoMunicipio: ies.codigo_municipio,
+    nomeMunicipio: ies.nome_municipio, uf: ies.uf, cep: ies.cep,
+  });
+  if (!end) return null;
   return (
     `<${tag}>` +
     el('Nome', ies.nome) +
     el('CodigoMEC', ies.codigo_emec) +
     el('CNPJ', normalizarCnpj(ies.cnpj) ?? '') +
-    `<Endereco>${blocoEndereco({
-      logradouro: ies.logradouro, numero: ies.numero, complemento: ies.complemento,
-      bairro: ies.bairro, codigoMunicipio: ies.codigo_municipio,
-      nomeMunicipio: ies.nome_municipio, uf: ies.uf, cep: ies.cep,
-    })}</Endereco>` +
+    `<Endereco>${end}</Endereco>` +
     (cred ?? '') +
     (recred ?? '') +
     (renov ?? '') +
@@ -106,8 +110,11 @@ export function blocoHistoricoEscolar(s: SnapshotDiploma, agora: Date): string |
     (a.ano_ingresso && /^\d{4}$/.test(a.ano_ingresso) ? `${a.ano_ingresso}-01-01` : null);
   if (!chCurso || !formaAcesso || !ingresso) return null;
 
-  const dataEmissao = agora.toISOString().slice(0, 10);
-  const horaEmissao = agora.toISOString().slice(11, 19); // HH:MM:SS (UTC; ver mapeamento)
+  // Emissão em hora local de Brasília (mapeamento oficial: data/hora
+  // de geração — UTC deslocaria até 3h)
+  const brasilia = dataHoraBrasilia(agora);
+  const dataEmissao = brasilia.data;
+  const horaEmissao = brasilia.hora;
 
   const expedicao = normalizarData(s.processo?.data_expedicao ?? null) ?? dataEmissao;
 
@@ -163,6 +170,9 @@ export function gerarHistoricoXml(s: SnapshotDiploma, agora = new Date()): strin
     (blocoAto(c.reconhecimento_json, 'Reconhecimento') ?? '') +
     '</DadosCurso>';
 
+  const iesXml = blocoIesEmissora(s);
+  if (!iesXml) return null;
+
   const historico = blocoHistoricoEscolar(s, agora);
   if (!historico) return null;
 
@@ -174,7 +184,7 @@ export function gerarHistoricoXml(s: SnapshotDiploma, agora = new Date()): strin
     elAttrs('infHistoricoEscolar', { versao: '1.05', ambiente: 'Produção' },
       '<Aluno>' + diplomado + '</Aluno>' +
       cursoXml +
-      blocoIesEmissora(s) +
+      iesXml +
       historico +
       '<SegurancaHistorico>' + el('CodigoValidacao', codigo) + '</SegurancaHistorico>'
     );

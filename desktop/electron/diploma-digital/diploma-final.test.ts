@@ -11,6 +11,7 @@ import { gerarDocumentacaoAcademicaXml } from './gerar-documentacao-academica';
 import { gerarDiplomaFinalXml, type DadosRegistroRetorno } from './gerar-diploma-xml';
 import { assinarTodosEsqueletos, contarEsqueletos } from './xades-signer';
 import { validarXmlContraXsd } from './xsd-validator';
+import { novoVerificador } from './verificador-teste';
 
 const ALUNO = {
   id: 7, matricula: '202012345', nome: 'MARIA DA SILVA', nome_social: null,
@@ -74,6 +75,46 @@ function gerarCertTeste(): { certPem: string; chavePem: string } {
 }
 
 describe('M4: Diploma final pós-registro × XSD oficial', () => {
+  it('DA com DUAS assinaturas da emissora: ambas verificáveis (Reference por @id)', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const snapshot = { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any;
+
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-dip-'));
+    const pdf = path.join(tmp, 'rg.pdf');
+    fs.writeFileSync(pdf, '%PDF-1.4 fixture');
+    try {
+      const da = gerarDocumentacaoAcademicaXml(snapshot, [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }]);
+      expect(da).toBeTruthy();
+
+      const daAssinada = await assinarTodosEsqueletos(da!, { signatureIdBase: 'Sign-DD42', chavePem, certPem });
+      expect(contarEsqueletos(daAssinada)).toBe(0);
+
+      // Reference interna aponta para o elemento com @id (DadosDiploma),
+      // não para o documento inteiro — sobrevive à assinatura da raiz.
+      const mInterna = /<ds:Reference URI="#(Dip[0-9]{44})">/.exec(daAssinada);
+      expect(mInterna).toBeTruthy();
+      expect(mInterna![1]).toBe(PROCESSO.chave_acesso);
+      expect(daAssinada).toContain('URI=""'); // assinatura da raiz cobre o doc todo
+
+      // AS DUAS assinaturas verificam criptograficamente (motor independente)
+      const doc = new DOMParser().parseFromString(daAssinada, 'text/xml');
+      const assinaturas = doc.getElementsByTagName('ds:Signature');
+      expect(assinaturas.length).toBe(2);
+      for (let i = 0; i < 2; i++) {
+        const sig = novoVerificador(certPem, assinaturas[i]);
+        const ok = sig.checkSignature(daAssinada);
+        if (!ok) for (const r of sig.getReferences()) console.error(`SIG${i} REF`, r.uri, '→', r.validationError);
+        expect(ok).toBe(true);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60000);
+
   it('DA assinada (emissora) + DadosRegistro → Diploma VÁLIDO contra o XSD', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const snapshot = { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any;
@@ -90,7 +131,7 @@ describe('M4: Diploma final pós-registro × XSD oficial', () => {
       expect(da).toBeTruthy();
       expect(contarEsqueletos(da!)).toBe(2); // DadosDiploma + nível doc
 
-      const daAssinada = assinarTodosEsqueletos(da!, { signatureIdBase: 'Sign-DD42', chavePem, certPem });
+      const daAssinada = await assinarTodosEsqueletos(da!, { signatureIdBase: 'Sign-DD42', chavePem, certPem });
       expect(contarEsqueletos(daAssinada)).toBe(0);
 
       const registro: DadosRegistroRetorno = {
@@ -112,6 +153,19 @@ describe('M4: Diploma final pós-registro × XSD oficial', () => {
       const r = await validarXmlContraXsd(final!, 'diploma');
       if (!r.valido) console.error('ERROS XSD:', r.erros);
       expect(r.valido).toBe(true);
+
+      // TRANSPLANTE: a assinatura da EMISSORA (Reference #Dip{44} sobre o
+      // DadosDiploma extraído byte-idêntito da DA) continua verificável
+      // dentro do Diploma final — é o requisito do fluxo oficial.
+      const { DOMParser } = await import('@xmldom/xmldom');
+      const docFinal = new DOMParser().parseFromString(final!, 'text/xml');
+      const assinaturas = docFinal.getElementsByTagName('ds:Signature');
+      // [0] emissora (real, dentro de DadosDiploma); [1]/[2] registradora (esqueleto)
+      expect(assinaturas.length).toBe(3);
+      const sigEmissora = novoVerificador(certPem, assinaturas[0]);
+      const okTransplante = sigEmissora.checkSignature(final!);
+      if (!okTransplante) for (const r2 of sigEmissora.getReferences()) console.error('TRANSPLANTE REF', r2.uri, '→', r2.validationError);
+      expect(okTransplante).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

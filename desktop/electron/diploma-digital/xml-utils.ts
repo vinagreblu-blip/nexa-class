@@ -14,8 +14,14 @@
 // assinado; ver DIPLOMA_DIGITAL.md § anti-simulação.
 //
 
+import { normalizarCep } from './normalizadores';
+
 export const NS_MEC = 'https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
-export const NS_DS = 'http://www.w3.org/2000/09/xmldsig#'; // canônico W3C (RFC 3275)
+// ATENÇÃO: o pacote XSD oficial do MEC declara o namespace XMLDSig com
+// https:// (variação oficial da IN/MEC — validador do MEC rejeita a forma
+// canônica http://, testado empiricamente). Todos os documentos gerados
+// e assinados usam a variante https por essa razão.
+export const NS_DS = 'https://www.w3.org/2000/09/xmldsig#';
 
 export function escapeXml(s: string): string {
   return (s ?? '')
@@ -85,12 +91,14 @@ export function blocoAto(prefixoJson: string | null | undefined, tag: string): s
   return `<${tag}>${inner}</${tag}>`;
 }
 
-/** TEndereco a partir de partes (todas obrigatórias exceto numero/complemento). */
+/** TEndereco a partir de partes (todas obrigatórias exceto numero/complemento).
+ *  CEP é normalizado (8 dígitos — aceita mascarado no banco). */
 export function blocoEndereco(e: {
   logradouro: string; numero?: string | null; complemento?: string | null;
   bairro: string; codigoMunicipio?: string | null; nomeMunicipio: string; uf?: string | null; cep: string;
 }): string | null {
-  if (!e.logradouro || !e.bairro || !e.nomeMunicipio || !e.cep) return null;
+  const cep = normalizarCep(e.cep);
+  if (!e.logradouro || !e.bairro || !e.nomeMunicipio || !cep) return null;
   let mun: string;
   if (e.codigoMunicipio && e.uf) {
     mun = el('CodigoMunicipio', e.codigoMunicipio) + el('NomeMunicipio', e.nomeMunicipio) + el('UF', e.uf);
@@ -104,7 +112,7 @@ export function blocoEndereco(e: {
     (e.complemento ? el('Complemento', e.complemento) : '') +
     el('Bairro', e.bairro) +
     mun +
-    el('CEP', e.cep)
+    el('CEP', cep)
   );
 }
 

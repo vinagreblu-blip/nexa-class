@@ -26,7 +26,6 @@ import { gerarListaDiplomasAnuladosXml } from '../diploma-digital/gerar-lista-an
 import { gerarArquivoFiscalizacaoXml, type DiplomaFiscalizadoEntrada } from '../diploma-digital/gerar-arquivo-fiscalizacao';
 import { gerarRvddPdf } from '../diploma-digital/gerar-rvdd';
 import { assinarTodosEsqueletos, contarEsqueletos } from '../diploma-digital/xades-signer';
-import { assinarXmlA3 } from './assinatura';
 import { validarXmlContraXsd, type ArtefatoXsd, type ResultadoValidacao } from '../diploma-digital/xsd-validator';
 import { getClient } from '../cloud';
 import { validarSenhaMaster } from '../utils/regras';
@@ -579,17 +578,58 @@ function extrairPfxA1(caminhoPfx: string, senha: string): { chavePem: string; ce
   return { chavePem, certPem };
 }
 
+/** Extrai o certificado PÚBLICO (PEM) do Windows Store pelo thumbprint —
+ *  usado no caminho A3 (o KeyInfo precisa do cert; só a parte pública). */
+async function extrairCertPublicoPem(thumbprint: string): Promise<string> {
+  const os = await import('node:os');
+  const pathMod = await import('node:path');
+  const script = `
+param([string]$Thumbprint, [string]$OutFile)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
+foreach ($locName in @('CurrentUser','LocalMachine')) {
+  try {
+    $loc = [System.Security.Cryptography.X509Certificates.StoreLocation]::$locName
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('My', $loc)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    foreach ($c in $store.Certificates) {
+      if ($c.Thumbprint -ieq $Thumbprint) {
+        $b64 = [Convert]::ToBase64String($c.RawData, 'InsertLineBreaks')
+        $pem = "-----BEGIN CERTIFICATE-----" + [char]10 + $b64 + [char]10 + "-----END CERTIFICATE-----" + [char]10
+        [System.IO.File]::WriteAllText($OutFile, $pem, (New-Object System.Text.UTF8Encoding($false)))
+        $store.Close(); exit 0
+      }
+    }
+    $store.Close()
+  } catch {}
+}
+throw 'Certificado nao encontrado'
+`.trim();
+  const { runPowerShellScriptAsync } = await import('./assinatura');
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const outFile = pathMod.join(os.tmpdir(), `nexa_cert_${id}.pem`);
+  await runPowerShellScriptAsync(script, { Thumbprint: thumbprint, OutFile: outFile }, 30000);
+  try {
+    const conteudo = fs.readFileSync(outFile, 'utf8');
+    if (!conteudo.includes('BEGIN CERTIFICATE')) throw new Error('PEM inválido exportado do store');
+    return conteudo.replace(/\r\n/g, '\n');
+  } finally {
+    try { fs.unlinkSync(outFile); } catch { /* noop */ }
+  }
+}
+
 /**
  * Assina TODAS as posições da emissora no artefato indicado.
- * A1: XAdES-BES real (verificável). A3: XMLDSig enveloped real via
- * token (PowerShell) — XAdES no A3 é pendência documentada.
+ * A1 e A3 produzem o MESMO XAdES-BES real (namespace ds https, exigência
+ * do validador do MEC): no A3 o digest do SignedInfo é assinado DENTRO do
+ * token via SignHash bruto (assinarHashA3) — a chave nunca sai do hardware.
  */
 function assinarHandler(
   _event: IpcMainInvokeEvent,
   diplomaId: number,
   artefato: 'historico_escolar' | 'documentacao_academica',
   senhaPfx?: string
-): Promise<ApiResult<{ arquivoId: number; pendenciaXadesA3?: boolean }>> {
+): Promise<ApiResult<{ arquivoId: number }>> {
   return (async () => {
     const db = getDb();
     const proc = db.prepare('SELECT * FROM diplomas_digitais WHERE id = ?').get(diplomaId) as any;
@@ -614,33 +654,27 @@ function assinarHandler(
     }
 
     let xmlAssinado: string;
-    let pendenciaXadesA3 = false;
     try {
       if (assinatura.certificado_tipo === 'A3' && assinatura.certificado_a3_thumbprint) {
-        // A3: assinatura XMLDSig enveloped real pelo token. O PowerShell
-        // devolve o doc com a assinatura no fim — movemos para a posição do
-        // esqueleto (digest não depende da posição, só do conteúdo).
-        const alvo = lido.xml.match(/<ds:Signature[^>]*>[\s\S]*?<ds:SignatureValue><\/ds:SignatureValue>[\s\S]*?<\/ds:Signature>/);
-        if (!alvo) return { ok: false, error: 'Posição de assinatura não encontrada.' };
-        const inicio = alvo.index ?? 0;
-        const semEsqueleto = lido.xml.slice(0, inicio) + lido.xml.slice(inicio + alvo[0].length);
-        const r = await assinarXmlA3(assinatura.certificado_a3_thumbprint, semEsqueleto);
-        if (!r.ok || !r.xml) return { ok: false, error: r.error ?? 'Falha na assinatura A3' };
-        const mAss = r.xml.match(/<ds:Signature[\s\S]*?<\/ds:Signature>/);
-        if (!mAss) return { ok: false, error: 'Assinatura A3 não localizada no retorno' };
-        const fim = r.xml.lastIndexOf('</ds:Signature>');
-        const ini = r.xml.indexOf(mAss[0]);
-        const docSemAssNova = r.xml.slice(0, ini) + r.xml.slice(fim + '</ds:Signature>'.length);
-        xmlAssinado = docSemAssNova.slice(0, inicio) + mAss[0] + docSemAssNova.slice(inicio);
-        pendenciaXadesA3 = true;
+        // A3: XAdES-BES com namespace https (exigência do validador do MEC).
+        // O digest do SignedInfo é assinado DENTRO do token (SignHash bruto
+        // via PS_SIGNHASH_A3 — precheck/vigia de PIN/timeout reutilizados);
+        // a chave nunca sai do hardware. O certificado público precisa estar
+        // exportável em PEM: extraímos do próprio Windows Store via PowerShell.
+        const certPem = await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint);
+        xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
+          signatureIdBase: `Sign-DD${diplomaId}`,
+          certPem,
+          thumbprintA3: assinatura.certificado_a3_thumbprint,
+        });
       } else {
-        // A1: XAdES-BES completo
+        // A1: XAdES-BES completo em Node puro
         if (!assinatura.certificado_path || !fs.existsSync(assinatura.certificado_path)) {
           return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: certificado A1 (.pfx) não encontrado — reimporte em Assinatura Digital.' };
         }
         if (!senhaPfx) return { ok: false, error: 'Senha do certificado A1 é obrigatória.' };
         const { chavePem, certPem } = extrairPfxA1(assinatura.certificado_path, senhaPfx);
-        xmlAssinado = assinarTodosEsqueletos(lido.xml, {
+        xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
           signatureIdBase: `Sign-DD${diplomaId}`,
           chavePem,
           certPem,
@@ -666,7 +700,7 @@ function assinarHandler(
     }
     db.prepare("UPDATE diplomas_digitais SET status = 'assinado', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
     auditar(diplomaId, `assinatura_${artefato}`, 'sucesso', { tipo: assinatura.certificado_tipo });
-    return { ok: true, data: { arquivoId: 0, pendenciaXadesA3 } };
+    return { ok: true, data: { arquivoId: 0 } };
   })();
 }
 

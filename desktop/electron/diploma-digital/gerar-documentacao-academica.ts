@@ -74,18 +74,26 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
     (blocoAto(c.reconhecimento_json, 'Reconhecimento') ?? '') +
     '</DadosCurso>';
 
-  const iesEmissora =
-    '<IesEmissora>' +
-    el('Nome', ies.nome) +
-    el('CodigoMEC', ies.codigo_emec) +
-    el('CNPJ', normalizarCnpj(ies.cnpj) ?? '') +
-    `<Endereco>${blocoEndereco({
+  const iesEmissora = (() => {
+    // Endereço incompleto → null (pendência): interpolar null geraria
+    // o texto literal "null" e rejeição XSD fora do gate de pendências.
+    const end = blocoEndereco({
       logradouro: ies.logradouro, numero: ies.numero, complemento: ies.complemento,
       bairro: ies.bairro, codigoMunicipio: ies.codigo_municipio,
       nomeMunicipio: ies.nome_municipio, uf: ies.uf, cep: ies.cep,
-    })}</Endereco>` +
-    (blocoAto(ies.credenciamento_json, 'Credenciamento') ?? '') +
-    '</IesEmissora>';
+    });
+    if (!end) return null;
+    return (
+      '<IesEmissora>' +
+      el('Nome', ies.nome) +
+      el('CodigoMEC', ies.codigo_emec) +
+      el('CNPJ', normalizarCnpj(ies.cnpj) ?? '') +
+      `<Endereco>${end}</Endereco>` +
+      (blocoAto(ies.credenciamento_json, 'Credenciamento') ?? '') +
+      '</IesEmissora>'
+    );
+  })();
+  if (!iesEmissora) return null;
 
   return (
     elAttrs('DadosDiploma', { id: chaveDip },

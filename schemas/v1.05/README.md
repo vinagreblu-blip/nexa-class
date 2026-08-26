@@ -38,11 +38,15 @@ resolver em qualquer sistema de arquivos (incluindo Linux/CI).
 
 O pacote do MEC declara os namespaces **W3C com `https://`**
 (`https://www.w3.org/2001/XMLSchema` e `https://www.w3.org/2000/09/xmldsig#`),
-enquanto o identificador canônico desses namespaces é `http://`. O libxml2
-(usado pelo validador do app, xmllint-wasm) só aceita a forma canônica.
-O aplicativo normaliza **apenas esses dois namespaces W3C** em memória,
-no adaptador `desktop/electron/diploma-digital/xsd-validator.ts` — os
-arquivos aqui permanecem intocados.
+enquanto o identificador canônico do **framework XSD** é `http://`. O libxml2
+(usado pelo validador do app, xmllint-wasm) só carrega schema do framework na
+forma canônica. O aplicativo normaliza **apenas o namespace do framework**
+(XMLSchema, `https`→`http`) em memória, no adaptador
+`desktop/electron/diploma-digital/xsd-validator.ts` — os arquivos aqui
+permanecem intocados. O **XMLDSig permanece `https`**: é o que o validador
+oficial do MEC exige (XML com `ds` em `http` é rejeitado com "Element
+Signature is not expected"), e os documentos gerados pelo app usam a variante
+`https` (ver `NS_DS` em `xml-utils.ts`).
 
 ## Atualizando para uma nova versão
 

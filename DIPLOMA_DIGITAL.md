@@ -121,7 +121,7 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **M1** ✅ XSDs oficiais + validação comprovada + tabelas + SQL nuvem + Storage + docs
 - **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
 - **M3** ✅ Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
-- **M4** ✅ Assinatura XAdES-BES real (A1) / XMLDSig real (A3 token), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
+- **M4** ✅ Assinatura XAdES-BES real em A1 e A3 (digest assinado DENTRO do token via SignHash; namespace ds `https` oficial MEC), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
 - **M5** ✅ ListaDiplomasAnulados (XML oficial, XSD-válido), ArquivoFiscalização (signed URLs https), RVDD (PDF+QR), validação manual no validador oficial MEC
 
 ### Detalhe do M3 (implementado)
@@ -151,19 +151,39 @@ já emitidos (`versao_schema` por diploma/arquivo).
 ### Detalhe do M4 (implementado)
 
 - **Assinatura REAL** (`xades-signer.ts`): XAdES-BES — 2 references
-  (documento com enveloped+C14N e `xades:SignedProperties` com
+  (alvo com enveloped+C14N e `xades:SignedProperties` com
   SigningTime + SigningCertificate digest SHA-256), KeyInfo com
   certificado X509 completo, RSA-SHA256. Assina por POSIÇÃO
   (esqueleto com SignatureValue vazio), na ordem: Histórico 1×, DA 2×
-  (ambas da emissora). **Prova de interoperabilidade**: round-trip com
-  `xml-crypto checkSignature` (motor independente) + revalidação XSD
-  (testes `xades-signer.test.ts`).
+  (ambas da emissora). **Reference por elemento**: quando o ancestral
+  da assinatura tem `@id` (ex.: DadosDiploma `id="Dip{44}"`) a
+  Reference é `URI="#Dip{44}"` e o digest cobre a SUBÁRVORE — é o que
+  impede que a 2ª assinatura (raiz, `URI=""`) invalide a 1ª e o que
+  mantém a assinatura da emissora verificável no Diploma final, onde o
+  DadosDiploma é transplantado byte-idêntito. **Conformidade X509**:
+  `X509SerialNumber` em DECIMAL (xs:integer) e `X509IssuerName` em
+  RFC2253 (ordem invertida + escaping). **Prova de interoperabilidade**:
+  round-trip com `xml-crypto checkSignature` (motor independente,
+  transform enveloped estendido p/ namespace `ds` https do MEC — ver
+  `verificador-teste.ts`) em histórico (1 assinatura), DA (2
+  assinaturas) e assinatura transplantada no Diploma final;
+  revalidação XSD junto (testes `xades-signer.test.ts`,
+  `diploma-final.test.ts`).
 - **A1**: extração do .pfx (node-forge) e assinatura em Node puro.
-- **A3**: infra PowerShell existente (XMLDSig enveloped REAL com o
-  token ICP-Brasil; a assinatura é movida para a posição do esqueleto —
-  o digest não depende da posição). **Pendência de conformidade
-  documentada**: camada XAdES no A3 e política XAdES-EPES (PolicyId da
-  IN-05) — incluir somente com o identificador oficial confirmado.
+- **A3**: o digest SHA-256 do SignedInfo (C14N) é assinado DENTRO do
+  token via `SignHash` bruto PKCS#1 v1.5 (`assinarHashA3` — PowerShell,
+  precheck/vigia de PIN/timeout reutilizados); a chave NUNCA sai do
+  hardware e o resultado criptográfico é idêntico ao do A1
+  (comprovado em teste com mock que reproduz o SignHash:
+  DigestInfo DER + PKCS#1 v1.5 — o caminho PowerShell real com token
+  físico permanece smoke-test manual na 1ª assinatura). O
+  certificado público do KeyInfo é exportado em PEM do próprio Windows
+  Store. **Pendência de conformidade documentada**: política XAdES-EPES
+  — suporte OPCIONAL implementado (`politica: { identificador,
+  digestBase64 }` em `OpcoesAssinaturaXades` →
+  `SignaturePolicyIdentifier`); ligar somente com o identificador
+  oficial da IN-05 E o digest SHA-256 do documento da política
+  confirmados (o SigPolicyHash é obrigatório no EPES — não se inventa).
 - **Registro assistido** (`gerar-diploma-xml.ts` + handler): grava o
   RETORNO da registradora (livro/folha/nº/datas/responsável/
   CodigoValidacao `eMEC.eMEC.hex`), monta o **Diploma final**

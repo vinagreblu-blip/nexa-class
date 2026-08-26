@@ -199,7 +199,7 @@ export interface DesktopApi {
       dataColacao?: string;
     }) => Promise<ApiResult<true>>;
     gerarXml: (id: number, artefato: 'historico_escolar' | 'documentacao_academica') => Promise<ApiResult<{ valido: boolean; erros: string[]; arquivoId: number }>>;
-    assinar: (id: number, artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => Promise<ApiResult<{ arquivoId: number; pendenciaXadesA3?: boolean }>>;
+    assinar: (id: number, artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => Promise<ApiResult<{ arquivoId: number }>>;
     registrar: (id: number, registro: {
       livro: string;
       numeroRegistro?: string;
