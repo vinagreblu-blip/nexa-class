@@ -1,12 +1,11 @@
 // ============================================================
-// VERIFICADOR XML-CRYPTO p/ TESTES — namespace ds https do MEC
+// VERIFICADOR XML-CRYPTO p/ TESTES — round-trip independente
 // ============================================================
-// O xml-crypto só conhece o namespace XMLDSig canônico (http://);
-// com a variante https (exigida pelo validador oficial do MEC) o
-// transform enveloped dele NÃO remove a assinatura do digest →
-// rejeição falsa. Este helper registra um transform enveloped que
-// reconhece AMBAS as variantes; digests/C14N/RSA continuam sendo
-// do xml-crypto (motor independente de verdade).
+// Transform enveloped que remove a assinatura verificada mesmo quando
+// há MÚLTIPLAS assinaturas no artefato (o do xml-crypto remove só a
+// primeira). Aceita o namespace ds canônico (http:// — o que os
+// documentos usam) e a variante https (defensivo). Digests/C14N/RSA
+// continuam sendo do xml-crypto (motor independente de verdade).
 // Arquivo de apoio a testes — NÃO é suíte (fora do include do vitest)
 // e não faz parte do runtime do app.
 import { SignedXml } from 'xml-crypto';
@@ -47,8 +46,8 @@ export class EnvelopedSignatureMec {
   }
 }
 
-/** SignedXml configurado p/ o padrão MEC (ds https + @id do leiaute,
- *  além de Id/ID do XMLDSig). Já carrega o nó da assinatura. */
+/** SignedXml configurado p/ o leiaute MEC (@id minúsculo além de
+ *  Id/ID do XMLDSig). Já carrega o nó da assinatura. */
 export function novoVerificador(certPem: string, sigNode: any): SignedXml {
   const sig = new SignedXml({ publicCert: certPem });
   sig.CanonicalizationAlgorithms['http://www.w3.org/2000/09/xmldsig#enveloped-signature'] =

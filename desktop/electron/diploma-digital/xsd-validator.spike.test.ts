@@ -13,7 +13,7 @@ const NS = 'https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
 
 describe('spike: validação XSD oficial MEC v1.05 (xmllint-wasm)', () => {
   it('carrega a cadeia de XSDs oficiais e rejeita XML estruturalmente inválido com erros', async () => {
-    const xmlVazio = `<?xml version="1.0" encoding="UTF-8"?><Diploma xmlns="${NS}" xmlns:ds="https://www.w3.org/2000/09/xmldsig#"/>`;
+    const xmlVazio = `<?xml version="1.0" encoding="UTF-8"?><Diploma xmlns="${NS}" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"/>`;
     const r = await validarXmlContraXsd(xmlVazio, 'diploma');
     expect(r.valido).toBe(false);
     expect(r.versaoSchema).toBe('1.05');
@@ -21,6 +21,15 @@ describe('spike: validação XSD oficial MEC v1.05 (xmllint-wasm)', () => {
     const juntos = r.erros.join('\n');
     expect(juntos).toMatch(/infDiploma/);
     expect(r.erros.length).toBeGreaterThan(0);
+  }, 30000);
+
+  it('rejeita XML com ds na variante https (o schema compilado usa o canônico http)', async () => {
+    // Comportamento do validador oficial do MEC (comprovado em produção):
+    // com ds em https a declaração do elemento raiz não resolve.
+    const xmlHttps = `<?xml version="1.0" encoding="UTF-8"?><Diploma xmlns="${NS}" xmlns:ds="https://www.w3.org/2000/09/xmldsig#"/>`;
+    const r = await validarXmlContraXsd(xmlHttps, 'diploma');
+    expect(r.valido).toBe(false);
+    expect(r.erros.join('\n')).toMatch(/Diploma/);
   }, 30000);
 
   it('rejeita XML fora do namespace oficial', async () => {

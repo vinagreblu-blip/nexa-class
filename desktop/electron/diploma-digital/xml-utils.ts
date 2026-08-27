@@ -17,11 +17,15 @@
 import { normalizarCep } from './normalizadores';
 
 export const NS_MEC = 'https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
-// ATENÇÃO: o pacote XSD oficial do MEC declara o namespace XMLDSig com
-// https:// (variação oficial da IN/MEC — validador do MEC rejeita a forma
-// canônica http://, testado empiricamente). Todos os documentos gerados
-// e assinados usam a variante https por essa razão.
-export const NS_DS = 'https://www.w3.org/2000/09/xmldsig#';
+// XMLDSig CANÔNICO (http:// — RFC 3275). Os XSDs do pacote MEC declaram a
+// variante https, mas o validador oficial (document-schema-validator, testado
+// empiricamente contra o serviço em produção) compila o schema com o namespace
+// CANÔNICO: documento com ds em https é rejeitado na raiz ("Não pode localizar
+// a declaração do elemento 'Diploma'"); com http, a validação de conteúdo roda
+// e as mensagens de erro citam {"http://www.w3.org/2000/09/xmldsig#":…}.
+// A validação local normaliza os XSDs https→http (xsd-validator.ts) para
+// reproduzir esse comportamento.
+export const NS_DS = 'http://www.w3.org/2000/09/xmldsig#';
 
 export function escapeXml(s: string): string {
   return (s ?? '')

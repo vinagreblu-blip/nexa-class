@@ -272,11 +272,12 @@ public static class NexaPinWatchdog {
 
 // PowerShell: SIGNHASH A3 — assina o DIGEST SHA-256 com a chave do token e
 // devolve a assinatura RSA BRUTA (base64). Necessário para o Diploma
-// Digital: o assinador XAdES do Node monta o SignedInfo com o namespace
-// XMLDSig em https (exigência do validador do MEC), o que o SignedXml do
-// .NET não produz (namespace interno http fixo). Com o SignHash bruto, a
-// chave NUNCA sai do hardware — o Node só recebe a assinatura do digest
-// que ele próprio computou (C14N do SignedInfo + SHA-256).
+// Digital: o assinador XAdES do Node monta o SignedInfo (namespace ds
+// canônico http) e assina o digest computado por ele; o SignedXml do
+// .NET não reproduz esse pipeline (namespace interno fixo + enveloped
+// do documento inteiro). Com o SignHash bruto, a chave NUNCA sai do
+// hardware — o Node só recebe a assinatura do digest que ele próprio
+// computou (C14N do SignedInfo + SHA-256).
 const PS_SIGNHASH_A3 = `
 param([string]$Thumbprint, [string]$HashFile, [string]$OutFile)
 $ErrorActionPreference = 'Stop'

@@ -170,6 +170,10 @@ export function Declaracoes({
 
       {sucesso && <div className="alert alert-success">{sucesso}</div>}
       {erro && <div className="alert alert-error">{erro}</div>}
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+        O XML emitido aqui (formato XML) é INTERNO do app para verificação — NÃO é o documento do padrão MEC. Para o
+        Diploma Digital oficial, use o módulo <strong>Diplomas Digitais</strong>.
+      </p>
 
       <div className="card" style={{ overflow: 'hidden' }}>
         <table>

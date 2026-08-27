@@ -40,8 +40,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import { NS_DS, escapeXml } from './xml-utils';
 
 const ALGO_C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-const ALGO_ENV = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
-const ALGO_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+const ALGO_ENV = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';const ALGO_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
 const ALGO_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
 const NS_XADES = 'http://uri.etsi.org/01903/v1.3.2#';
 const TYPE_SIGNED_PROPERTIES = 'http://uri.etsi.org/01903#SignedProperties';

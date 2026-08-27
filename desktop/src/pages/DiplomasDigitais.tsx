@@ -497,7 +497,7 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     setGerando(null);
     setModalSenha(null);
     if (r.ok) {
-      setMsg({ tipo: 'ok', texto: 'Assinado (XAdES-BES, namespace oficial MEC) e revalidado contra o XSD oficial.' });
+      setMsg({ tipo: 'ok', texto: 'Assinado (XAdES-BES, ds canônico oficial) e revalidado contra o XSD oficial.' });
     } else {
       setMsg({ tipo: 'erro', texto: r.error ?? 'Falha na assinatura' });
     }
@@ -508,16 +508,15 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     setMsg(null);
     const r = await api.diplomasDigitais.baixarArquivo(arquivoId);
     if (r.ok) {
-      setMsg({
-        tipo: 'ok',
-        texto:
-          `Salvo em "${r.data?.salvoPath}".` +
-          (tipoArquivo === 'diploma_final'
-            ? ' Este é o arquivo para o validador oficial do MEC (verificadordiplomadigital.mec.gov.br).'
-            : tipoArquivo.includes('assinad')
-              ? ' Para o validador do MEC, use o diploma-digital-final.xml (gerado na etapa Registrar) — este arquivo é para a IES Registradora.'
-              : ''),
-      });
+      let guia = '';
+      if (tipoArquivo === 'diploma_final') {
+        guia = ' Diploma final (espelho local — as assinaturas da registradora ficam pendentes). Para o validador do MEC: verificadordiplomadigital.mec.gov.br.';
+      } else if (tipoArquivo === 'documentacao_academica_assinada') {
+        guia = ' ESTE é o arquivo a ENVIAR à IES Registradora (ex.: sistema da UCSal) — é a Documentação Acadêmica assinada pela emissora.';
+      } else if (tipoArquivo === 'documentacao_academica') {
+        guia = ' DA ainda NÃO assinada — assine antes de enviar à registradora.';
+      }
+      setMsg({ tipo: 'ok', texto: `Salvo em "${r.data?.salvoPath}".${guia}` });
     } else {
       setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao baixar' });
     }

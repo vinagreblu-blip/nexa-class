@@ -10,16 +10,18 @@
 //
 // PECULIARIDADE OFICIAL: o pacote do MEC publica os namespaces W3C com
 // "https://" (https://www.w3.org/2001/XMLSchema e
-// https://www.w3.org/2000/09/xmldsig#). O identificador canônico do
-// FRAMEWORK XSD (XMLSchema) na especificação W3C é "http://" e o libxml2
-// só carrega schema nesse namespace canônico ("not a schema document").
-// Os ARQUIVOS oficiais permanecem verbatim no repo; o adaptador normaliza
-// EM MEMÓRIA apenas o namespace do framework (XMLSchema https→http),
-// MANTENDO o XMLDSig em https — exatamente o que o validador oficial do
-// MEC exige (comprovado: XML com ds em http é rejeitado com "Element
-// Signature is not expected"). A validação local assim reproduz
-// fielmente o validador do MEC; os documentos gerados usam ds https
-// (ver NS_DS em xml-utils.ts).
+// https://www.w3.org/2000/09/xmldsig#). O identificador canônico desses
+// namespaces na especificação W3C é "http://" e o libxml2 só reconhece
+// schemas no namespace canônico ("not a schema document"). Os ARQUIVOS
+// oficiais permanecem verbatim no repo; este adaptador normaliza APENAS
+// esses dois namespaces W3C em memória antes da validação (XMLSchema e
+// XMLDSig https→http). COMPROVADO em produção (validador oficial
+// document-schema-validator v1.5.15): documento com ds em https é
+// rejeitado na raiz ("Não pode localizar a declaração do elemento
+// 'Diploma'"); com o canônico http, a validação roda e as mensagens
+// citam {"http://www.w3.org/2000/09/xmldsig#":…}. O targetNamespace do
+// MEC (https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd) NÃO é
+// afetado. Os XMLs gerados usam o ds canônico (ver NS_DS em xml-utils).
 //
 // NÃO alterar os XSDs oficiais. Para uma nova versão do padrão,
 // criar schemas/vX.YZ/ nova e registrar em CONJUNTOS.
@@ -28,13 +30,15 @@ import path from 'node:path';
 import { validateXML } from 'xmllint-wasm';
 
 const NS_XMLSCHEMA_HTTPS = 'https://www.w3.org/2001/XMLSchema';
+const NS_XMLDSIG_HTTPS = 'https://www.w3.org/2000/09/xmldsig#';
 
-/** Normaliza o namespace do framework XSD https→http (em memória; arquivo
- *  fica verbatim). XMLDSig permanece https — fiel ao validador do MEC. */
+/** Normaliza os namespaces W3C https→http (em memória; arquivo fica
+ *  verbatim) — mesmo comportamento do validador oficial do MEC. */
 function adaptarXsd(conteudo: Uint8Array): Uint8Array {
   const texto = Buffer.from(conteudo).toString('utf8');
   const normalizado = texto
-    .split(NS_XMLSCHEMA_HTTPS).join('http://www.w3.org/2001/XMLSchema');
+    .split(NS_XMLSCHEMA_HTTPS).join('http://www.w3.org/2001/XMLSchema')
+    .split(NS_XMLDSIG_HTTPS).join('http://www.w3.org/2000/09/xmldsig#');
   return new TextEncoder().encode(normalizado);
 }
 

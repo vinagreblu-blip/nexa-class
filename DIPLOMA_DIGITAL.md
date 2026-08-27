@@ -121,7 +121,7 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **M1** ✅ XSDs oficiais + validação comprovada + tabelas + SQL nuvem + Storage + docs
 - **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
 - **M3** ✅ Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
-- **M4** ✅ Assinatura XAdES-BES real em A1 e A3 (digest assinado DENTRO do token via SignHash; namespace ds `https` oficial MEC), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
+- **M4** ✅ Assinatura XAdES-BES real em A1 e A3 (digest assinado DENTRO do token via SignHash; ds canônico `http://`, como o validador oficial compila), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
 - **M5** ✅ ListaDiplomasAnulados (XML oficial, XSD-válido), ArquivoFiscalização (signed URLs https), RVDD (PDF+QR), validação manual no validador oficial MEC
 
 ### Detalhe do M3 (implementado)
@@ -164,8 +164,8 @@ já emitidos (`versao_schema` por diploma/arquivo).
   `X509SerialNumber` em DECIMAL (xs:integer) e `X509IssuerName` em
   RFC2253 (ordem invertida + escaping). **Prova de interoperabilidade**:
   round-trip com `xml-crypto checkSignature` (motor independente,
-  transform enveloped estendido p/ namespace `ds` https do MEC — ver
-  `verificador-teste.ts`) em histórico (1 assinatura), DA (2
+  transform enveloped próprio que remove a assinatura CERTA quando há
+  várias — ver `verificador-teste.ts`) em histórico (1 assinatura), DA (2
   assinaturas) e assinatura transplantada no Diploma final;
   revalidação XSD junto (testes `xades-signer.test.ts`,
   `diploma-final.test.ts`).
@@ -226,6 +226,15 @@ já emitidos (`versao_schema` por diploma/arquivo).
   MANUAL é registrado em `validado_mec_em` + auditoria (o app não integra
   com o validador do MEC — a conformidade estrutural é uma etapa, e a
   conferência oficial fica registrada como trilha).
+  **Comportamento comprovado empiricamente (27/08/2026, validator 1.5.15)**:
+  o schema compilado do serviço usa o XMLDSig canônico `http://` — documento
+  com `ds` em `https` é rejeitado na raiz ("Não pode localizar a declaração
+  do elemento …"); com `http://`, a validação de conteúdo roda. Porém o
+  endpoint público atualmente **derruba a resolução do schema quando o
+  documento contém `ds:Reference`** (todo documento assinado tem) — bissecção
+  elemento a elemento confirmou; sem isso, nossos artefatos validam
+  estruturalmente. A submissão real (e-MEC / sistema da registradora) é
+  outra pilha — o arquivo para a registradora é a **DA assinada**.
 - **Anulação**: motivo passou a usar a enumeração oficial (6 motivos) +
   anotação opcional; colunas `anotacao_anulacao`/`validado_mec_em`
   (SQLite + Postgres).

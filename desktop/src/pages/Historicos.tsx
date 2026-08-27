@@ -240,7 +240,12 @@ function ModalHistorico({ aluno, onClose }: { aluno: Aluno; onClose: () => void 
     try {
       const res = await api.historico.gerarXml(aluno.id, senhaPfx);
       if (res.ok && res.data) {
-        setSucesso(res.data.aviso ?? `XML gerado em: ${res.data.xmlPath}`);
+        // Aviso permanente: este XML é INTERNO do app (nexa-class.edu) —
+        // não é o Histórico Escolar Digital do padrão MEC.
+        setSucesso(
+          (res.data.aviso ?? `XML gerado em: ${res.data.xmlPath}`) +
+            ' — XML interno de verificação do app; para o padrão MEC use Diplomas Digitais.'
+        );
       } else if (res.error !== 'Operação cancelada') {
         setErro(res.error ?? 'Erro ao gerar XML');
       }

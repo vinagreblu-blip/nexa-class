@@ -694,9 +694,10 @@ throw 'Certificado nao encontrado'
 
 /**
  * Assina TODAS as posições da emissora no artefato indicado.
- * A1 e A3 produzem o MESMO XAdES-BES real (namespace ds https, exigência
- * do validador do MEC): no A3 o digest do SignedInfo é assinado DENTRO do
- * token via SignHash bruto (assinarHashA3) — a chave nunca sai do hardware.
+ * A1 e A3 produzem o MESMO XAdES-BES real (ds canônico http://, como o
+ * validador oficial compila): no A3 o digest do SignedInfo é assinado
+ * DENTRO do token via SignHash bruto (assinarHashA3) — a chave nunca sai
+ * do hardware.
  */
 function assinarHandler(
   _event: IpcMainInvokeEvent,
@@ -730,11 +731,11 @@ function assinarHandler(
     let xmlAssinado: string;
     try {
       if (assinatura.certificado_tipo === 'A3' && assinatura.certificado_a3_thumbprint) {
-        // A3: XAdES-BES com namespace https (exigência do validador do MEC).
-        // O digest do SignedInfo é assinado DENTRO do token (SignHash bruto
-        // via PS_SIGNHASH_A3 — precheck/vigia de PIN/timeout reutilizados);
-        // a chave nunca sai do hardware. O certificado público precisa estar
-        // exportável em PEM: extraímos do próprio Windows Store via PowerShell.
+        // A3: XAdES-BES com o ds canônico (http://). O digest do SignedInfo
+        // é assinado DENTRO do token (SignHash bruto via PS_SIGNHASH_A3 —
+        // precheck/vigia de PIN/timeout reutilizados); a chave nunca sai do
+        // hardware. O certificado público precisa estar exportável em PEM:
+        // extraímos do próprio Windows Store via PowerShell.
         const certPem = await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint);
         xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
           signatureIdBase: `Sign-DD${diplomaId}`,
@@ -1153,8 +1154,11 @@ function registrarValidacaoMecHandler(
   return { ok: true, data: true };
 }
 
-/** Baixa um XML/PDF do processo (diálogo "Salvar como") — o arquivo do
- *  validador oficial do MEC é o "diploma_final" (raiz <Diploma>). */
+/** Baixa um XML/PDF do processo (diálogo "Salvar como"). Prioridade:
+ *  caminho local gravado → caminho canônico do userData → bucket privado
+ *  (arquivo gerado em outra máquina). O arquivo do validador oficial do
+ *  MEC é o "diploma_final" (raiz <Diploma>); o de ENVIO à registradora
+ *  é a DA assinada. */
 function baixarArquivoHandler(
   event: IpcMainInvokeEvent,
   arquivoId: number
@@ -1163,27 +1167,62 @@ function baixarArquivoHandler(
     const db = getDb();
     const row = db
       .prepare('SELECT * FROM diploma_arquivos WHERE id = ?')
-      .get(arquivoId) as { id: number; diploma_id: number; tipo_arquivo: string; caminho_local: string | null } | undefined;
+      .get(arquivoId) as
+      | { id: number; diploma_id: number; tipo_arquivo: string; nome: string | null; caminho_storage: string | null }
+      | undefined;
     if (!row) return { ok: false, error: 'Arquivo não encontrado.' };
-    if (!row.caminho_local || !fs.existsSync(row.caminho_local)) {
-      return {
-        ok: false,
-        error: 'Arquivo não encontrado nesta máquina (gerado em outro computador?). Regenere ou sincronize a nuvem.',
-      };
+
+    // 1) caminho local registrado (persistido por gerarXml/persistirNovaVersao)
+    if (row.caminho_storage && fs.existsSync(row.caminho_storage)) {
+      return salvarCopia(event, row.caminho_storage, row.tipo_arquivo);
     }
-    const win = BrowserWindow.fromWebContents(event.sender);
-    const ext = row.tipo_arquivo.endsWith('rvdd') ? 'pdf' : 'xml';
-    const destino = win
-      ? await dialog.showSaveDialog(win, {
-          title: 'Salvar arquivo do Diploma Digital',
-          defaultPath: path.basename(row.caminho_local),
-          filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
-        })
-      : { canceled: true, filePath: '' };
-    if (destino.canceled || !destino.filePath) return { ok: false, error: 'Cancelado' };
-    fs.copyFileSync(row.caminho_local, destino.filePath);
-    return { ok: true, data: { salvoPath: destino.filePath } };
+    // 2) caminho canônico do userData (todo gerador escreve aqui)
+    const canonico = path.join(
+      app.getPath('userData'), 'diplomas-digitais', String(row.diploma_id),
+      row.nome ?? path.basename(row.caminho_storage ?? '')
+    );
+    if (fs.existsSync(canonico)) {
+      return salvarCopia(event, canonico, row.tipo_arquivo);
+    }
+    // 3) bucket privado (arquivo gerado em outra máquina): caminho_storage
+    //    é a chave "{diplomaId}/{arquivo}" quando o upload funcionou.
+    if (row.caminho_storage && !path.isAbsolute(row.caminho_storage)) {
+      try {
+        const client = getClient();
+        if (client) {
+          const { data, error } = await client.storage.from('diplomas-digitais').download(row.caminho_storage);
+          if (!error && data) {
+            fs.mkdirSync(path.dirname(canonico), { recursive: true });
+            fs.writeFileSync(canonico, Buffer.from(await data.arrayBuffer()));
+            return salvarCopia(event, canonico, row.tipo_arquivo);
+          }
+          logger.warn({ err: error?.message, chave: row.caminho_storage }, 'Download do XML do Storage falhou');
+        }
+      } catch (e: any) {
+        logger.warn({ err: e?.message }, 'Storage indisponível para baixar XML');
+      }
+    }
+    return {
+      ok: false,
+      error: 'Arquivo não encontrado nesta máquina nem na nuvem (gere o XML novamente).',
+    };
   })();
+}
+
+/** Diálogo "Salvar como" + cópia do arquivo local para o destino escolhido. */
+async function salvarCopia(event: IpcMainInvokeEvent, origem: string, tipoArquivo: string): Promise<ApiResult<{ salvoPath: string }>> {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const ext = tipoArquivo === 'rvdd' ? 'pdf' : 'xml';
+  const destino = win
+    ? await dialog.showSaveDialog(win, {
+        title: 'Salvar arquivo do Diploma Digital',
+        defaultPath: path.basename(origem),
+        filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+      })
+    : { canceled: true, filePath: '' };
+  if (destino.canceled || !destino.filePath) return { ok: false, error: 'Cancelado' };
+  fs.copyFileSync(origem, destino.filePath);
+  return { ok: true, data: { salvoPath: destino.filePath } };
 }
 
 export function registrarDiplomasDigitaisHandlers(): void {
