@@ -39,6 +39,7 @@ import { registrarSmtpHandlers } from './ipc/smtp';
 import { registrarExtracaoHandlers } from './ipc/extracao';
 import { registrarConversoesHandlers } from './ipc/conversoes';
 import { registrarAssinaturaHandlers } from './ipc/assinatura';
+import { registrarTsaHandlers } from './ipc/tsa';
 import { registrarCloudHandlers } from './ipc/cloud';
 import { initCloud, syncBidirecional, agendarSyncRapido, setOnDadosAlterados } from './cloud';
 import { iniciarRealtime, fecharRealtime, setOnEstadoConexao, obterEstadoConexao } from './realtime';
@@ -186,6 +187,7 @@ function registrarHandlers(): void {
   registrarExtracaoHandlers();
   registrarConversoesHandlers();
   registrarAssinaturaHandlers();
+  registrarTsaHandlers();
   registrarCloudHandlers();
   registrarDiplomasDigitaisHandlers();
   try {

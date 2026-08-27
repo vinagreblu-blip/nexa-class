@@ -269,6 +269,12 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_ASSINAR_XML, xmlContent, senhaPfx),
     previewImagem: (): Promise<ApiResult<{ dataUrl: string | null }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_PREVIEW_IMAGEM),
+    tsaObter: (): Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean } | null>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_OBTER),
+    tsaSalvar: (input: { url: string; usuario?: string; senha?: string; manterSenhaAtual?: boolean }): Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_SALVAR, input),
+    tsaTestar: (): Promise<ApiResult<{ genTime: string; bytes: number }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_TESTAR),
   },
   cloud: {
     status: (): Promise<ApiResult<{ url: string; key: string; enabled: boolean }>> =>

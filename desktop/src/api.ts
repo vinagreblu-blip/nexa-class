@@ -199,7 +199,7 @@ export interface DesktopApi {
       dataColacao?: string;
     }) => Promise<ApiResult<true>>;
     gerarXml: (id: number, artefato: 'historico_escolar' | 'documentacao_academica') => Promise<ApiResult<{ valido: boolean; erros: string[]; arquivoId: number }>>;
-    assinar: (id: number, artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => Promise<ApiResult<{ arquivoId: number }>>;
+    assinar: (id: number, artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => Promise<ApiResult<{ arquivoId: number; carimbos?: string[]; avisoCarimbo?: string }>>;
     registrar: (id: number, registro: {
       livro: string;
       numeroRegistro?: string;
@@ -276,6 +276,9 @@ export interface DesktopApi {
     salvarCertA3: (thumbprint: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
     assinarXml: (xmlContent: string, senhaPfx: string) => Promise<ApiResult<{ xml: string }>>;
     previewImagem: () => Promise<ApiResult<{ dataUrl: string | null }>>;
+    tsaObter: () => Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean } | null>>;
+    tsaSalvar: (input: { url: string; usuario?: string; senha?: string; manterSenhaAtual?: boolean }) => Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean }>>;
+    tsaTestar: () => Promise<ApiResult<{ genTime: string; bytes: number }>>;
   };
   cloud: {
     status: () => Promise<ApiResult<{ url: string; key: string; enabled: boolean }>>;

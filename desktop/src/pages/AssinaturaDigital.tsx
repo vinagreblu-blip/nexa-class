@@ -86,6 +86,57 @@ export function AssinaturaDigital() {
   const [assinando, setAssinando] = useState(false);
   const [xmlResultado, setXmlResultado] = useState<string | null>(null);
 
+  // Carimbo do tempo (TSA) — XAdES-T do Diploma Digital
+  const [tsaUrl, setTsaUrl] = useState('');
+  const [tsaUsuario, setTsaUsuario] = useState('');
+  const [tsaSenha, setTsaSenha] = useState('');
+  const [tsaTemSenha, setTsaTemSenha] = useState(false);
+  const [tsaSalvando, setTsaSalvando] = useState(false);
+  const [tsaTestando, setTsaTestando] = useState(false);
+  const [tsaMsg, setTsaMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await api.assinatura.tsaObter();
+      if (r.ok && r.data) {
+        setTsaUrl(r.data.url);
+        setTsaUsuario(r.data.usuario ?? '');
+        setTsaTemSenha(r.data.temSenha);
+      }
+    })();
+  }, []);
+
+  const salvarTsa = async () => {
+    setTsaMsg(null);
+    setTsaSalvando(true);
+    const r = await api.assinatura.tsaSalvar({
+      url: tsaUrl,
+      usuario: tsaUsuario || undefined,
+      senha: tsaSenha || undefined,
+      manterSenhaAtual: !tsaSenha,
+    });
+    setTsaSalvando(false);
+    if (r.ok) {
+      setTsaTemSenha(!!r.data?.temSenha);
+      setTsaSenha('');
+      setTsaMsg({ tipo: 'ok', texto: 'TSA salvo. Use o "Testar carimbo" para confirmar que o serviço responde.' });
+    } else {
+      setTsaMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao salvar' });
+    }
+  };
+
+  const testarTsa = async () => {
+    setTsaMsg(null);
+    setTsaTestando(true);
+    const r = await api.assinatura.tsaTestar();
+    setTsaTestando(false);
+    if (r.ok) {
+      setTsaMsg({ tipo: 'ok', texto: `Carimbo OK — TSA retornou ${r.data?.genTime} (token de ${r.data?.bytes} bytes).` });
+    } else {
+      setTsaMsg({ tipo: 'erro', texto: r.error ?? 'Falha no teste' });
+    }
+  };
+
   async function carregar() {
     setCarregando(true);
     const res = await api.assinatura.obter();
@@ -526,6 +577,40 @@ export function AssinaturaDigital() {
           )}
         </Modal>
       )}
+
+      {/* Carimbo do Tempo (TSA) — XAdES-T do Diploma Digital */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Carimbo do Tempo (TSA) — XAdES-T</h3>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+          A política de assinatura do Diploma Digital (IN Sesu 1/2020) exige carimbo do tempo criptográfico no
+          Histórico e no Diploma. Cadastre o serviço de carimbo (TSA) da IES — geralmente fornecido pela mesma
+          empresa do certificado digital (URL no formato https://tsa.fornecedor.com.br/tsp, protocolo RFC 3161).
+          Sem TSA configurado, as assinaturas saem como XAdES-BES com aviso de pendência.
+        </p>
+        <div className="form-grid">
+          <div className="full">
+            <label>URL do TSA (RFC 3161) *</label>
+            <input value={tsaUrl} onChange={(e) => setTsaUrl(e.target.value)} placeholder="https://tsa.fornecedor.com.br/tsp" />
+          </div>
+          <div>
+            <label>Usuário (se o TSA exigir)</label>
+            <input value={tsaUsuario} onChange={(e) => setTsaUsuario(e.target.value)} autoComplete="off" />
+          </div>
+          <div>
+            <label>Senha {tsaTemSenha ? '(salva — deixe vazio para manter)' : '(se exigir)'}</label>
+            <input type="password" value={tsaSenha} onChange={(e) => setTsaSenha(e.target.value)} autoComplete="new-password" />
+          </div>
+        </div>
+        {tsaMsg && <div className={tsaMsg.tipo === 'ok' ? 'alert alert-success' : 'alert alert-error'}>{tsaMsg.texto}</div>}
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <button className="btn-primary" disabled={tsaSalvando || !tsaUrl.trim()} onClick={() => void salvarTsa()}>
+            {tsaSalvando ? 'Salvando…' : 'Salvar TSA'}
+          </button>
+          <button className="btn-ghost" disabled={tsaTestando || !tsaUrl.trim()} onClick={() => void testarTsa()}>
+            {tsaTestando ? 'Carimbando…' : 'Testar carimbo'}
+          </button>
+        </div>
+      </div>
 
       {/* Modal Selecionar A3 (Windows Certificate Store) */}
       {modalA3 && (

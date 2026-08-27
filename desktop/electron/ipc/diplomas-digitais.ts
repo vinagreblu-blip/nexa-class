@@ -704,7 +704,7 @@ function assinarHandler(
   diplomaId: number,
   artefato: 'historico_escolar' | 'documentacao_academica',
   senhaPfx?: string
-): Promise<ApiResult<{ arquivoId: number }>> {
+): Promise<ApiResult<{ arquivoId: number; carimbos?: string[]; avisoCarimbo?: string }>> {
   return (async () => {
     const db = getDb();
     const proc = db.prepare('SELECT * FROM diplomas_digitais WHERE id = ?').get(diplomaId) as any;
@@ -729,35 +729,78 @@ function assinarHandler(
     }
 
     let xmlAssinado: string;
-    try {
-      if (assinatura.certificado_tipo === 'A3' && assinatura.certificado_a3_thumbprint) {
-        // A3: XAdES-BES com o ds canônico (http://). O digest do SignedInfo
-        // é assinado DENTRO do token (SignHash bruto via PS_SIGNHASH_A3 —
-        // precheck/vigia de PIN/timeout reutilizados); a chave nunca sai do
-        // hardware. O certificado público precisa estar exportável em PEM:
-        // extraímos do próprio Windows Store via PowerShell.
-        const certPem = await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint);
-        xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
+    let avisoCarimbo: string | undefined;
+    const carimbos: string[] = [];
+    // XAdES-T: carimbo do tempo (exigência da política de assinatura da
+    // IN Sesu 1/2020) sobre cada assinatura real, APLICADO LOGO APÓS cada
+    // assinatura (a da raiz cobre o documento com o carimbo da interna).
+    // Sem TSA configurado ou com falha, segue sem carimbo com AVISO
+    // EXPLÍCITO (nunca fabricado).
+    const { obterTsaConfig } = await import('./tsa');
+    const { carimbarDigest } = await import('../diploma-digital/tsa-cliente');
+    const cfgTsa = obterTsaConfig();
+    const carimbador: ((digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>) | undefined = cfgTsa
+      ? async (digest) => {
+          try {
+            const c = await carimbarDigest(cfgTsa, digest, 20000);
+            if (c.genTime) carimbos.push(c.genTime);
+            return { token: c.token, genTime: c.genTime };
+          } catch (e: any) {
+            (e as any).erroTsa = true; // catch externo reverte p/ sem carimbo
+            throw e;
+          }
+        }
+      : undefined;
+    if (!cfgTsa) {
+      avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES) — a política do Diploma Digital exige carimbo (XAdES-T): configure o TSA da IES em Assinatura Digital → Carimbo do Tempo.';
+    }
+
+    const ehA3 = assinatura.certificado_tipo === 'A3' && !!assinatura.certificado_a3_thumbprint;
+    if (!ehA3) {
+      if (!assinatura.certificado_path || !fs.existsSync(assinatura.certificado_path)) {
+        return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: certificado A1 (.pfx) não encontrado — reimporte em Assinatura Digital.' };
+      }
+      if (!senhaPfx) return { ok: false, error: 'Senha do certificado A1 é obrigatória.' };
+    }
+
+    const assinarCom = async (comCarimbo: boolean): Promise<string> => {
+      const carimb = comCarimbo && carimbador ? { carimbador } : {};
+      if (ehA3) {
+        // A3: XAdES com o ds canônico (http://); digest assinado DENTRO do
+        // token (SignHash bruto); certificado público PEM do Windows Store.
+        const certPem = await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint!);
+        return assinarTodosEsqueletos(lido.xml, {
           signatureIdBase: `Sign-DD${diplomaId}`,
           certPem,
           thumbprintA3: assinatura.certificado_a3_thumbprint,
-        });
-      } else {
-        // A1: XAdES-BES completo em Node puro
-        if (!assinatura.certificado_path || !fs.existsSync(assinatura.certificado_path)) {
-          return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: certificado A1 (.pfx) não encontrado — reimporte em Assinatura Digital.' };
-        }
-        if (!senhaPfx) return { ok: false, error: 'Senha do certificado A1 é obrigatória.' };
-        const { chavePem, certPem } = extrairPfxA1(assinatura.certificado_path, senhaPfx);
-        xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
-          signatureIdBase: `Sign-DD${diplomaId}`,
-          chavePem,
-          certPem,
+          ...carimb,
         });
       }
+      const { chavePem, certPem } = extrairPfxA1(assinatura.certificado_path!, senhaPfx!);
+      return assinarTodosEsqueletos(lido.xml, {
+        signatureIdBase: `Sign-DD${diplomaId}`,
+        chavePem,
+        certPem,
+        ...carimb,
+      });
+    };
+
+    try {
+      xmlAssinado = await assinarCom(true);
     } catch (e: any) {
-      auditar(diplomaId, `assinatura_${artefato}`, 'erro', { err: e?.message });
-      return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
+      if ((e as any)?.erroTsa) {
+        // TSA fora do ar: assina XAdES-BES (sem carimbo) + aviso claro
+        carimbos.length = 0;
+        try {
+          xmlAssinado = await assinarCom(false);
+        } catch {
+          return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
+        }
+        avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES): falha no TSA — ' + (e?.message ?? String(e)) + '. Configure/teste em Assinatura Digital → Carimbo do Tempo e assine novamente.';
+      } else {
+        auditar(diplomaId, `assinatura_${artefato}`, 'erro', { err: e?.message });
+        return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
+      }
     }
 
     // Revalida XSD — inválido não continua
@@ -774,8 +817,13 @@ function assinarHandler(
       return { ok: false, error: 'XML assinado rejeitado na revalidação XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
     }
     db.prepare("UPDATE diplomas_digitais SET status = 'assinado', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
-    auditar(diplomaId, `assinatura_${artefato}`, 'sucesso', { tipo: assinatura.certificado_tipo });
-    return { ok: true, data: { arquivoId: 0 } };
+    auditar(diplomaId, `assinatura_${artefato}`, 'sucesso', {
+      tipo: assinatura.certificado_tipo,
+      carimbado: carimbos.length > 0,
+      carimbos: carimbos.filter(Boolean),
+      avisoCarimbo,
+    });
+    return { ok: true, data: { arquivoId: 0, carimbos, avisoCarimbo } };
   })();
 }
 

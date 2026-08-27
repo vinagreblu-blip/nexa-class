@@ -101,7 +101,7 @@ aguardando_conclusao → apto → em_preparacao → xml_gerado → (xml_invalido
 | Certificado A1/A3 ICP-Brasil da IES | AC (ex.: FENACON/SESCAP) | Assinatura XAdES (M4) |
 | IES Registradora habilitada | Contrato institucional | Registro (M4) |
 | e-MEC da IES/cursos, atos regulatórios | Secretaria da IES | Cadastro institucional (M2) |
-| Carimbo do tempo (se exigido pela política da IN) | TSA contratada | XAdES-T (M4) |
+| Carimbo do tempo (TSA RFC 3161) | Fornecedor do certificado/ACT (configurável em Assinatura Digital → Carimbo do Tempo) | XAdES-T: carimba cada assinatura real (Histórico e DA) logo após criada — o token em `EncapsulatedTimeStamp` atesta a hora por terceiro auditado (nunca fabricado pelo app); sem TSA/falha → XAdES-BES com aviso de pendência |
 
 ## 8. Atualização dos schemas
 

@@ -354,6 +354,10 @@ export async function assinarTodosEsqueletos(xml: string, opts: {
   certPem: string;
   thumbprintA3?: string;
   politica?: PoliticaXades;
+  /** XAdES-T: carimba CADA assinatura imediatamente após criá-la — a
+   *  assinatura seguinte (raiz, URI="") cobre o documento COM o carimbo
+   *  da anterior; carimbar tudo ao final quebraria o digest da raiz. */
+  carimbador?: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>;
 }): Promise<string> {
   let out = xml;
   let i = 0;
@@ -365,6 +369,11 @@ export async function assinarTodosEsqueletos(xml: string, opts: {
       thumbprintA3: opts.thumbprintA3,
       politica: opts.politica,
     });
+    if (opts.carimbador) {
+      // idempotente: carimba apenas as reais ainda sem carimbo (no caso,
+      // a recém-criada — as anteriores já foram carimbadas no passo delas)
+      out = (await carimbarAssinaturas(out, opts.carimbador)).xml;
+    }
     i++;
     if (i > 6) throw new Error('Loop de assinatura — estrutura inesperada');
   }
@@ -374,4 +383,50 @@ export async function assinarTodosEsqueletos(xml: string, opts: {
 /** Quantidade de esqueletos (posições) ainda sem assinatura real. */
 export function contarEsqueletos(xml: string): number {
   return trechosAssinatura(xml).filter((t) => t.esqueleto).length;
+}
+
+/**
+ * XAdES-T — carimbo do tempo (RFC 3161) em CADA assinatura real do
+ * artefato: o SignatureValue é hasheado (SHA-256) e carimbado pela TSA;
+ * o token DER entra em xades:EncapsulatedTimeStamp dentro de
+ * UnsignedSignatureProperties (propriedades NÃO assinadas — não alteram
+ * os digests/assinaturas existentes; viajam com a assinatura no
+ * transplante da DA para o Diploma final). Esqueletos (posições da
+ * registradora) NÃO são carimbados.
+ * @obterCarimbo recebe o SHA-256 do SignatureValue e devolve o token.
+ */
+export async function carimbarAssinaturas(
+  xml: string,
+  obterCarimbo: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>
+): Promise<{ xml: string; carimbos: string[] }> {
+  const { createHash } = await import('node:crypto');
+  let out = xml;
+  const carimbos: string[] = [];
+  // Ordem REVERSA: cada inserção altera offsets seguintes — processando do
+  // fim para o começo, os índices dos trechos restantes continuam válidos.
+  for (const trecho of [...trechosAssinatura(xml)].reverse()) {
+    if (trecho.esqueleto) continue;
+    if (trecho.texto.includes('<xades:SignatureTimeStamp')) continue; // já carimbada (idempotente)
+    const mValor = /<ds:SignatureValue>([^<]+)<\/ds:SignatureValue>/.exec(trecho.texto);
+    const mId = /<ds:Signature[^>]*\sId="([^"]+)"/.exec(trecho.texto);
+    const mFimQp = trecho.texto.lastIndexOf('</xades:QualifyingProperties>');
+    if (!mValor || !mId || mFimQp < 0) continue;
+    const valor = Buffer.from(mValor[1], 'base64');
+    const digest = createHash('sha256').update(valor).digest();
+    const carimbo = await obterCarimbo(digest);
+    const sigId = mId[1];
+    const bloco =
+      '<xades:UnsignedProperties>' +
+      '<xades:UnsignedSignatureProperties>' +
+      `<xades:SignatureTimeStamp Id="ST-${sigId}">` +
+      `<xades:EncapsulatedTimeStamp Id="STT-${sigId}">${carimbo.token.toString('base64')}</xades:EncapsulatedTimeStamp>` +
+      '</xades:SignatureTimeStamp>' +
+      '</xades:UnsignedSignatureProperties>' +
+      '</xades:UnsignedProperties>';
+    const novoTrecho =
+      trecho.texto.slice(0, mFimQp) + bloco + trecho.texto.slice(mFimQp);
+    out = out.slice(0, trecho.inicio) + novoTrecho + out.slice(trecho.inicio + trecho.texto.length);
+    carimbos.unshift(carimbo.genTime ?? '');
+  }
+  return { xml: out, carimbos };
 }

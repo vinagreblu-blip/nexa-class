@@ -497,7 +497,17 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     setGerando(null);
     setModalSenha(null);
     if (r.ok) {
-      setMsg({ tipo: 'ok', texto: 'Assinado (XAdES-BES, ds canônico oficial) e revalidado contra o XSD oficial.' });
+      const carimbos = (r.data?.carimbos ?? []).filter(Boolean);
+      const txtCarimbo = carimbos.length
+        ? ` Assinado com carimbo do tempo (XAdES-T) às ${carimbos.join(' / ')}.`
+        : '';
+      setMsg({
+        tipo: r.data?.avisoCarimbo ? 'erro' : 'ok',
+        texto:
+          (r.data?.avisoCarimbo
+            ? `${r.data.avisoCarimbo}`
+            : 'Assinado (XAdES-BES, ds canônico oficial) e revalidado contra o XSD oficial.') + txtCarimbo,
+      });
     } else {
       setMsg({ tipo: 'erro', texto: r.error ?? 'Falha na assinatura' });
     }
