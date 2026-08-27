@@ -97,19 +97,20 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
     expect(xml).toBeTruthy();
 
-    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'xmldsig-test01', chavePem, certPem });
 
     // Estrutura: assinatura real presente
     expect(assinado).toContain('<ds:SignatureValue>');
     expect(assinado).not.toContain('<ds:SignatureValue></ds:SignatureValue>');
-    expect(assinado).toContain('xades:SignedProperties');
+    expect(assinado).toContain('SignedProperties');
     expect(assinado).toContain('<ds:X509Certificate>');
+    expect(assinado).toContain('<ds:X509SubjectName>');
 
     // Verificação INDEPENDENTE: xml-crypto valida digests + assinatura RSA
     // (transform enveloped estendido p/ namespace https do MEC — ver helper)
     const { DOMParser } = await import('@xmldom/xmldom');
     const docFinal = new DOMParser().parseFromString(assinado, 'text/xml');
-    const sigNode = docFinal.getElementsByTagName('ds:Signature')[0];
+    const sigNode = docFinal.getElementsByTagNameNS('*', 'Signature')[0];
     const sig = novoVerificador(certPem, sigNode);
     const ok = sig.checkSignature(assinado);
     if (!ok) for (const r of sig.getReferences()) console.error('REF', r.uri, '→', r.validationError);
@@ -120,26 +121,26 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
     }
   }, 60000);
 
-  it('X509SerialNumber DECIMAL e X509IssuerName RFC2253 (ordem invertida)', async () => {
+  it('X509SerialNumber DECIMAL e X509IssuerName .NET', async () => {
     const { certPem, chavePem, serialHex } = gerarCertTeste();
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
-    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'xmldsig-test01', chavePem, certPem });
 
     // Serial: xs:integer → decimal (forge devolve hex)
     const serialEsperado = BigInt('0x' + serialHex).toString();
-    expect(assinado).toContain(`<X509SerialNumber>${serialEsperado}</X509SerialNumber>`);
-    expect(assinado).not.toContain(`<X509SerialNumber>${serialHex}</X509SerialNumber>`);
-    const mSerial = /<X509SerialNumber>([^<]+)<\/X509SerialNumber>/.exec(assinado)!;
+    const mSerial = /<X509SerialNumber[^>]*>([^<]+)<\/X509SerialNumber>/.exec(assinado)!;
+    expect(mSerial[1]).toBe(serialEsperado);
     expect(mSerial[1]).toMatch(/^\d+$/);
 
-    // IssuerSerial RFC2253: ordem INVERSA do ASN.1 ([CN,O,C] → C,O,CN)
-    expect(assinado).toContain('<X509IssuerName>C=BR,O=Teste,CN=NEXA CLASS TESTE</X509IssuerName>');
+    // IssuerSerial: formato .NET (DN ordem do certificado "TYPE=value,TYPE=value")
+    const mIssuer = /<X509IssuerName[^>]*>([^<]+)<\/X509IssuerName>/.exec(assinado)!;
+    expect(mIssuer[1]).toMatch(/^CN=NEXA CLASS TESTE,O=Teste,C=BR$/);
   }, 60000);
 
   it('XML assinado continua VÁLIDO contra o XSD oficial v1.05', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
-    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'xmldsig-test01', chavePem, certPem });
     const r = await validarXmlContraXsd(assinado, 'historicoEscolar');
     if (!r.valido) console.error('ERROS XSD:', r.erros);
     expect(r.valido).toBe(true);
@@ -148,11 +149,11 @@ describe('M4: assinatura XAdES-BES real (A1, verificável)', () => {
   it('alterar UM caractere do documento invalida a assinatura (integridade)', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
-    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'Sign-Hist-42', chavePem, certPem });
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'xmldsig-test01', chavePem, certPem });
     const adulterado = assinado.replace('MARIA DA SILVA', 'MARIA DA SILVA X');
     const { DOMParser } = await import('@xmldom/xmldom');
     const docFinal = new DOMParser().parseFromString(adulterado, 'text/xml');
-    const sigNode = docFinal.getElementsByTagName('ds:Signature')[0];
+    const sigNode = docFinal.getElementsByTagNameNS('*', 'Signature')[0];
     const sig = novoVerificador(certPem, sigNode);
     let ok = true;
     try { ok = sig.checkSignature(adulterado); } catch { ok = false; }
@@ -168,7 +169,7 @@ describe('M4: caminho A3 (thumbprintA3 → assinarHashA3/SignHash)', () => {
     const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
 
     const assinado = await assinarProximoEsqueleto(xml!, {
-      signatureId: 'Sign-Hist-A3',
+      signatureId: 'xmldsig-testa3',
       certPem, // A3: só a parte pública; a chave está "no token" (mock)
       thumbprintA3: 'AABBCC00112233445566778899AABBCCDDEEFF00',
     });
@@ -179,7 +180,7 @@ describe('M4: caminho A3 (thumbprintA3 → assinarHashA3/SignHash)', () => {
     // Verificação independente idêntica à do A1
     const { DOMParser } = await import('@xmldom/xmldom');
     const docFinal = new DOMParser().parseFromString(assinado, 'text/xml');
-    const sigNode = docFinal.getElementsByTagName('ds:Signature')[0];
+    const sigNode = docFinal.getElementsByTagNameNS('*', 'Signature')[0];
     const sig = novoVerificador(certPem, sigNode);
     const ok = sig.checkSignature(assinado);
     if (!ok) for (const r of sig.getReferences()) console.error('REF', r.uri, '→', r.validationError);

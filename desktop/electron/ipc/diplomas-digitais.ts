@@ -777,11 +777,10 @@ function assinarHandler(
     const assinarCom = async (comCarimbo: boolean): Promise<string> => {
       const carimb = comCarimbo && carimbador ? { carimbador } : {};
       if (ehA3) {
-        // A3: XAdES com o ds canônico (http://); digest assinado DENTRO do
-        // token (SignHash bruto); certificado público PEM do Windows Store.
+        // A3: digest assinado DENTRO do token (SignHash bruto);
+        // certificado público PEM do Windows Store.
         const certPem = await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint!);
         return assinarTodosEsqueletos(lido.xml, {
-          signatureIdBase: `Sign-DD${diplomaId}`,
           certPem,
           thumbprintA3: assinatura.certificado_a3_thumbprint,
           ...carimb,
@@ -789,7 +788,6 @@ function assinarHandler(
       }
       const { chavePem, certPem } = extrairPfxA1(assinatura.certificado_path!, senhaPfx!);
       return assinarTodosEsqueletos(lido.xml, {
-        signatureIdBase: `Sign-DD${diplomaId}`,
         chavePem,
         certPem,
         ...carimb,
@@ -798,6 +796,23 @@ function assinarHandler(
 
     try {
       xmlAssinado = await assinarCom(true);
+      // LTV (perfil XL da PA-AD-RC v2.4): cadeia + CRLs reais + SigAndRefs
+      // (2º carimbo). Best-effort: falha (offline/AIA) → segue sem LTV com
+      // aviso — nunca valores fictícios.
+      if (carimbador) {
+        try {
+          const certPemLeaf = ehA3
+            ? await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint!)
+            : extrairPfxA1(assinatura.certificado_path!, senhaPfx!).certPem;
+          const { aplicarLtv } = await import('../diploma-digital/ltv');
+          const rLtv = await aplicarLtv(xmlAssinado, certPemLeaf, async (d) => carimbador(d));
+          xmlAssinado = rLtv.xml;
+          if (rLtv.avisos.length) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + rLtv.avisos.join(' ');
+        } catch (e: any) {
+          avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
+            'Sem LTV (CompleteCertificateRefs/RevocationValues): ' + (e?.message ?? String(e)) + ' — assinatura válida, perfil reduzido.';
+        }
+      }
     } catch (e: any) {
       if ((e as any)?.erroTsa) {
         // TSA fora do ar: assina XAdES-BES (sem carimbo) + aviso claro

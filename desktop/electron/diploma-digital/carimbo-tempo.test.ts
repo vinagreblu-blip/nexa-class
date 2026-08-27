@@ -146,16 +146,16 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
     const { certPem, chavePem } = gerarCertTeste();
     const snapshot = { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any;
     const xml = gerarHistoricoXml(snapshot)!;
-    const carimbado = await assinarTodosEsqueletos(xml, { signatureIdBase: 'Sign-Hist-42', chavePem, certPem, carimbador: tsaFake() });
-    expect((carimbado.match(/<xades:SignatureTimeStamp /g) ?? []).length).toBe(1);
+    const carimbado = await assinarTodosEsqueletos(xml, { chavePem, certPem, carimbador: tsaFake() });
+    expect((carimbado.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(1);
     // token DER vai em base64 — decodifica e confere o prefixo do mock
-    const mTok = /<xades:EncapsulatedTimeStamp Id="STT-Sign-Hist-42-0">([^<]+)</.exec(carimbado)!;
+    const mTok = /<xades:EncapsulatedTimeStamp>([^<]+)<\/xades:EncapsulatedTimeStamp>/.exec(carimbado)!;
     expect(Buffer.from(mTok[1], 'base64').toString('utf8').startsWith('TST-TOKEN-1-')).toBe(true);
 
     // Verificação criptográfica continua OK (propriedades NÃO assinadas)
     const { DOMParser } = await import('@xmldom/xmldom');
     const doc = new DOMParser().parseFromString(carimbado, 'text/xml');
-    const sig = novoVerificador(certPem, doc.getElementsByTagName('ds:Signature')[0]);
+    const sig = novoVerificador(certPem, doc.getElementsByTagNameNS('*', 'Signature')[0]);
     expect(sig.checkSignature(carimbado)).toBe(true);
 
     // XSD oficial continua válido
@@ -172,13 +172,13 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
     fs.writeFileSync(pdf, '%PDF-1.4 fixture');
     try {
       const da = gerarDocumentacaoAcademicaXml(snapshot, [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }])!;
-      const daCarimbada = await assinarTodosEsqueletos(da, { signatureIdBase: 'Sign-DD42', chavePem, certPem, carimbador: tsaFake() });
-      expect((daCarimbada.match(/<xades:SignatureTimeStamp /g) ?? []).length).toBe(2);
+      const daCarimbada = await assinarTodosEsqueletos(da, { chavePem, certPem, carimbador: tsaFake() });
+      expect((daCarimbada.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(2);
 
       // As duas continuam verificáveis (a raiz assinou SOBRE a interna carimbada)
       const { DOMParser } = await import('@xmldom/xmldom');
       const doc = new DOMParser().parseFromString(daCarimbada, 'text/xml');
-      const assinaturas = doc.getElementsByTagName('ds:Signature');
+      const assinaturas = doc.getElementsByTagNameNS('*', 'Signature');
       for (let i = 0; i < assinaturas.length; i++) {
         const ok = novoVerificador(certPem, assinaturas[i]).checkSignature(daCarimbada);
         if (!ok) {
@@ -201,11 +201,11 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
         REGISTRADORA,
         'VDip' + '1'.repeat(44), 'RDip' + '1'.repeat(44)
       )!;
-      expect((final.match(/<xades:SignatureTimeStamp /g) ?? []).length).toBe(1); // a interna da emissora
+      expect((final.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(1); // a interna da emissora
 
       // A assinatura carimbada da emissora AINDA verifica dentro do Diploma final
       const docFinal = new DOMParser().parseFromString(final, 'text/xml');
-      const sigsFinal = docFinal.getElementsByTagName('ds:Signature');
+      const sigsFinal = docFinal.getElementsByTagNameNS('*', 'Signature');
       expect(sigsFinal.length).toBe(3);
       expect(novoVerificador(certPem, sigsFinal[0]).checkSignature(final)).toBe(true);
 

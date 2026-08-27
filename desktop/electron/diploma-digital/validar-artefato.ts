@@ -261,7 +261,7 @@ export async function validarArtefatoDiploma(
   }
   if (bemFormado && doc) {
     const { pki, asn1 } = forge();
-    const sigs = doc.getElementsByTagName('ds:Signature');
+    const sigs = doc.getElementsByTagNameNS('*', 'Signature');
     for (let i = 0; i < sigs.length; i++) {
       const sigNode = sigs[i];
       const id = sigNode.getAttribute('Id') || `#${i}`;
@@ -280,24 +280,24 @@ export async function validarArtefatoDiploma(
 
       // Certificado do KeyInfo
       let certForge: any = null;
+      let certB64 = '';
       try {
-        const b64 = sigNode.getElementsByTagName('ds:X509Certificate')[0]?.textContent?.replace(/\s+/g, '');
-        if (b64) {
-          const derCert = Buffer.from(b64, 'base64');
+        certB64 = (descendentesPorLocalName(sigNode, 'X509Certificate')[0]?.textContent ?? '').replace(/\s+/g, '');
+        if (certB64) {
+          const derCert = Buffer.from(certB64, 'base64');
           certForge = pki.certificateFromAsn1(asn1.fromDer(derCert.toString('binary')));
           res.certificado = infoCertificado(certForge);
-          // SigningCertificate (XAdES): digest do DER deve bater — o
-          // DigestValue do CertDigest vai SEM prefixo (namespace xades herdado)
+          // SigningCertificate (XAdES): digest do DER deve bater
           const certDigestEl = descendentesPorLocalName(sigNode, 'CertDigest')
-            .flatMap((cd) => descendentesPorLocalName(cd, 'DigestValue'))[0];
+            .flatMap((cd: any) => descendentesPorLocalName(cd, 'DigestValue'))[0];
           if (certDigestEl) {
             const esperado = createHash('sha256').update(derCert).digest('base64');
             res.certDigestOk = (certDigestEl.textContent ?? '').trim() === esperado;
             if (!res.certDigestOk) res.errosCripto.push('SigningCertificate: CertDigest diverge do certificado do KeyInfo');
           }
-          const stEl = sigNode.getElementsByTagName('xades:SigningTime')[0];
+          const stEl = descendentesPorLocalName(sigNode, 'SigningTime')[0];
           if (stEl) res.signingTime = (stEl.textContent ?? '').trim();
-          const idEl = sigNode.getElementsByTagName('xades:Identifier')[0];
+          const idEl = descendentesPorLocalName(sigNode, 'Identifier')[0];
           res.policyId = idEl ? (idEl.textContent ?? '').trim() : null;
           if (res.certificado && !res.certificado.validoAgora) {
             res.errosCripto.push(`Certificado fora do período de validade (até ${res.certificado.validoAte})`);
@@ -314,7 +314,7 @@ export async function validarArtefatoDiploma(
 
       // Verificação criptográfica completa (digests + RSA)
       try {
-        const ver = novoVerificador(b64CertPem(certForge), sigNode);
+        const ver = novoVerificador(certB64, sigNode);
         const ok = ver.checkSignature(xml);
         res.criptografiaOk = ok;
         if (!ok) {
@@ -327,10 +327,10 @@ export async function validarArtefatoDiploma(
         res.errosCripto.push('Falha na verificação: ' + (e?.message ?? String(e)));
       }
 
-      // Carimbo do tempo
-      const tsEl = sigNode.getElementsByTagName('xades:EncapsulatedTimeStamp')[0];
+      // Carimbo do tempo (+ LTV do perfil XL da política)
+      const tsEl = descendentesPorLocalName(sigNode, 'EncapsulatedTimeStamp')[0];
       if (tsEl) {
-        const tsId = sigNode.getElementsByTagName('xades:SignatureTimeStamp')[0]?.getAttribute('Id') ?? '';
+        const tsId = descendentesPorLocalName(sigNode, 'SignatureTimeStamp')[0]?.getAttribute('Id') ?? '';
         try {
           const der = Buffer.from((tsEl.textContent ?? '').trim(), 'base64');
           const r = verificarTokenCarimbo(der);
@@ -338,6 +338,12 @@ export async function validarArtefatoDiploma(
         } catch (e: any) {
           res.carimbo = { id: tsId, tokenOk: false, erros: ['EncapsulatedTimeStamp ilegível: ' + (e?.message ?? String(e))] };
         }
+        const ltvOk =
+          !!descendentesPorLocalName(sigNode, 'CompleteCertificateRefs')[0] &&
+          !!descendentesPorLocalName(sigNode, 'CertificateValues')[0] &&
+          !!descendentesPorLocalName(sigNode, 'RevocationValues')[0] &&
+          !!descendentesPorLocalName(sigNode, 'SigAndRefsTimeStamp')[0];
+        (res as any).ltv = ltvOk;
       } else if (exigirCarimbo) {
         res.errosCripto.push('Sem carimbo do tempo (SignatureTimeStamp/EncapsulatedTimeStamp ausente)');
       }
@@ -373,11 +379,4 @@ export async function validarArtefatoDiploma(
     hashSha256: createHash('sha256').update(xml, 'utf8').digest('hex'),
     veredito,
   };
-}
-
-/** PEM a partir do cert forge (para o verificador xml-crypto). */
-function b64CertPem(certForge: any): string {
-  if (!certForge) return '';
-  const { pki } = forge();
-  return pki.certificateToPem(certForge);
 }

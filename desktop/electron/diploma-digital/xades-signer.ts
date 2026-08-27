@@ -1,72 +1,49 @@
 // ============================================================
-// ASSINADOR XADES-BES — Diploma Digital MEC (XMLDSig + XAdES)
+// ASSINADOR XADES — Diploma Digital MEC
 // ============================================================
-// Assinatura REAL (RSA-SHA256 + C14N) sobre os artefatos XML:
-//  - Reference #1: elemento ANCESTRAL da assinatura — quando ele tem
-//    @id (ex.: DadosDiploma id="Dip{44}") a Reference é URI="#Dip{44}"
-//    e o digest cobre a SUBÁRVORE (enveloped + C14N); sem @id (nível
-//    raiz), URI="" cobre o documento inteiro. A referência por @id é
-//    o que mantém a assinatura da EMISSORA válida no Diploma final,
-//    onde o DadosDiploma é transplantado byte-idêntito da DA, e o que
-//    impede que a 2ª assinatura da DA (raiz) invalide a 1ª (interna).
-//  - Reference #2: xades:SignedProperties (XAdES-BES: SigningTime,
-//    SigningCertificate com digest SHA-256 do certificado)
-//  - KeyInfo: certificado X509 completo (verificável por terceiros)
-//
-// ESQUELETO = ds:Signature com SignatureValue VAZIO (presente no XML
-// gerado para satisfazer o XSD). Este assinador substitui o primeiro
-// esqueleto pela assinatura real, NA MESMA POSIÇÃO (pai correto
-// preservado — as assinaturas nunca se aninham nos leiautes do MEC).
-// `assinarTodos…` assina todas as posições da EMISSORA (Histórico: 1;
-// DA: 2 — SEMPRE em ordem de ocorrência, interna antes da raiz). No
-// Diploma FINAL as posições da REGISTRADORA permanecem esqueleto —
-// quem assina é a registradora, jamais a emissora.
-//
-// CONFORMIDADE X509 (XAdES/XMLDSig): X509SerialNumber é xs:integer →
-// serial DECIMAL (node-forge devolve hex; convertemos). X509IssuerName
-// segue RFC2253 (ordem INVERSA do ASN.1 + escaping).
-//
-// A1 (.pfx/PEM): node-forge → assinatura Node puro, verificável por
-// round-trip com xml-crypto (checkSignature — motor independente).
-// A3 (token): o digest SHA-256 do SignedInfo é assinado DENTRO do
-// token via SignHash bruto (PowerShell/assinarHashA3) — mesmo
-// resultado criptográfico do A1; a chave nunca sai do hardware.
-// Política (XAdES-EPES): opcional (`politica`) — exige identificador
-// e digest SHA-256 do documento oficial da política (IN-05); sem
-// esses dados confirmados NÃO inventar OID (fica BES).
-import { createHash } from 'node:crypto';
+// Assinatura REAL (RSA-SHA256 + C14N) no padrão do MEC:
+//  - Reference #1: elemento ANCESTRAL da assinatura com @id
+//    (DadosDiploma→#Dip{44}, RegistroReq→#ReqDip{44}; sem id→URI="")
+//  - Reference #2: xades:SignedProperties (SigningTime +
+//    SigningCertificate digest SHA-256 + EPES PA-AD-RC v2.4)
+//  - KeyInfo: X509SubjectName + X509Certificate completo
+//  - Conformidade X509: serial DECIMAL, IssuerSerial .NET
+//  - A1: node-forge. A3: SignHash bruto no token.
+//  - Carimbo/LTV aplicados por etapas posteriores (UnsignedProperties).
+import { createHash, randomBytes } from 'node:crypto';
 import { C14nCanonicalization, findAncestorNs } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
-import { NS_DS, escapeXml } from './xml-utils';
+import { NS_DS, NS_XADES, escapeXml } from './xml-utils';
 
 const ALGO_C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-const ALGO_ENV = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';const ALGO_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+const ALGO_ENV = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
+const ALGO_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
 const ALGO_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
-const NS_XADES = 'http://uri.etsi.org/01903/v1.3.2#';
 const TYPE_SIGNED_PROPERTIES = 'http://uri.etsi.org/01903#SignedProperties';
 
-/** XAdES-EPES opcional: identificador + digest SHA-256 do documento
- *  da política (o SigPolicyHash é OBRIGATÓRIO no EPES — sem o digest
- *  do documento oficial a política não pode ser incluída). */
+// ---- Política de assinatura (EPES): PA_AD_RC_v2_4 (ICP-Brasil) ----
+export const POLITICA_ASSINATURA: PoliticaXades = {
+  identificador: 'urn:oid:2.16.76.1.7.1.9.2.4',
+  digestBase64: 'JMLUkTNofr0oLNIBbVn5FMnQ0QE/XoDOgSTHP5MJbd4=',
+  spuri: 'http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.xml',
+};
+
 export interface PoliticaXades {
-  /** Identificador oficial (ex.: URI ou "urn:oid:…"). */
   identificador: string;
-  /** Digest SHA-256 (base64) do documento da política. */
   digestBase64: string;
-  descricao?: string;
+  spuri?: string;
 }
 
 export interface OpcoesAssinaturaXades {
-  signatureId: string;
-  /** A1: chave PEM da IES (assinatura em Node puro). */
+  signatureId?: string;
   chavePem?: string;
-  /** Certificado público PEM (KeyInfo/XAdES) — obrigatório em A1 e A3. */
   certPem: string;
-  /** A3: thumbprint do certificado no Windows Store — o digest é assinado
-   *  DENTRO do token (SignHash bruto); a chave nunca sai do hardware. */
   thumbprintA3?: string;
-  /** XAdES-EPES: omitir = BES (padrão). */
-  politica?: PoliticaXades;
+  politica?: PoliticaXades | null;
+}
+
+export interface OpcoesAssinarTodos extends Omit<OpcoesAssinaturaXades, 'signatureId'> {
+  carimbador?: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>;
 }
 
 function b64(buf: Buffer | Uint8Array): string {
@@ -77,22 +54,19 @@ function parseDoc(xml: string): any {
   return new DOMParser().parseFromString(xml, 'text/xml');
 }
 
-/**
- * Trechos de assinatura no XML (match lazy — nunca atravessa o
- * fechamento de uma assinatura; os leiautes MEC não aninham
- * ds:Signature dentro de ds:Signature). Esqueleto = SignatureValue
- * vazio (posição ainda não assinada).
- */
-function trechosAssinatura(xml: string): { inicio: number; texto: string; esqueleto: boolean }[] {
+export function trechosAssinatura(xml: string): { inicio: number; texto: string; esqueleto: boolean }[] {
   const out: { inicio: number; texto: string; esqueleto: boolean }[] = [];
-  for (const m of xml.matchAll(/<ds:Signature[^>]*>[\s\S]*?<\/ds:Signature>/g)) {
+  for (const m of xml.matchAll(/<(?:ds:)?Signature(?:\s[^>]*)?>[\s\S]*?<\/(?:ds:)?Signature>/g)) {
     const texto = m[0];
-    out.push({ inicio: m.index ?? 0, texto, esqueleto: texto.includes('<ds:SignatureValue></ds:SignatureValue>') });
+    out.push({
+      inicio: m.index ?? 0,
+      texto,
+      esqueleto: /<(?:ds:)?SignatureValue\s*\/>|<(?:ds:)?SignatureValue><\/(?:ds:)?SignatureValue>/.test(texto),
+    });
   }
   return out;
 }
 
-/** Nó do primeiro esqueleto (Signature com SignatureValue vazio) no doc. */
 function acharNoSkeleton(doc: any): any {
   const assinaturas = doc.getElementsByTagNameNS('*', 'Signature');
   for (let i = 0; i < assinaturas.length; i++) {
@@ -111,58 +85,34 @@ function attrId(el: any): string | null {
   return a?.value ?? null;
 }
 
-/** Elemento (por local-name, qualquer ns) cujo atributo Id/id tem o valor
- *  dado — seleção POR ID ÚNICO, nunca por ordem de documento (com 2+
- *  assinaturas no artefato, `[0]` pegaria a assinatura errada). */
-function acharPorIdLocal(doc: any, tagLocal: string, id: string): any {
-  const els = doc.getElementsByTagNameNS('*', tagLocal);
-  for (let i = 0; i < els.length; i++) {
-    if (attrId(els[i]) === id) return els[i];
-  }
-  return null;
-}
-
-/** Filho direto do nó com o local-name dado. */
-function filhoLocal(node: any, local: string): any {
-  for (let i = 0; i < node.childNodes.length; i++) {
-    if (node.childNodes[i].localName === local) return node.childNodes[i];
-  }
-  return null;
-}
-
-/** Elemento (por tag) cujo atributo id tem o valor dado. */
 function acharElementoPorId(doc: any, tag: string, id: string): any {
-  const els = doc.getElementsByTagName(tag);
+  // Busca por localName (o tag pode ter prefixo: xades:SignedProperties)
+  const els = doc.getElementsByTagNameNS('*', tag);
   for (let i = 0; i < els.length; i++) {
     if (attrId(els[i]) === id) return els[i];
   }
   return null;
 }
 
-/** Escapa valor de DN conforme RFC2253 (especial ,+"\<>; e bordas). */
-function escaparRfc2253(v: string): string {
-  let out = '';
-  for (const ch of v) {
-    if (',+"\\<>;'.includes(ch)) out += '\\' + ch;
-    else out += ch;
-  }
-  if (out.startsWith('#') || out.startsWith(' ')) out = '\\' + out[0] + out.slice(1);
-  if (out.endsWith(' ')) out = out.slice(0, -1) + '\\ ';
+export function descendentesPorLocalName(no: any, nome: string): any[] {
+  const out: any[] = [];
+  const visitar = (n: any) => {
+    if (!n?.childNodes) return;
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      if (c.localName === nome) out.push(c);
+      visitar(c);
+    }
+  };
+  visitar(no);
   return out;
 }
 
-/** DN do issuer em RFC2253: ordem INVERSA da sequência ASN.1,
- *  atributos "TYPE=valor" separados por vírgula, valores escapados. */
-function dnRfc2253(atributos: any[]): string {
-  return atributos
-    .slice()
-    .reverse()
-    .map((a) => `${a.shortName ?? a.name ?? a.type}=${escaparRfc2253(String(a.value))}`)
-    .join(',');
+/** DN em formato .NET (ordem do certificado, "TYPE=valor" vírgula-sep). */
+function dnDotNet(atributos: any[]): string {
+  return atributos.map((a) => `${a.shortName ?? a.name ?? a.type}=${a.value}`).join(',');
 }
 
-/** Serial do certificado em DECIMAL (XMLDSig X509SerialNumber é
- *  xs:integer; o node-forge devolve hexadecimal). */
 function serialDecimal(hex: string): string {
   return BigInt('0x' + hex).toString();
 }
@@ -172,25 +122,29 @@ function qualifyingProperties(
   issuerSerial: { issuerName: string; serialNumber: string },
   signatureId: string,
   agora: Date,
-  politica?: PoliticaXades
+  politica: PoliticaXades | null | undefined
 ): string {
   const certDigest = b64(createHash('sha256').update(certDer).digest());
-  const spId = `${signatureId}-SP`;
+  const spId = `${signatureId}-signed-properties`;
   const signingTime = agora.toISOString().slice(0, 19) + 'Z';
-  // XAdES 1.3.2: SignedSignatureProperties = SigningTime,
-  // SigningCertificate?, SignaturePolicyIdentifier?, … (nesta ordem).
   const policyXml = politica
     ? (
         '<xades:SignaturePolicyIdentifier>' +
         '<xades:SignaturePolicyId>' +
         '<xades:SigPolicyId>' +
-        `<xades:Identifier>${escapeXml(politica.identificador)}</xades:Identifier>` +
-        (politica.descricao ? `<xades:Description>${escapeXml(politica.descricao)}</xades:Description>` : '') +
+        `<xades:Identifier Qualifier="OIDAsURN">${escapeXml(politica.identificador)}</xades:Identifier>` +
         '</xades:SigPolicyId>' +
         '<xades:SigPolicyHash>' +
-        `<DigestMethod Algorithm="${ALGO_SHA256}"></DigestMethod>` +
-        `<DigestValue>${escapeXml(politica.digestBase64)}</DigestValue>` +
+        `<DigestMethod Algorithm="${ALGO_SHA256}" xmlns="${NS_DS}"></DigestMethod>` +
+        `<DigestValue xmlns="${NS_DS}">${escapeXml(politica.digestBase64)}</DigestValue>` +
         '</xades:SigPolicyHash>' +
+        (politica.spuri
+          ? '<xades:SigPolicyQualifiers>' +
+            '<xades:SigPolicyQualifier>' +
+            `<xades:SPURI>${escapeXml(politica.spuri)}</xades:SPURI>` +
+            '</xades:SigPolicyQualifier>' +
+            '</xades:SigPolicyQualifiers>'
+          : '') +
         '</xades:SignaturePolicyId>' +
         '</xades:SignaturePolicyIdentifier>'
       )
@@ -203,12 +157,12 @@ function qualifyingProperties(
     '<xades:SigningCertificate>' +
     '<xades:Cert>' +
     '<xades:CertDigest>' +
-    `<DigestMethod Algorithm="${ALGO_SHA256}"></DigestMethod>` +
-    `<DigestValue>${certDigest}</DigestValue>` +
+    `<DigestMethod Algorithm="${ALGO_SHA256}" xmlns="${NS_DS}"></DigestMethod>` +
+    `<DigestValue xmlns="${NS_DS}">${certDigest}</DigestValue>` +
     '</xades:CertDigest>' +
     '<xades:IssuerSerial>' +
-    `<X509IssuerName>${escapeXml(issuerSerial.issuerName)}</X509IssuerName>` +
-    `<X509SerialNumber>${escapeXml(issuerSerial.serialNumber)}</X509SerialNumber>` +
+    `<X509IssuerName xmlns="${NS_DS}">${escapeXml(issuerSerial.issuerName)}</X509IssuerName>` +
+    `<X509SerialNumber xmlns="${NS_DS}">${escapeXml(issuerSerial.serialNumber)}</X509SerialNumber>` +
     '</xades:IssuerSerial>' +
     '</xades:Cert>' +
     '</xades:SigningCertificate>' +
@@ -219,61 +173,67 @@ function qualifyingProperties(
   );
 }
 
-/**
- * Substitui o PRIMEIRO esqueleto pela assinatura XAdES-BES real, na
- * mesma posição. A Reference #1 aponta para o ANCESTRAL do esqueleto
- * quando ele tem @id (ex.: DadosDiploma id="Dip{44}" → URI="#Dip{44}",
- * digest sobre a subárvore SEM a própria assinatura — semântica do
- * transform enveloped); sem @id, URI="" (documento inteiro menos a
- * própria). Assinaturas irmãs/externas permanecem no digest, como no
- * validador.
- */
+function extrairSubtreePorId(xml: string, tag: string, id: string): string | null {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>[\\s\\S]*?</${tag}>`, 'g');
+  for (const m of xml.matchAll(re)) {
+    if (new RegExp(`(?:^|\\s)(?:id|Id|ID)="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(m[0].slice(0, m[0].indexOf('>') + 1))) {
+      return m[0];
+    }
+  }
+  return null;
+}
+
+function semAssinaturas(fragmento: string): string {
+  return fragmento.replace(/<(?:ds:)?Signature(?:\s[^>]*)?>[\s\S]*?<\/(?:ds:)?Signature>/g, '');
+}
+
 export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinaturaXades): Promise<string> {
   const forge = require('node-forge');
   const alvo = trechosAssinatura(xml).find((t) => t.esqueleto);
   if (!alvo) throw new Error('Artefato sem posição de assinatura pendente (esqueleto ausente)');
-  const fim = alvo.inicio + alvo.texto.length;
-  const docBase = xml.slice(0, alvo.inicio) + xml.slice(fim);
 
-  // Ancestral do esqueleto e seu @id → URI da Reference #1
   const docSkeleton = parseDoc(xml);
   const noSkeleton = acharNoSkeleton(docSkeleton);
   const ancestral = noSkeleton?.parentNode ?? null;
   const refId = ancestral?.nodeType === 1 ? attrId(ancestral) : null;
 
-  // certificado: DER (digest XAdES) + IssuerSerial RFC2253 + PEM limpo
   const certForge = forge.pki.certificateFromPem(opts.certPem);
   const certDer = Buffer.from(forge.asn1.toDer(forge.pki.certificateToAsn1(certForge)).getBytes(), 'binary');
-  const issuerName = dnRfc2253((certForge.issuer as any).attributes);
+  const subjectName = dnDotNet((certForge.subject as any).attributes);
+  const issuerName = dnDotNet((certForge.issuer as any).attributes);
   const serial = serialDecimal(certForge.serialNumber);
   const certB64 = opts.certPem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
 
+  const signatureId = opts.signatureId ?? 'xmldsig-' + randomBytes(16).toString('hex');
   const agora = new Date();
-  const spId = `${opts.signatureId}-SP`;
-  const qp = qualifyingProperties(certDer, { issuerName, serialNumber: serial }, opts.signatureId, agora, opts.politica);
+  const spId = `${signatureId}-signed-properties`;
+  const politicaFinal: PoliticaXades | null =
+    opts.politica === null ? null : (opts.politica ?? POLITICA_ASSINATURA);
+  const qp = qualifyingProperties(certDer, { issuerName, serialNumber: serial }, signatureId, agora, politicaFinal);
 
-  // ---- digest #1: ancestral com @id → subárvore (com namespaces
-  // herdados); sem @id → documento inteiro. A própria assinatura já
-  // foi removida (docBase); demais permanecem — como no enveloped.
-  let digestDoc: string;
-  if (refId) {
-    const docBaseParsed = parseDoc(docBase);
-    const alvoNode = acharElementoPorId(docBaseParsed, ancestral.tagName, refId);
-    if (!alvoNode) throw new Error(`Elemento com id="${refId}" não encontrado para a Reference`);
-    const ancestorNs = findAncestorNs(docBaseParsed as any, `//*[@id='${refId}']`);
-    const c14nAlvo = new C14nCanonicalization().process(alvoNode as any, { ancestorNamespaces: ancestorNs });
-    digestDoc = b64(createHash('sha256').update(Buffer.from(c14nAlvo, 'utf8')).digest());
-  } else {
-    const c14nDoc = new C14nCanonicalization().process(parseDoc(docBase).documentElement as any, {} as any);
-    digestDoc = b64(createHash('sha256').update(Buffer.from(c14nDoc, 'utf8')).digest());
-  }
+  // ---- digest #1: elemento alvo SEM assinaturas (c14n inclusivo)
+  const alvoSemAssinaturas = refId
+    ? semAssinaturas(extrairSubtreePorId(xml, ancestral.tagName, refId) ?? '')
+    : semAssinaturas(xml);
+  if (refId && !alvoSemAssinaturas) throw new Error(`Elemento com id="${refId}" não encontrado`);
+  const docAlvo = parseDoc(alvoSemAssinaturas);
+  const nodeAlvo = refId ? acharElementoPorId(docAlvo, ancestral.tagName, refId) : docAlvo.documentElement;
+  if (!nodeAlvo) throw new Error('Nó alvo da Reference não localizado');
+  const ancestorNsAlvo = refId
+    ? [{ prefix: '', namespaceURI: 'http://portal.mec.gov.br/diplomadigital/arquivos-em-xsd' }]
+    : [];
+  const c14nAlvo = new C14nCanonicalization().process(nodeAlvo as any, { ancestorNamespaces: ancestorNsAlvo });
+  const digestDoc = b64(createHash('sha256').update(Buffer.from(c14nAlvo, 'utf8')).digest());
 
   const signedInfo =
     `<ds:SignedInfo xmlns:ds="${NS_DS}">` +
     `<ds:CanonicalizationMethod Algorithm="${ALGO_C14N}"></ds:CanonicalizationMethod>` +
     `<ds:SignatureMethod Algorithm="${ALGO_RSA}"></ds:SignatureMethod>` +
     `<ds:Reference URI="${refId ? '#' + refId : ''}">` +
-    `<ds:Transforms><ds:Transform Algorithm="${ALGO_ENV}"></ds:Transform><ds:Transform Algorithm="${ALGO_C14N}"></ds:Transform></ds:Transforms>` +
+    `<ds:Transforms>` +
+    `<ds:Transform Algorithm="${ALGO_ENV}"></ds:Transform>` +
+    `<ds:Transform Algorithm="${ALGO_C14N}"></ds:Transform>` +
+    `</ds:Transforms>` +
     `<ds:DigestMethod Algorithm="${ALGO_SHA256}"></ds:DigestMethod>` +
     `<ds:DigestValue>${digestDoc}</ds:DigestValue>` +
     `</ds:Reference>` +
@@ -285,43 +245,44 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
     `</ds:SignedInfo>`;
 
   const placeholder =
-    `<ds:Signature xmlns:ds="${NS_DS}" Id="${opts.signatureId}">` +
+    `<ds:Signature xmlns:ds="${NS_DS}" Id="${signatureId}">` +
     signedInfo +
     '<ds:SignatureValue></ds:SignatureValue>' +
     '<ds:KeyInfo><ds:X509Data>' +
+    `<ds:X509SubjectName>${escapeXml(subjectName)}</ds:X509SubjectName>` +
     `<ds:X509Certificate>${certB64}</ds:X509Certificate>` +
     '</ds:X509Data></ds:KeyInfo>' +
-    `<ds:Object Id="${opts.signatureId}-Obj">${qp}</ds:Object>` +
+    `<ds:Object>${qp}</ds:Object>` +
     '</ds:Signature>';
 
   const inserirPh = (assinaturaXml: string): string =>
-    docBase.slice(0, alvo.inicio) + assinaturaXml + docBase.slice(alvo.inicio);
+    xml.slice(0, alvo.inicio) + assinaturaXml + xml.slice(alvo.inicio + alvo.texto.length);
 
-  // ---- digest #2: SignedProperties NO CONTEXTO do placeholder (por Id
-  // único — o artefato já contém assinaturas anteriores) — ancestorNamespaces,
-  // mesma técnica do validador
+  // ---- digest #2: SignedProperties no contexto
   const docPh = parseDoc(inserirPh(placeholder));
-  const spNode = acharPorIdLocal(docPh, 'SignedProperties', spId);
+  const spNode = acharElementoPorId(docPh, 'SignedProperties', spId);
   if (!spNode) throw new Error('SignedProperties não montado');
-  const ancestorSp = findAncestorNs(docPh as any, "//*[local-name()='SignedProperties' and (@Id='" + spId + "' or @id='" + spId + "')]");
+  const ancestorSp = findAncestorNs(docPh as any, "//*[local-name()='SignedProperties']");
   const c14nSp = new C14nCanonicalization().process(spNode as any, { ancestorNamespaces: ancestorSp });
   const digestSp = b64(createHash('sha256').update(Buffer.from(c14nSp, 'utf8')).digest());
 
   const signedInfoFinal = signedInfo.replace('<ds:DigestValue></ds:DigestValue>', `<ds:DigestValue>${digestSp}</ds:DigestValue>`);
   const placeholderFinal = placeholder.replace(signedInfo, signedInfoFinal);
 
-  // ---- assina o C14N do SignedInfo NO CONTEXTO (do placeholder, por Id)
+  // ---- assina o C14N do SignedInfo no CONTEXTO
   const docPh2 = parseDoc(inserirPh(placeholderFinal));
-  const sigPh = acharPorIdLocal(docPh2, 'Signature', opts.signatureId);
-  const siNode = sigPh ? filhoLocal(sigPh, 'SignedInfo') : null;
+  const sigPh = descendentesPorLocalName(docPh2.documentElement, 'Signature')
+    .find((n: any) => attrId(n) === signatureId);
+  let siNode: any = null;
+  for (let i = 0; i < (sigPh?.childNodes?.length ?? 0); i++) {
+    if (sigPh.childNodes[i].localName === 'SignedInfo') siNode = sigPh.childNodes[i];
+  }
   if (!siNode) throw new Error('SignedInfo não montado');
-  const ancestorSi = findAncestorNs(docPh2 as any, "//*[local-name()='SignedInfo' and ../@Id='" + opts.signatureId + "']");
+  const ancestorSi = findAncestorNs(docPh2 as any, "//*[local-name()='SignedInfo']");
   const c14nSi = new C14nCanonicalization().process(siNode as any, { ancestorNamespaces: ancestorSi });
 
   let signatureValue: string;
   if (opts.thumbprintA3) {
-    // A3: digest SHA-256 do C14N assinado DENTRO do token (SignHash bruto,
-    // PKCS#1 v1.5) — mesmo resultado criptográfico do caminho A1.
     const { assinarHashA3 } = await import('../ipc/assinatura');
     const digest = createHash('sha256').update(c14nSi, 'utf8').digest();
     const sig = await assinarHashA3(opts.thumbprintA3, digest);
@@ -335,96 +296,65 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
   }
 
   const assinatura =
-    `<ds:Signature xmlns:ds="${NS_DS}" Id="${opts.signatureId}">` +
+    `<ds:Signature xmlns:ds="${NS_DS}" Id="${signatureId}">` +
     signedInfoFinal +
     `<ds:SignatureValue>${signatureValue}</ds:SignatureValue>` +
     '<ds:KeyInfo><ds:X509Data>' +
+    `<ds:X509SubjectName>${escapeXml(subjectName)}</ds:X509SubjectName>` +
     `<ds:X509Certificate>${certB64}</ds:X509Certificate>` +
     '</ds:X509Data></ds:KeyInfo>' +
-    `<ds:Object Id="${opts.signatureId}-Obj">${qp}</ds:Object>` +
+    `<ds:Object>${qp}</ds:Object>` +
     '</ds:Signature>';
 
   return inserirPh(assinatura);
 }
 
-/** Assina TODOS os esqueletos restantes (em ordem) com suffixos -0, -1… */
-export async function assinarTodosEsqueletos(xml: string, opts: {
-  signatureIdBase: string;
-  chavePem?: string;
-  certPem: string;
-  thumbprintA3?: string;
-  politica?: PoliticaXades;
-  /** XAdES-T: carimba CADA assinatura imediatamente após criá-la — a
-   *  assinatura seguinte (raiz, URI="") cobre o documento COM o carimbo
-   *  da anterior; carimbar tudo ao final quebraria o digest da raiz. */
-  carimbador?: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>;
-}): Promise<string> {
+export async function assinarTodosEsqueletos(xml: string, opts: OpcoesAssinarTodos): Promise<string> {
   let out = xml;
-  let i = 0;
   while (contarEsqueletos(out) > 0) {
     out = await assinarProximoEsqueleto(out, {
-      signatureId: `${opts.signatureIdBase}-${i}`,
       chavePem: opts.chavePem,
       certPem: opts.certPem,
       thumbprintA3: opts.thumbprintA3,
       politica: opts.politica,
     });
     if (opts.carimbador) {
-      // idempotente: carimba apenas as reais ainda sem carimbo (no caso,
-      // a recém-criada — as anteriores já foram carimbadas no passo delas)
       out = (await carimbarAssinaturas(out, opts.carimbador)).xml;
     }
-    i++;
-    if (i > 6) throw new Error('Loop de assinatura — estrutura inesperada');
   }
   return out;
 }
 
-/** Quantidade de esqueletos (posições) ainda sem assinatura real. */
 export function contarEsqueletos(xml: string): number {
   return trechosAssinatura(xml).filter((t) => t.esqueleto).length;
 }
 
-/**
- * XAdES-T — carimbo do tempo (RFC 3161) em CADA assinatura real do
- * artefato: o SignatureValue é hasheado (SHA-256) e carimbado pela TSA;
- * o token DER entra em xades:EncapsulatedTimeStamp dentro de
- * UnsignedSignatureProperties (propriedades NÃO assinadas — não alteram
- * os digests/assinaturas existentes; viajam com a assinatura no
- * transplante da DA para o Diploma final). Esqueletos (posições da
- * registradora) NÃO são carimbados.
- * @obterCarimbo recebe o SHA-256 do SignatureValue e devolve o token.
- */
 export async function carimbarAssinaturas(
   xml: string,
   obterCarimbo: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>
 ): Promise<{ xml: string; carimbos: string[] }> {
-  const { createHash } = await import('node:crypto');
+  const { createHash: ch } = await import('node:crypto');
   let out = xml;
   const carimbos: string[] = [];
-  // Ordem REVERSA: cada inserção altera offsets seguintes — processando do
-  // fim para o começo, os índices dos trechos restantes continuam válidos.
   for (const trecho of [...trechosAssinatura(xml)].reverse()) {
     if (trecho.esqueleto) continue;
-    if (trecho.texto.includes('<xades:SignatureTimeStamp')) continue; // já carimbada (idempotente)
-    const mValor = /<ds:SignatureValue>([^<]+)<\/ds:SignatureValue>/.exec(trecho.texto);
-    const mId = /<ds:Signature[^>]*\sId="([^"]+)"/.exec(trecho.texto);
+    if (trecho.texto.includes('<xades:SignatureTimeStamp')) continue;
+    const mValor = /<(?:ds:)?SignatureValue(?:\s[^>]*)?>([^<]+)<\/(?:ds:)?SignatureValue>/.exec(trecho.texto);
+    const mId = /<(?:ds:)?Signature(?:\s[^>]*)?\sId="([^"]+)"/.exec(trecho.texto);
     const mFimQp = trecho.texto.lastIndexOf('</xades:QualifyingProperties>');
     if (!mValor || !mId || mFimQp < 0) continue;
-    const valor = Buffer.from(mValor[1], 'base64');
-    const digest = createHash('sha256').update(valor).digest();
+    const digest = ch('sha256').update(Buffer.from(mValor[1], 'base64')).digest();
     const carimbo = await obterCarimbo(digest);
-    const sigId = mId[1];
     const bloco =
       '<xades:UnsignedProperties>' +
       '<xades:UnsignedSignatureProperties>' +
-      `<xades:SignatureTimeStamp Id="ST-${sigId}">` +
-      `<xades:EncapsulatedTimeStamp Id="STT-${sigId}">${carimbo.token.toString('base64')}</xades:EncapsulatedTimeStamp>` +
+      '<xades:SignatureTimeStamp>' +
+      `<CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#" xmlns="${NS_DS}" />` +
+      `<xades:EncapsulatedTimeStamp>${carimbo.token.toString('base64')}</xades:EncapsulatedTimeStamp>` +
       '</xades:SignatureTimeStamp>' +
       '</xades:UnsignedSignatureProperties>' +
       '</xades:UnsignedProperties>';
-    const novoTrecho =
-      trecho.texto.slice(0, mFimQp) + bloco + trecho.texto.slice(mFimQp);
+    const novoTrecho = trecho.texto.slice(0, mFimQp) + bloco + trecho.texto.slice(mFimQp);
     out = out.slice(0, trecho.inicio) + novoTrecho + out.slice(trecho.inicio + trecho.texto.length);
     carimbos.unshift(carimbo.genTime ?? '');
   }

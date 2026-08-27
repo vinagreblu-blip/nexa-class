@@ -31,14 +31,19 @@ import { validateXML } from 'xmllint-wasm';
 
 const NS_XMLSCHEMA_HTTPS = 'https://www.w3.org/2001/XMLSchema';
 const NS_XMLDSIG_HTTPS = 'https://www.w3.org/2000/09/xmldsig#';
+const NS_MEC_HTTPS = 'https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
+const NS_MEC_HTTP = 'http://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
 
-/** Normaliza os namespaces W3C https→http (em memória; arquivo fica
- *  verbatim) — mesmo comportamento do validador oficial do MEC. */
+/** Normaliza os namespaces https→http (em memória; arquivo fica verbatim):
+ *  W3C (XMLSchema/XMLDSig — libxml2 só aceita canônico) e o targetNamespace
+ *  do MEC — os XSDs oficiais declaram https, mas os DOCUMENTOS reais usam
+ *  http (comprovado pelo diploma de referência aceito pela registradora). */
 function adaptarXsd(conteudo: Uint8Array): Uint8Array {
   const texto = Buffer.from(conteudo).toString('utf8');
   const normalizado = texto
     .split(NS_XMLSCHEMA_HTTPS).join('http://www.w3.org/2001/XMLSchema')
-    .split(NS_XMLDSIG_HTTPS).join('http://www.w3.org/2000/09/xmldsig#');
+    .split(NS_XMLDSIG_HTTPS).join('http://www.w3.org/2000/09/xmldsig#')
+    .split(NS_MEC_HTTPS).join(NS_MEC_HTTP);
   return new TextEncoder().encode(normalizado);
 }
 

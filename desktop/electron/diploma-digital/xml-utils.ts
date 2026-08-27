@@ -16,16 +16,18 @@
 
 import { normalizarCep } from './normalizadores';
 
-export const NS_MEC = 'https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
-// XMLDSig CANÔNICO (http:// — RFC 3275). Os XSDs do pacote MEC declaram a
-// variante https, mas o validador oficial (document-schema-validator, testado
-// empiricamente contra o serviço em produção) compila o schema com o namespace
-// CANÔNICO: documento com ds em https é rejeitado na raiz ("Não pode localizar
-// a declaração do elemento 'Diploma'"); com http, a validação de conteúdo roda
-// e as mensagens de erro citam {"http://www.w3.org/2000/09/xmldsig#":…}.
-// A validação local normaliza os XSDs https→http (xsd-validator.ts) para
-// reproduzir esse comportamento.
+export const NS_MEC = 'http://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
+// Namespace MEC em http:// — CONFIRMADO pelo XML de referência real aceito
+// no ecossistema (diploma válido processado pela IES registradora): os XSDs
+// oficiais declaram targetNamespace https, mas os DOCUMENTOS reais usam a
+// forma http; parsers estritos da registradora rejeitam a forma https com
+// "Dados do diploma não encontrados no XML". O validador local normaliza o
+// targetNamespace dos XSDs https→http para validar fielmente (xsd-validator).
+// XMLDSig CANÔNICO (http:// — RFC 3275), idem ds acima.
 export const NS_DS = 'http://www.w3.org/2000/09/xmldsig#';
+// XAdES 1.3.2 (namespace default local no QualifyingProperties, como o
+// assinador oficial).
+export const NS_XADES = 'http://uri.etsi.org/01903/v1.3.2#';
 
 export function escapeXml(s: string): string {
   return (s ?? '')
@@ -50,7 +52,8 @@ export function elAttrs(tag: string, attrs: Record<string, string>, filhos: stri
   return `<${tag}${a}>${filhos}</${tag}>`;
 }
 
-/** Esqueleto estrutural de assinatura (pré-XAdES/M4). */
+/** Esqueleto estrutural de assinatura (pré-XAdES/M4) — substituído pela
+ *  assinatura real ao assinar. Mesma forma que o assinador emite. */
 export function assinaturaEstrutural(): string {
   return (
     `<ds:Signature xmlns:ds="${NS_DS}">` +
@@ -68,11 +71,12 @@ export function assinaturaEstrutural(): string {
   );
 }
 
-/** Cabeçalho + raiz com os dois namespaces oficiais. */
+/** Cabeçalho + raiz com o namespace oficial MEC (http — como os documentos
+ *  reais); ds/xades são declarados LOCALMENTE em cada Signature/Object. */
 export function documentoXml(rootTag: string, conteudo: string): string {
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<${rootTag} xmlns="${NS_MEC}" xmlns:ds="${NS_DS}">` +
+    `<${rootTag} xmlns="${NS_MEC}">` +
     conteudo +
     `</${rootTag}>`
   );
