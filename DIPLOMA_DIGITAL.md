@@ -226,6 +226,16 @@ já emitidos (`versao_schema` por diploma/arquivo).
   MANUAL é registrado em `validado_mec_em` + auditoria (o app não integra
   com o validador do MEC — a conformidade estrutural é uma etapa, e a
   conferência oficial fica registrada como trilha).
+  **"Validar Diploma Digital" (local, consolidado)**: botão por arquivo no
+  modal de detalhe roda o validador próprio (`validar-artefato.ts`) e abre
+  a tela de diagnóstico — XSD oficial (erros estruturados com
+  elemento/linha), verificação criptográfica por assinatura (digests+RSA
+  contra o certificado do KeyInfo), XAdES (SigningTime/CertDigest/PolicyId),
+  carimbo do tempo (token RFC 3161 parseado: ACT, genTime e assinatura do
+  token verificada contra o certificado da TSA EMBUTIDO — cadeia ICP-Brasil
+  e OCSP/CRL são pendências), certificado (validade/uso/algoritmo/serial),
+  hash SHA-256 e veredito **APROVADO/REJEITADO**. O fluxo de assinatura só
+  marca "assinado" se a verificação criptográfica passar.
   **Comportamento comprovado empiricamente (27/08/2026, validator 1.5.15)**:
   o schema compilado do serviço usa o XMLDSig canônico `http://` — documento
   com `ds` em `https` é rejeitado na raiz ("Não pode localizar a declaração

@@ -219,6 +219,7 @@ export interface DesktopApi {
     gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }) => Promise<ApiResult<{ salvoPath: string; diplomas: number }>>;
     abrirValidadorMec: () => Promise<ApiResult<true>>;
     baixarArquivo: (arquivoId: number) => Promise<ApiResult<{ salvoPath: string }>>;
+    validarArtefato: (arquivoId: number) => Promise<ApiResult<any>>;
     registrarValidacaoMec: (id: number, resultado: 'valido' | 'invalido', observacoes?: string) => Promise<ApiResult<true>>;
     iesListar: () => Promise<ApiResult<any[]>>;
     iesSalvar: (input: any) => Promise<ApiResult<any>>;

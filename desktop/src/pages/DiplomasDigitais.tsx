@@ -488,6 +488,8 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
   const [modalSenha, setModalSenha] = useState<string | null>(null); // artefato aguardando senha A1
   const [modalRegistro, setModalRegistro] = useState(false);
   const [modalAnular, setModalAnular] = useState(false);
+  const [validando, setValidando] = useState<number | null>(null);
+  const [diagnostico, setDiagnostico] = useState<any | null>(null);
   const { usuario } = useAuth();
 
   const assinar = async (artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => {
@@ -530,6 +532,15 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     } else {
       setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao baixar' });
     }
+  };
+
+  const validarArtefato = async (arquivoId: number) => {
+    setMsg(null);
+    setValidando(arquivoId);
+    const r = await api.diplomasDigitais.validarArtefato(arquivoId);
+    setValidando(null);
+    if (r.ok) setDiagnostico(r.data);
+    else setMsg({ tipo: 'erro', texto: r.error ?? 'Falha na validaÃ§Ã£o' });
   };
 
   const publicar = async () => {
@@ -702,6 +713,9 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
                 <td>
                   <button className="btn-ghost btn-sm" onClick={() => void baixarArquivo(a.id, a.tipo_arquivo)}>
                     Baixar XML
+                  </button>{' '}
+                  <button className="btn-ghost btn-sm" disabled={validando === a.id} onClick={() => void validarArtefato(a.id)}>
+                    {validando === a.id ? 'Validandoâ€¦' : 'Validar'}
                   </button>
                 </td>
               </tr>
@@ -753,6 +767,7 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
           id={id}
         />
       )}
+      {diagnostico && <ModalDiagnostico resultado={diagnostico} onClose={() => setDiagnostico(null)} />}
       {modalAnular && (
         <ModalAnular
           id={id}
@@ -1430,6 +1445,97 @@ function ModalRelatoriosOficiais({
           {gerandoFisc ? 'Gerandoâ€¦' : 'Gerar Arquivo de FiscalizaÃ§Ã£o'}
         </button>
       </div>
+    </Modal>
+  );
+}
+
+// ============================================================
+// Modal: Diagnóstico — "Validar Diploma Digital"
+// ============================================================
+
+function LinhaDiag({ rotulo, ok, detalhe, neutro }: { rotulo: string; ok?: boolean | null; detalhe?: string; neutro?: boolean }) {
+  const cor = neutro || ok == null ? 'var(--text-muted)' : ok ? '#16A34A' : '#DC2626';
+  const simbolo = neutro || ok == null ? '—' : ok ? 'OK' : 'FALHOU';
+  return (
+    <div style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+      <span style={{ width: 90, fontWeight: 600, color: 'var(--text-muted)' }}>{rotulo}</span>
+      <span style={{ width: 62, fontWeight: 700, color: cor }}>{simbolo}</span>
+      <span style={{ flex: 1, color: detalhe ? 'inherit' : 'var(--text-muted)' }}>{detalhe || '—'}</span>
+    </div>
+  );
+}
+
+function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () => void }) {
+  const aprovado = resultado.veredito === 'APROVADO';
+  return (
+    <Modal title="Validar Diploma Digital — Diagnóstico" onClose={onClose} width={760}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Veredito final</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: aprovado ? '#16A34A' : '#DC2626' }}>
+            {aprovado ? 'APROVADO' : 'REJEITADO'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+          <div>Padrão MEC: <strong>{resultado.versaoPadrao}</strong> (IN Sesu 1/2020)</div>
+          <div style={{ fontFamily: 'monospace', marginTop: 4 }}>SHA-256: {resultado.hashSha256?.slice(0, 32)}…</div>
+        </div>
+      </div>
+
+      <LinhaDiag rotulo="XML" ok={resultado.bemFormado} detalhe={resultado.bemFormado ? 'bem formado' : 'mal formado'} />
+      <LinhaDiag
+        rotulo="XSD oficial"
+        ok={resultado.xsd?.ok}
+        detalhe={
+          resultado.xsd?.ok
+            ? `válido contra o XSD ${resultado.versaoPadrao}`
+            : (resultado.xsd?.erros ?? []).slice(0, 5).map((e: any) =>
+                `${e.elemento ? `elemento <${e.elemento}>` : ''}${e.linha ? ` (linha ${e.linha})` : ''}: ${e.mensagem}`
+              ).join(' · ')
+        }
+      />
+
+      <div style={{ marginTop: 14, fontWeight: 700, fontSize: 13 }}>Assinaturas ({resultado.assinaturas?.length ?? 0})</div>
+      {(resultado.assinaturas ?? []).map((a: any) => (
+        <div key={a.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, marginTop: 8 }}>
+          <div style={{ fontFamily: 'monospace', fontSize: 12, marginBottom: 4 }}>{a.id}</div>
+          <LinhaDiag rotulo="Cripto" ok={a.criptografiaOk} detalhe={a.criptografiaOk ? 'digests + RSA conferem com o certificado do KeyInfo' : (a.errosCripto ?? []).join('; ')} />
+          <LinhaDiag rotulo="XAdES" ok={a.certDigestOk !== false} detalhe={`SigningTime ${a.signingTime ?? '—'} · CertDigest ${a.certDigestOk == null ? 'ausente' : a.certDigestOk ? 'confere' : 'DIVERGE'}${a.policyId ? ` · Política: ${a.policyId}` : ''}`} />
+          <LinhaDiag
+            rotulo="Certificado"
+            ok={a.certificado ? a.certificado.validoAgora && a.certificado.usoAssinaturaDigital : null}
+            detalhe={
+              a.certificado
+                ? `${a.certificado.subject} · ${a.certificado.algoritmo} · serial ${a.certificado.serial} · válido até ${String(a.certificado.validoAte).slice(0, 10)}`
+                : 'não encontrado'
+            }
+          />
+          {a.carimbo ? (
+            <LinhaDiag
+              rotulo="Carimbo"
+              ok={a.carimbo.tokenOk}
+              detalhe={`ACT ${a.carimbo.act ?? 'não identificada'} · hora ${a.carimbo.genTime ?? 'ilegível'}${a.carimbo.erros?.length ? ' · ' + a.carimbo.erros.join('; ') : ''}`}
+            />
+          ) : (
+            <LinhaDiag rotulo="Carimbo" ok={false} detalhe="sem carimbo do tempo (XAdES-BES) — política exige XAdES-T" />
+          )}
+        </div>
+      ))}
+
+      {resultado.esqueletos > 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+          {resultado.esqueletos} posição(ões) de assinatura da IES Registradora aguardando (competência do sistema dela).
+        </div>
+      )}
+
+      {(resultado.pendencias ?? []).length > 0 && (
+        <div className="alert alert-error" style={{ marginTop: 12 }}>
+          <strong>Pendências:</strong>
+          <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+            {resultado.pendencias.map((p: string, i: number) => <li key={i} style={{ fontSize: 12 }}>{p}</li>)}
+          </ul>
+        </div>
+      )}
     </Modal>
   );
 }

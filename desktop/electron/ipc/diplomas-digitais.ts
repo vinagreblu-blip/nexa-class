@@ -26,6 +26,7 @@ import { gerarListaDiplomasAnuladosXml } from '../diploma-digital/gerar-lista-an
 import { gerarArquivoFiscalizacaoXml, type DiplomaFiscalizadoEntrada } from '../diploma-digital/gerar-arquivo-fiscalizacao';
 import { gerarRvddPdf } from '../diploma-digital/gerar-rvdd';
 import { assinarTodosEsqueletos, contarEsqueletos } from '../diploma-digital/xades-signer';
+import { validarArtefatoDiploma, type ResultadoValidacaoArtefato } from '../diploma-digital/validar-artefato';
 import { validarXmlContraXsd, type ArtefatoXsd, type ResultadoValidacao } from '../diploma-digital/xsd-validator';
 import { getClient } from '../cloud';
 import { validarSenhaMaster } from '../utils/regras';
@@ -585,7 +586,7 @@ function gerarXmlHandler(
       return {
         ok: false,
         error: `XML gerado porém INVÁLIDO contra o XSD ${validacao.versaoSchema}. Correção necessária antes de prosseguir.\n` +
-          validacao.erros.slice(0, 5).join('\n'),
+          formatarErrosXsd(validacao.erros),
       };
     }
     return { ok: true, data: { valido: true, erros: [], arquivoId: info.lastInsertRowid as number } };
@@ -635,7 +636,17 @@ function persistirNovaVersao(
   return info.lastInsertRowid as number;
 }
 
+/** Formata erros do xmllint em "elemento <X> (linha N): mensagem" — o
+ *  usuário precisa saber O QUE e ONDE, não só "XML inválido". */
+function formatarErrosXsd(erros: string[], max = 5): string {
+  const { estruturarErrosXsd } = require('../diploma-digital/validar-artefato') as typeof import('../diploma-digital/validar-artefato');
+  return estruturarErrosXsd(erros.slice(0, max))
+    .map((e) => `${e.elemento ? `elemento <${e.elemento}>` : 'documento'}${e.linha ? ` (linha ${e.linha})` : ''}: ${e.mensagem}`)
+    .join('\n');
+}
+
 function extrairPfxA1(caminhoPfx: string, senha: string): { chavePem: string; certPem: string } {
+
   const forge = require('node-forge');
   const buf = fs.readFileSync(caminhoPfx);
   const asn1 = forge.asn1.fromDer(buf.toString('binary'));
@@ -814,8 +825,29 @@ function assinarHandler(
     if (!validacao.valido) {
       db.prepare("UPDATE diplomas_digitais SET status = 'xml_invalido', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
       auditar(diplomaId, `assinatura_${artefato}`, 'xml_invalido', { erros: validacao.erros.slice(0, 10) });
-      return { ok: false, error: 'XML assinado rejeitado na revalidação XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
+      return { ok: false, error: 'XML assinado rejeitado na revalidação XSD:\n' + formatarErrosXsd(validacao.erros) };
     }
+
+    // VERIFICAÇÃO COMPLETA antes de liberar (fluxo oficial: validar
+    // assinatura/certificado/carimbo, não só o schema). Assinatura que não
+    // confere criptograficamente NÃO marca como assinado.
+    const diagnostico = await validarArtefatoDiploma(xmlAssinado, artefatoXsd, { exigirCarimbo: false });
+    const assinaturasInvalidas = diagnostico.assinaturas.filter((a) => !a.criptografiaOk || a.certDigestOk === false);
+    if (assinaturasInvalidas.length > 0) {
+      db.prepare("UPDATE diplomas_digitais SET status = 'xml_invalido', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
+      auditar(diplomaId, `assinatura_${artefato}`, 'verificacao_cripto_falhou', {
+        problemas: assinaturasInvalidas.map((a) => ({ id: a.id, erros: a.errosCripto })),
+      });
+      return {
+        ok: false,
+        error: 'Assinatura verificada e REJEITADA (digests/RSA não conferem):\n' +
+          assinaturasInvalidas.map((a) => `• ${a.id}: ${a.errosCripto.join('; ')}`).join('\n'),
+      };
+    }
+    if (diagnostico.assinaturas.some((a) => !a.carimbo?.tokenOk) && !avisoCarimbo) {
+      avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES) — configure o TSA e assine novamente.';
+    }
+
     db.prepare("UPDATE diplomas_digitais SET status = 'assinado', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
     auditar(diplomaId, `assinatura_${artefato}`, 'sucesso', {
       tipo: assinatura.certificado_tipo,
@@ -881,7 +913,7 @@ function registrarHandler(
     if (!validacao.valido) {
       db.prepare("UPDATE diplomas_digitais SET status = 'xml_invalido', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
       auditar(diplomaId, 'registro', 'xml_invalido', { erros: validacao.erros.slice(0, 10) });
-      return { ok: false, error: 'Diploma final inválido contra o XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
+      return { ok: false, error: 'Diploma final inválido contra o XSD:\n' + formatarErrosXsd(validacao.erros) };
     }
     db.prepare("UPDATE diplomas_digitais SET status = 'registrado', dados_registro_json = ?, updated_at = datetime('now') WHERE id = ?")
       .run(JSON.stringify(registro), diplomaId);
@@ -1039,7 +1071,7 @@ function gerarListaAnuladosHandler(
       seq: input.numeroSequencia, total: anulados.length, erros: validacao.erros.slice(0, 8),
     });
     if (!validacao.valido) {
-      return { ok: false, error: 'Lista inválida contra o XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
+      return { ok: false, error: 'Lista inválida contra o XSD:\n' + formatarErrosXsd(validacao.erros) };
     }
     return { ok: true, data: { salvoPath, anulados: anulados.length } };
   })();
@@ -1172,7 +1204,7 @@ function gerarFiscalizacaoHandler(
       periodo: `${input.dataInicio}..${input.dataFim}`, total: diplomas.length, erros: validacao.erros.slice(0, 8),
     });
     if (!validacao.valido) {
-      return { ok: false, error: 'Arquivo inválido contra o XSD:\n' + validacao.erros.slice(0, 5).join('\n') };
+      return { ok: false, error: 'Arquivo inválido contra o XSD:\n' + formatarErrosXsd(validacao.erros) };
     }
     return { ok: true, data: { salvoPath, diplomas: diplomas.length } };
   })();
@@ -1273,6 +1305,68 @@ async function salvarCopia(event: IpcMainInvokeEvent, origem: string, tipoArquiv
   return { ok: true, data: { salvoPath: destino.filePath } };
 }
 
+/** Resolve o CONTEÚDO do arquivo do processo (local → userData → nuvem),
+ *  mesmo pipeline do download, sem diálogo. */
+async function conteudoDoArquivo(arquivoId: number): Promise<string | null> {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT * FROM diploma_arquivos WHERE id = ?')
+    .get(arquivoId) as
+    | { diploma_id: number; nome: string | null; caminho_storage: string | null }
+    | undefined;
+  if (!row) return null;
+  if (row.caminho_storage && fs.existsSync(row.caminho_storage)) {
+    return fs.readFileSync(row.caminho_storage, 'utf8');
+  }
+  const canonico = path.join(
+    app.getPath('userData'), 'diplomas-digitais', String(row.diploma_id),
+    row.nome ?? path.basename(row.caminho_storage ?? '')
+  );
+  if (fs.existsSync(canonico)) return fs.readFileSync(canonico, 'utf8');
+  if (row.caminho_storage && !path.isAbsolute(row.caminho_storage)) {
+    try {
+      const client = getClient();
+      if (client) {
+        const { data, error } = await client.storage.from('diplomas-digitais').download(row.caminho_storage);
+        if (!error && data) return Buffer.from(await data.arrayBuffer()).toString('utf8');
+      }
+    } catch { /* segue p/ null */ }
+  }
+  return null;
+}
+
+/** "Validar Diploma Digital": verificação consolidada do artefato —
+ *  XSD oficial + assinatura (cripto) + XAdES + carimbo (ACT/hora) +
+ *  certificado + hash + veredito APROVADO/REJEITADO. */
+function validarArtefatoHandler(
+  _event: IpcMainInvokeEvent,
+  arquivoId: number
+): Promise<ApiResult<ResultadoValidacaoArtefato>> {
+  return (async () => {
+    const db = getDb();
+    const row = db.prepare('SELECT * FROM diploma_arquivos WHERE id = ?').get(arquivoId) as
+      | { diploma_id: number; tipo_arquivo: string }
+      | undefined;
+    if (!row) return { ok: false, error: 'Arquivo não encontrado.' };
+    const xml = await conteudoDoArquivo(arquivoId);
+    if (!xml) return { ok: false, error: 'Arquivo não encontrado nesta máquina nem na nuvem (gere novamente).' };
+    const artefato: ArtefatoXsd =
+      row.tipo_arquivo.startsWith('historico') ? 'historicoEscolar'
+        : row.tipo_arquivo.startsWith('documentacao') ? 'documentacaoAcademica'
+          : 'diploma';
+    try {
+      const resultado = await validarArtefatoDiploma(xml, artefato, { exigirCarimbo: true });
+      auditar(row.diploma_id, 'validar_artefato', resultado.veredito, {
+        arquivoId,
+        pendencias: resultado.pendencias.slice(0, 10),
+      });
+      return { ok: true, data: resultado };
+    } catch (e: any) {
+      return { ok: false, error: 'Falha na validação: ' + (e?.message ?? String(e)) };
+    }
+  })();
+}
+
 export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR, requerAuth(listar));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_LISTAR_APTOS, requerAuth(listarAptos));
@@ -1294,5 +1388,6 @@ export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, requerAuth(gerarFiscalizacaoHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ABRIR_VALIDADOR_MEC, requerAuth(abrirValidadorMecHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_BAIXAR_ARQUIVO, requerAuth(baixarArquivoHandler));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_VALIDAR_ARTEFATO, requerAuth(validarArtefatoHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR_VALIDACAO_MEC, requerAuth(registrarValidacaoMecHandler));
 }

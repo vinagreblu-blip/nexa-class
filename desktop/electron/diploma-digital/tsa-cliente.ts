@@ -109,8 +109,10 @@ function dadosDoToken(token: any): { genTime?: string; nonce?: Buffer } {
 }
 
 /**
- * Valida a TimeStampResp: status granted/grantedWithMods e (se presente)
- * nonce confere com o da requisição. Devolve o token DER + genTime.
+ * Valida a TimeStampResp (status granted + nonce) e devolve SOMENTE o
+ * TimeStampToken (CMS ContentInfo, RFC 3161) — é o que o XAdES exige no
+ * EncapsulatedTimeStamp (a resposta completa carrega o PKIStatusInfo,
+ * que não faz parte do token).
  */
 export function validarResposta(derResp: Buffer, nonceEsperado: Buffer): CarimboTempo {
   const { asn1 } = forge();
@@ -130,7 +132,8 @@ export function validarResposta(derResp: Buffer, nonceEsperado: Buffer): Carimbo
   if (nonce && !nonce.equals(nonceEsperado)) {
     throw new Error('Nonce do carimbo não confere com a requisição (resposta trocada?).');
   }
-  return { token: derResp, genTime, nonce: nonceEsperado };
+  const derToken = Buffer.from(asn1.toDer(token).getBytes(), 'binary');
+  return { token: derToken, genTime, nonce: nonceEsperado };
 }
 
 /** Solicita um carimbo RFC 3161 do digest. @digest = 32 bytes SHA-256. */
