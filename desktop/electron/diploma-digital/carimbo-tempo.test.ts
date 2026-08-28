@@ -113,7 +113,7 @@ describe('tsa-cliente (RFC 3161)', () => {
       ]),
       asn1.create(asn1.Class.UNIVERSAL, asn1.Type.INTEGER, false, asn1.integerToDer(42).getBytes()),
       asn1.create(asn1.Class.UNIVERSAL, 24, false, '20260827120000Z'), // genTime
-      asn1.create(asn1.Class.CONTEXT, 5, true, [
+      asn1.create(asn1.Class.CONTEXT_SPECIFIC, 5, true, [
         asn1.create(asn1.Class.UNIVERSAL, asn1.Type.INTEGER, false, nonce.toString('binary')),
       ]),
     ]);

@@ -167,7 +167,7 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ANULAR, id, motivo, senhaMaster, anotacao),
     gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }): Promise<ApiResult<{ salvoPath: string; anulados: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_LISTA_ANULADOS, input),
-    gerarRvdd: (id: number): Promise<ApiResult<{ salvoPath: string }>> =>
+    gerarRvdd: (id: number): Promise<ApiResult<{ salvoPath: string; pdfaAuto: boolean; veraPdfConforme: boolean | null }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_RVDD, id),
     gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }): Promise<ApiResult<{ salvoPath: string; diplomas: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_FISCALIZACAO, input),
@@ -277,6 +277,12 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_SALVAR, input),
     tsaTestar: (): Promise<ApiResult<{ genTime: string; bytes: number }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_TESTAR),
+    politicaObter: (): Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_POLITICA_OBTER),
+    politicaSalvar: (input: { modo: 'padrao' | 'custom' | 'bes'; identificador?: string; digestBase64?: string; spuri?: string }): Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_POLITICA_SALVAR, input),
+    politicaConfirmar: (input: { spuri: string; digestBase64: string }): Promise<ApiResult<{ confere: boolean; calculado: string; spuriUsado: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_POLITICA_CONFIRMAR, input),
   },
   cloud: {
     status: (): Promise<ApiResult<{ url: string; key: string; enabled: boolean }>> =>

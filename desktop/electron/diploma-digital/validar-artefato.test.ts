@@ -9,7 +9,7 @@
 //  - documento adulterado → criptografia REJEITADA
 //  - XSD inválido → erros estruturados (elemento/linha)
 //  - verificação INDEPENDENTE do fluxo (o validador só recebe o XML)
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +17,23 @@ import { assinarTodosEsqueletos } from './xades-signer';
 import { gerarHistoricoXml } from './gerar-historico-xml';
 import { gerarDocumentacaoAcademicaXml } from './gerar-documentacao-academica';
 import { validarArtefatoDiploma, estruturarErrosXsd } from './validar-artefato';
+
+// ---- Mock F3: cadeia/CRL da TSA (módulos de rede/PowerShell) ----
+const f3 = vi.hoisted(() => ({
+  cadeia: { ok: true, confiaNaRaiz: true, elementos: [{ subject: 'CN=TSA TESTE', status: [] }], erros: [] },
+  revogacao: { status: 'valido', detalhe: 'Serial não consta na CRL.' },
+}));
+vi.mock('./ltv', () => ({
+  verificarCadeiaComStatus: async (pem: string) => ({ cadeiaPems: [pem], status: f3.cadeia }),
+  urlsCrlDoCert: () => ['http://crl.teste/fake.crl'],
+  baixarCrl: async () => Buffer.from('crl-der-fake'),
+}));
+vi.mock('./crl', () => ({
+  parsearCrl: () => ({ issuerDn: 'CN=TSA TESTE', thisUpdate: '2026-08-28T00:00:00Z', nextUpdate: '2026-09-04T00:00:00Z', revogados: [], crlNumber: '1', algoritmoAssinatura: '1.2.840.113549.1.1.11', tbsDer: Buffer.alloc(0), assinatura: Buffer.alloc(0), hashAlgoritmo: 'sha256' }),
+  emissorDaCrl: (info: any, pems: string[]) => pems[0] ?? null,
+  verificarRevogacao: () => f3.revogacao,
+  verificarAssinaturaCrl: () => true,
+}));
 
 const ALUNO = {
   id: 7, matricula: '202012345', nome: 'MARIA DA SILVA', nome_social: null,
@@ -102,12 +119,12 @@ function tokenCarimboCms(genTimeIso: string): Buffer {
     // encapContentInfo { OID tstInfo, [0] EXPLICIT OCTET STRING }
     asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
       asn1.create(asn1.Class.UNIVERSAL, asn1.Type.OID, false, asn1.oidToDer('1.2.840.113549.1.9.16.1.4').getBytes()),
-      asn1.create(asn1.Class.CONTEXT, 0, true, [
+      asn1.create(asn1.Class.CONTEXT_SPECIFIC, 0, true, [
         asn1.create(asn1.Class.UNIVERSAL, asn1.Type.OCTETSTRING, false, tstDer),
       ]),
     ]),
     // [0] certs
-    asn1.create(asn1.Class.CONTEXT, 0, true, [pki.certificateToAsn1(tsa.cert)]),
+    asn1.create(asn1.Class.CONTEXT_SPECIFIC, 0, true, [pki.certificateToAsn1(tsa.cert)]),
     // signerInfos: { version, sid IssuerAndSerial, digestAlg sha256, sigAlg rsa, sig }
     asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SET, true, [
       asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
@@ -128,7 +145,7 @@ function tokenCarimboCms(genTimeIso: string): Buffer {
   ]);
   const ci = asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SEQUENCE, true, [
     asn1.create(asn1.Class.UNIVERSAL, asn1.Type.OID, false, asn1.oidToDer('1.2.840.113549.1.7.2').getBytes()),
-    asn1.create(asn1.Class.CONTEXT, 0, true, [signedData]),
+    asn1.create(asn1.Class.CONTEXT_SPECIFIC, 0, true, [signedData]),
   ]);
   return Buffer.from(asn1.toDer(ci).getBytes(), 'binary');
 }
@@ -216,4 +233,73 @@ describe('Validar Diploma Digital (consolidado)', () => {
     expect(estr[0].elemento).toBe('Diploma');
     expect(estr[0].linha).toBe(2);
   }, 30000);
+});
+
+describe('F3: cadeia da TSA + revogação CRL no veredito', () => {
+  const resetar = () => {
+    f3.cadeia = { ok: true, confiaNaRaiz: true, elementos: [{ subject: 'CN=TSA TESTE', status: [] }], erros: [] };
+    f3.revogacao = { status: 'valido', detalhe: 'Serial não consta na CRL.' };
+  };
+
+  it('cadeia ok + CRL válida → APROVADO SEM pendências', async () => {
+    resetar();
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml(snapshot)!;
+    const carimbador = async () => ({ token: tokenCarimboCms('2026-08-27T12:00:00Z') });
+    const assinado = await assinarTodosEsqueletos(xml, { signatureIdBase: 'Sign-Hist-42', chavePem, certPem, carimbador });
+    const r = await validarArtefatoDiploma(assinado, 'historicoEscolar');
+    expect(r.veredito).toBe('APROVADO');
+    expect(r.assinaturas[0].carimbo?.cadeia?.ok).toBe(true);
+    expect(r.assinaturas[0].carimbo?.revogacao?.status).toBe('valido');
+    expect(r.pendencias).toHaveLength(0);
+  }, 60000);
+
+  it('cert TSA REVOGADO (CRL) → REJEITADO com motivo explícito', async () => {
+    resetar();
+    f3.revogacao = { status: 'revogado', detalhe: 'Serial 999 consta na CRL da AC.' };
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml(snapshot)!;
+    const carimbador = async () => ({ token: tokenCarimboCms('2026-08-27T12:00:00Z') });
+    const assinado = await assinarTodosEsqueletos(xml, { signatureIdBase: 'Sign-Hist-42', chavePem, certPem, carimbador });
+    const r = await validarArtefatoDiploma(assinado, 'historicoEscolar');
+    expect(r.veredito).toBe('REJEITADO');
+    expect(r.assinaturas[0].carimbo?.revogacao?.status).toBe('revogado');
+    expect(r.pendencias.some((p) => p.includes('REVOGADO'))).toBe(true);
+  }, 60000);
+
+  it('raiz da TSA NÃO confiada → APROVADO com pendência (cadeia branda)', async () => {
+    resetar();
+    f3.cadeia = { ok: false, confiaNaRaiz: false, elementos: [{ subject: 'CN=TSA TESTE', status: ['UntrustedRoot'] }], erros: ['Raiz da cadeia NÃO está no repositório de confiança do Windows (instale a cadeia ICP-Brasil / verifique a AC).'] };
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml(snapshot)!;
+    const carimbador = async () => ({ token: tokenCarimboCms('2026-08-27T12:00:00Z') });
+    const assinado = await assinarTodosEsqueletos(xml, { signatureIdBase: 'Sign-Hist-42', chavePem, certPem, carimbador });
+    const r = await validarArtefatoDiploma(assinado, 'historicoEscolar');
+    expect(r.veredito).toBe('APROVADO'); // cadeia indisponível não rejeita
+    expect(r.pendencias.some((p) => p.includes('cadeia da TSA não confirmada'))).toBe(true);
+  }, 60000);
+
+  it('CRL indisponível (offline) → APROVADO com pendência de revogação indeterminada', async () => {
+    resetar();
+    f3.revogacao = { status: 'indeterminado', detalhe: 'CRL da TSA indisponível (offline ou sem CRLDistributionPoints acessível).' };
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml(snapshot)!;
+    const carimbador = async () => ({ token: tokenCarimboCms('2026-08-27T12:00:00Z') });
+    const assinado = await assinarTodosEsqueletos(xml, { signatureIdBase: 'Sign-Hist-42', chavePem, certPem, carimbador });
+    const r = await validarArtefatoDiploma(assinado, 'historicoEscolar');
+    expect(r.veredito).toBe('APROVADO');
+    expect(r.pendencias.some((p) => p.includes('revogação da TSA indeterminada'))).toBe(true);
+  }, 60000);
+
+  it('verificarCadeiaCrl: false (gate de assinatura) → sem cadeia/revogação', async () => {
+    resetar();
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml(snapshot)!;
+    const carimbador = async () => ({ token: tokenCarimboCms('2026-08-27T12:00:00Z') });
+    const assinado = await assinarTodosEsqueletos(xml, { signatureIdBase: 'Sign-Hist-42', chavePem, certPem, carimbador });
+    const r = await validarArtefatoDiploma(assinado, 'historicoEscolar', { verificarCadeiaCrl: false });
+    expect(r.veredito).toBe('APROVADO');
+    expect(r.assinaturas[0].carimbo?.cadeia).toBeUndefined();
+    expect(r.assinaturas[0].carimbo?.revogacao).toBeUndefined();
+  }, 60000);
 });

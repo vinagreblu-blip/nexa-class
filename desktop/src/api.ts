@@ -215,7 +215,7 @@ export interface DesktopApi {
     publicar: (id: number) => Promise<ApiResult<true>>;
     anular: (id: number, motivo: string, senhaMaster: string, anotacao?: string) => Promise<ApiResult<true>>;
     gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }) => Promise<ApiResult<{ salvoPath: string; anulados: number }>>;
-    gerarRvdd: (id: number) => Promise<ApiResult<{ salvoPath: string }>>;
+    gerarRvdd: (id: number) => Promise<ApiResult<{ salvoPath: string; pdfaAuto: boolean; veraPdfConforme: boolean | null }>>;
     gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }) => Promise<ApiResult<{ salvoPath: string; diplomas: number }>>;
     abrirValidadorMec: () => Promise<ApiResult<true>>;
     baixarArquivo: (arquivoId: number) => Promise<ApiResult<{ salvoPath: string }>>;
@@ -280,6 +280,9 @@ export interface DesktopApi {
     tsaObter: () => Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean } | null>>;
     tsaSalvar: (input: { url: string; usuario?: string; senha?: string; manterSenhaAtual?: boolean }) => Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean }>>;
     tsaTestar: () => Promise<ApiResult<{ genTime: string; bytes: number }>>;
+    politicaObter: () => Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>>;
+    politicaSalvar: (input: { modo: 'padrao' | 'custom' | 'bes'; identificador?: string; digestBase64?: string; spuri?: string }) => Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>>;
+    politicaConfirmar: (input: { spuri: string; digestBase64: string }) => Promise<ApiResult<{ confere: boolean; calculado: string; spuriUsado: string }>>;
   };
   cloud: {
     status: () => Promise<ApiResult<{ url: string; key: string; enabled: boolean }>>;

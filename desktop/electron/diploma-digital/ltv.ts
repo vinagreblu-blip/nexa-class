@@ -23,6 +23,7 @@ import { DOMParser } from '@xmldom/xmldom';
 import { ExclusiveCanonicalization } from 'xml-crypto';
 import { NS_DS, escapeXml } from './xml-utils';
 import { trechosAssinatura } from './xades-signer';
+import { parsearCrl, verificarAssinaturaCrl, type CrlInfo } from './crl';
 
 const ALGO_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
 
@@ -36,6 +37,28 @@ export interface DadosLtv {
 /** Cadeia de certificação via Windows X509Chain (resolve intermediárias
  *  pela AIA automaticamente) — PowerShell, mesmo padrão dos scripts A3. */
 export async function coletarCadeia(certPemLeaf: string): Promise<string[]> {
+  const r = await verificarCadeiaComStatus(certPemLeaf);
+  return r.cadeiaPems;
+}
+
+export interface StatusElementoCadeia {
+  subject: string;
+  status: string[];
+}
+
+export interface StatusCadeia {
+  ok: boolean;
+  /** Raiz da cadeia está no repositório de confiança do Windows? */
+  confiaNaRaiz: boolean;
+  elementos: StatusElementoCadeia[];
+  erros: string[];
+}
+
+/** Cadeia + STATUS REAL por elemento (X509Chain.Status por elemento:
+ *  NotTimeValid, UntrustedRoot, RevocationStatusUnknown, …) e confiança
+ *  na raiz (segunda construção SEM AllowUnknownCertificateAuthority).
+ *  Não lança — devolve erros (offline/AIA inacessível vira status). */
+export async function verificarCadeiaComStatus(certPemLeaf: string): Promise<{ cadeiaPems: string[]; status: StatusCadeia }> {
   const os = await import('node:os');
   const path = await import('node:path');
   const fs = await import('node:fs');
@@ -49,21 +72,30 @@ export async function coletarCadeia(certPemLeaf: string): Promise<string[]> {
 param([string]$CertFile, [string]$OutDir)
 $ErrorActionPreference = 'Stop'
 $leaf = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CertFile)
+# 1) monta a cadeia (AIA), SEM revogação e permitindo raiz desconhecida —
+#    apenas para OBTER os elementos e o status individual de cada um.
 $chain = New-Object System.Security.Cryptography.X509Certificates.X509Chain
 $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
 $chain.ChainPolicy.VerificationFlags = [System.Security.Cryptography.X509Certificates.X509VerificationFlags]::AllowUnknownCertificateAuthority
-if (-not $chain.Build($leaf)) { throw 'Nao foi possivel montar a cadeia de certificacao (AIA/offline?).' }
+[void]$chain.Build($leaf)
 $i = 0
 foreach ($el in $chain.ChainElements) {
   $b64 = [Convert]::ToBase64String($el.Certificate.RawData, 'InsertLineBreaks')
   $pem = "-----BEGIN CERTIFICATE-----" + [char]10 + $b64 + [char]10 + "-----END CERTIFICATE-----" + [char]10
   [System.IO.File]::WriteAllText((Join-Path $OutDir ("c" + $i + ".pem")), $pem, (New-Object System.Text.UTF8Encoding($false)))
+  $st = ($el.Status | ForEach-Object { $_.ToString() }) -join ';'
+  Write-Output ("ELEM:" + $i + "|" + $st + "|" + $el.Certificate.Subject)
   $i++
 }
-Write-Output "OK:$i"
+# 2) raiz é CONFIADA? (sem AllowUnknown — a resposta real do Windows)
+$chain2 = New-Object System.Security.Cryptography.X509Certificates.X509Chain
+$chain2.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+$rootOk = $chain2.Build($leaf)
+Write-Output ("TRUST:" + $rootOk)
+Write-Output ("OK:" + $i)
 `.trim();
   try {
-    await runPowerShellScriptAsync(script, { CertFile: certFile, OutDir: dir }, 60000);
+    const saida = await runPowerShellScriptAsync(script, { CertFile: certFile, OutDir: dir }, 60000);
     const pems: string[] = [];
     let i = 0;
     while (fs.existsSync(path.join(dir, `c${i}.pem`))) {
@@ -71,7 +103,23 @@ Write-Output "OK:$i"
       i++;
     }
     if (pems.length === 0) throw new Error('Cadeia vazia retornada pelo Windows.');
-    return pems;
+    const elementos: StatusElementoCadeia[] = [];
+    let confiaNaRaiz = false;
+    for (const linha of String(saida ?? '').split(/\r?\n/)) {
+      const m = /^ELEM:(\d+)\|([^|]*)\|(.*)$/.exec(linha.trim());
+      if (m) elementos.push({ subject: m[3], status: m[2] ? m[2].split(';').filter(Boolean) : [] });
+      const t = /^TRUST:(True|False)$/i.exec(linha.trim());
+      if (t) confiaNaRaiz = t[1].toLowerCase() === 'true';
+    }
+    const erros: string[] = [];
+    if (!confiaNaRaiz) erros.push('Raiz da cadeia NÃO está no repositório de confiança do Windows (instale a cadeia ICP-Brasil / verifique a AC).');
+    for (const el of elementos) {
+      for (const s of el.status) {
+        if (s === 'UntrustedRoot' && !confiaNaRaiz) continue; // já reportado acima
+        erros.push(`${el.subject}: ${s}`);
+      }
+    }
+    return { cadeiaPems: pems, status: { ok: erros.length === 0, confiaNaRaiz, elementos, erros } };
   } finally {
     try { (await import('node:fs')).rmSync(dir, { recursive: true, force: true }); } catch { /* noop */ }
   }
@@ -191,13 +239,23 @@ export async function aplicarLtv(
       .join('') +
     '</xades:CertRefs></xades:CompleteCertificateRefs>';
 
-  const crlInfos = cadeiaSemLeaf.map((_pem, idx) => {
-    const emissor = infos[idx];
-    const crl = crls[idx + 1] ?? crls[idx] ?? crlsOk[0]; // CRL do cert vem da AC acima
-    return { crl, emissor };
-  }).filter((x) => x.crl);
+  // Parse das CRLs + pareamento CRIPTOGRÁFICO: a CRL que cobre o cert X é
+  // a assinada pelo EMISSOR de X — verifica-se a assinatura da CRL contra
+  // a chave de cada cert da cadeia (vínculo real; heurística de índice
+  // antiga removida). CRL ilegível é ignorada (nunca inventa valor).
+  const crlsParseadas: { crl: Buffer; info: CrlInfo }[] = [];
+  for (const crl of crlsOk) {
+    try { crlsParseadas.push({ crl, info: parsearCrl(crl) }); } catch { /* ilegível */ }
+  }
+  const crlInfos: { crl: Buffer; info: CrlInfo }[] = [];
+  for (const pem of cadeiaPems) {
+    const achou = crlsParseadas.find((c) => verificarAssinaturaCrl(c.info, pem));
+    if (achou && !crlInfos.includes(achou)) crlInfos.push(achou);
+  }
 
-  // CRLRef conforme XAdES 1.3.2: DigestAlgAndValue + CRLIdentifier
+  // CRLRef conforme XAdES 1.3.2: DigestAlgAndValue + CRLIdentifier —
+  // IssueTime/Number extraídos da PRÓPRIA CRL (thisUpdate/crlNumber),
+  // nunca fabricados.
   const refsCrl =
     '<xades:CompleteRevocationRefs><xades:CRLRefs>' +
     crlInfos
@@ -209,9 +267,9 @@ export async function aplicarLtv(
           `<DigestValue xmlns="${NS_DS}">${createHash('sha256').update(x.crl).digest('base64')}</DigestValue>` +
           '</xades:DigestAlgAndValue>' +
           '<xades:CRLIdentifier>' +
-          `<xades:Issuer>${escapeXml(x.emissor.issuerName)}</xades:Issuer>` +
-          `<xades:IssueTime>${new Date().toISOString().slice(0, 19) + 'Z'}</xades:IssueTime>` +
-          `<xades:Number>${Date.now()}</xades:Number>` +
+          `<xades:Issuer>${escapeXml(x.info.issuerDn)}</xades:Issuer>` +
+          `<xades:IssueTime>${x.info.thisUpdate}</xades:IssueTime>` +
+          (x.info.crlNumber ? `<xades:Number>${x.info.crlNumber}</xades:Number>` : '') +
           '</xades:CRLIdentifier>' +
           '</xades:CRLRef>'
       )

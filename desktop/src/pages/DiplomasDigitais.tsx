@@ -559,9 +559,15 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     const r = await api.diplomasDigitais.gerarRvdd(id);
     setGerando(null);
     if (r.ok) {
+      const veraTxt =
+        r.data?.veraPdfConforme == null
+          ? 'veraPDF não configurado — configure (config "verapdf" ou env NEXA_VERAPDF) para a validação oficial do PDF Association.'
+          : r.data.veraPdfConforme
+            ? 'veraPDF (flavour 1b): CONFORME.'
+            : 'veraPDF (flavour 1b): NÃO conforme — ver conformidade_pdfa nos arquivos do processo.';
       setMsg({
-        tipo: 'ok',
-        texto: `RVDD gerada em "${r.data?.salvoPath}". Pendência de conformidade: PDF/A-1b requer verificação veraPDF (documentado em DIPLOMA_DIGITAL.md).`,
+        tipo: r.data?.pdfaAuto && r.data?.veraPdfConforme !== false ? 'ok' : 'erro',
+        texto: `RVDD gerada em "${r.data?.salvoPath}". PDF/A-1b: autochecagem estrutural ${r.data?.pdfaAuto ? 'OK (fontes embutidas + OutputIntent sRGB + XMP pdfaid + PDF 1.4)' : 'FALHOU'}. ${veraTxt}`,
       });
     } else {
       setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao gerar RVDD' });
@@ -1627,13 +1633,37 @@ function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () 
             }
           />
           {a.carimbo ? (
-            <LinhaDiag
-              rotulo="Carimbo"
-              ok={a.carimbo.tokenOk}
-              detalhe={`ACT ${a.carimbo.act ?? 'n�o identificada'} � hora ${a.carimbo.genTime ?? 'ileg�vel'}${a.carimbo.erros?.length ? ' � ' + a.carimbo.erros.join('; ') : ''}`}
-            />
+            <>
+              <LinhaDiag
+                rotulo="Carimbo"
+                ok={a.carimbo.tokenOk}
+                detalhe={`ACT ${a.carimbo.act ?? 'não identificada'} · hora ${a.carimbo.genTime ?? 'ilegível'}${a.carimbo.erros?.length ? ' · ' + a.carimbo.erros.join('; ') : ''}`}
+              />
+              {a.carimbo.cadeia && (
+                <LinhaDiag
+                  rotulo="Cadeia TSA"
+                  ok={a.carimbo.cadeia.ok}
+                  detalhe={
+                    a.carimbo.cadeia.erro ??
+                    (a.carimbo.cadeia.ok
+                      ? `cadeia completa (${a.carimbo.cadeia.elementos?.length ?? 0} cert[s])${a.carimbo.cadeia.confiaNaRaiz ? ' · raiz confiada no Windows' : ' · raiz NÃO confiada'}`
+                      : (a.carimbo.cadeia.erros ?? []).join('; ') || 'não confirmada')
+                  }
+                />
+              )}
+              {a.carimbo.revogacao && (
+                <LinhaDiag
+                  rotulo="Revogação (CRL)"
+                  ok={a.carimbo.revogacao.status === 'valido' ? true : a.carimbo.revogacao.status === 'indeterminado' ? null : false}
+                  detalhe={
+                    `${a.carimbo.revogacao.detalhe}` +
+                    (a.carimbo.revogacao.crlEmitidaEm ? ` · CRL emitida em ${String(a.carimbo.revogacao.crlEmitidaEm).slice(0, 10)}` : '')
+                  }
+                />
+              )}
+            </>
           ) : (
-            <LinhaDiag rotulo="Carimbo" ok={false} detalhe="sem carimbo do tempo (XAdES-BES) � pol�tica exige XAdES-T" />
+            <LinhaDiag rotulo="Carimbo" ok={false} detalhe="sem carimbo do tempo (XAdES-BES) · política exige XAdES-T" />
           )}
         </div>
       ))}

@@ -11,8 +11,12 @@
 //      conferido contra o certificado do KeyInfo), PolicyIdentifier
 //   5. Carimbo do tempo: token RFC 3161 (CMS) parseado — ACT, hora
 //      (genTime) e assinatura do token verificada contra o certificado
-//      da TSA EMBUTIDO no próprio token (cadeia até raiz ICP-Brasil e
-//      OCSP/CRL permanecem pendências documentadas)
+//      da TSA EMBUTIDO no próprio token; cadeia até a raiz (Windows
+//      X509Chain/AIA, com status real por elemento e confiança da raiz)
+//      e revogação via CRL (baixada das CRLDistributionPoints, assinatura
+//      da CRL verificada contra o emissor da cadeia). Semântica:
+//      revogação CONFIRMADA rejeita; cadeia/CRL indisponível vira
+//      pendência (dependência de rede/trust store — nunca inventa).
 //   6. Certificado do signatário: período de validade, uso
 //      (digitalSignature), algoritmo/serial/subject
 //   7. Hash SHA-256 do documento + veredito APROVADO/REJEITADO
@@ -40,12 +44,29 @@ export interface InfoCertificado {
   validoAgora: boolean;
 }
 
+export interface ResultadoCadeiaTsa {
+  ok: boolean;
+  confiaNaRaiz: boolean;
+  elementos: { subject: string; status: string[] }[];
+  erros: string[];
+  erro?: string;
+}
+
+export interface ResultadoRevogacaoTsa {
+  status: 'revogado' | 'valido' | 'indeterminado';
+  detalhe: string;
+  crlEmitidaEm?: string;
+  proximaAtualizacao?: string;
+}
+
 export interface ResultadoCarimbo {
   id: string;
   tokenOk: boolean;
   act?: string;
   genTime?: string;
   erros: string[];
+  cadeia?: ResultadoCadeiaTsa;
+  revogacao?: ResultadoRevogacaoTsa;
 }
 
 export interface ResultadoAssinatura {
@@ -136,10 +157,23 @@ function percorrer(no: any, visita: (n: any) => boolean): void {
 /**
  * Verifica o token RFC 3161 (CMS ContentInfo) do EncapsulatedTimeStamp:
  * extrai ACT (subject do cert da TSA), genTime e valida a assinatura do
- * token contra o certificado da TSA EMBUTIDO (caminho direto — a cadeia
- * até a raiz ICP-Brasil e a checagem de revogação são pendências).
+ * token contra o certificado da TSA EMBUTIDO (caminho direto).
+ * Com `verificarCadeiaCrl`: cadeia até a raiz (Windows/AIA com status
+ * real) + revogação via CRL do cert da TSA — best-effort (falhas de rede
+ * viram pendência; revogação CONFIRMADA devolve status explícito).
  */
-function verificarTokenCarimbo(der: Buffer): { ok: boolean; act?: string; genTime?: string; erros: string[] } {
+async function verificarTokenCarimbo(
+  der: Buffer,
+  opcoes: { verificarCadeiaCrl?: boolean } = {}
+): Promise<{
+  ok: boolean;
+  act?: string;
+  genTime?: string;
+  erros: string[];
+  certTsaPem?: string;
+  cadeia?: ResultadoCadeiaTsa;
+  revogacao?: ResultadoRevogacaoTsa;
+}> {
   const { asn1, pki } = forge();
   const erros: string[] = [];
   try {
@@ -162,12 +196,12 @@ function verificarTokenCarimbo(der: Buffer): { ok: boolean; act?: string; genTim
         const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(n.value);
         if (m) genTime = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`;
       }
-      if (!actSeq && n.typeClass === asn1.Class.CONTEXT && n.type === 1 && n.constructed) actSeq = n;
+      if (!actSeq && n.tagClass === asn1.Class.CONTEXT_SPECIFIC && n.type === 1 && n.constructed) actSeq = n;
       return true;
     });
     // Certificados da TSA embutidos ([0] IMPLICIT SET of Certificate)
     const certes: any[] = [];
-    const noCerts = sd.value.find((v: any) => v?.typeClass === asn1.Class.CONTEXT && v?.type === 0);
+    const noCerts = sd.value.find((v: any) => v?.tagClass === asn1.Class.CONTEXT_SPECIFIC && v?.type === 0);
     if (noCerts?.value) {
       for (const c of noCerts.value) {
         try { certes.push(forge().pki.certificateFromAsn1(c)); } catch { /* não-certificate no SET */ }
@@ -201,11 +235,12 @@ function verificarTokenCarimbo(der: Buffer): { ok: boolean; act?: string; genTim
     const algoHash = digestOid.includes('3.4.2.1') ? 'sha256' : digestOid.includes('3.4.2.2') ? 'sha384' : digestOid.includes('3.4.2.3') ? 'sha512' : digestOid.includes('.2.26') ? 'sha1' : 'sha256';
     const sigNo = si.value[si.value.length - 1];
     const sigBin = typeof sigNo.value === 'string' ? sigNo.value : '';
-    const signedAttrs = si.value.find((v: any) => v?.typeClass === asn1.Class.CONTEXT && v?.type === 0);
+    const signedAttrs = si.value.find((v: any) => v?.tagClass === asn1.Class.CONTEXT_SPECIFIC && v?.type === 0);
     // Tenta verificar com cada cert da TSA — via node:crypto (PKCS#1 v1.5
     // sobre DigestInfo, exatamente o que o forge/privateKey.sign produz)
     const { createPublicKey, verify: cryptoVerify, constants } = require('node:crypto');
     let verificou = false;
+    let certVerificador: any = null;
     for (const cert of certes) {
       try {
         const pub = createPublicKey(pki.publicKeyToPem(cert.publicKey));
@@ -214,12 +249,61 @@ function verificarTokenCarimbo(der: Buffer): { ok: boolean; act?: string; genTim
         const alvo = signedAttrs
           ? Buffer.from(asn1.toDer(asn1.create(asn1.Class.UNIVERSAL, asn1.Type.SET, true, signedAttrs.value)).getBytes(), 'binary')
           : Buffer.from(tstDerBin, 'binary');
-        verificou = verificou || cryptoVerify(algoHash, alvo, opts, Buffer.from(sigBin, 'binary'));
+        if (cryptoVerify(algoHash, alvo, opts, Buffer.from(sigBin, 'binary'))) {
+          verificou = true;
+          certVerificador = cert;
+          break; // achou o cert da TSA que assinou o token
+        }
       } catch { /* tenta próximo cert */ }
     }
     if (!verificou) erros.push('Assinatura do token não verificou contra o certificado da TSA embutido.');
     if (!act && certes.length) act = subjectLegivel(certes[0]);
-    return { ok: verificou && certes.length > 0, act, genTime, erros };
+
+    // Cadeia + revogação do cert da TSA (best-effort; rede/trust store
+    // indisponíveis viram pendência — só revogação CONFIRMADA é dura)
+    let cadeia: ResultadoCadeiaTsa | undefined;
+    let revogacao: ResultadoRevogacaoTsa | undefined;
+    let certTsaPem: string | undefined;
+    if (certVerificador) {
+      const pemTsa: string = String(pki.certificateToPem(certVerificador));
+      certTsaPem = pemTsa;
+      if (opcoes.verificarCadeiaCrl) {
+        let cadeiaPems: string[] = [];
+        try {
+          const { verificarCadeiaComStatus } = await import('./ltv');
+          const r = await verificarCadeiaComStatus(pemTsa);
+          cadeia = r.status;
+          cadeiaPems = r.cadeiaPems;
+        } catch (e: any) {
+          cadeia = { ok: false, confiaNaRaiz: false, elementos: [], erros: [], erro: 'Cadeia indisponível: ' + (e?.message ?? String(e)) };
+        }
+        try {
+          const { urlsCrlDoCert, baixarCrl } = await import('./ltv');
+          const { parsearCrl, emissorDaCrl, verificarRevogacao } = await import('./crl');
+          const urls = urlsCrlDoCert(pemTsa);
+          let crlDer: Buffer | null = null;
+          for (const u of urls) {
+            crlDer = await baixarCrl(u, 20000);
+            if (crlDer) break;
+          }
+          if (!crlDer) {
+            revogacao = { status: 'indeterminado', detalhe: 'CRL da TSA indisponível (offline ou sem CRLDistributionPoints acessível).' };
+          } else {
+            const info = parsearCrl(crlDer);
+            const emissor = emissorDaCrl(info, [pemTsa, ...cadeiaPems]);
+            if (!emissor) {
+              revogacao = { status: 'indeterminado', detalhe: 'CRL baixada mas NÃO emitida por certificado conhecido (assinatura não confere).', crlEmitidaEm: info.thisUpdate, proximaAtualizacao: info.nextUpdate };
+            } else {
+              const r = verificarRevogacao(pemTsa, crlDer, emissor);
+              revogacao = { status: r.status, detalhe: r.detalhe, crlEmitidaEm: r.crlInfo?.thisUpdate, proximaAtualizacao: r.crlInfo?.nextUpdate };
+            }
+          }
+        } catch (e: any) {
+          revogacao = { status: 'indeterminado', detalhe: 'Verificação de revogação falhou: ' + (e?.message ?? String(e)) };
+        }
+      }
+    }
+    return { ok: verificou && certes.length > 0, act, genTime, erros, certTsaPem, cadeia, revogacao };
   } catch (e: any) {
     return { ok: false, erros: ['Token de carimbo ilegível: ' + (e?.message ?? String(e))] };
   }
@@ -233,9 +317,10 @@ function verificarTokenCarimbo(der: Buffer): { ok: boolean; act?: string; genTim
 export async function validarArtefatoDiploma(
   xml: string,
   artefato: ArtefatoXsd,
-  opcoes: { exigirCarimbo?: boolean } = {}
+  opcoes: { exigirCarimbo?: boolean; verificarCadeiaCrl?: boolean } = {}
 ): Promise<ResultadoValidacaoArtefato> {
   const exigirCarimbo = opcoes.exigirCarimbo ?? true;
+  const verificarCadeiaCrl = opcoes.verificarCadeiaCrl ?? true;
   const pendencias: string[] = [];
 
   // 1-2) XSD oficial
@@ -333,8 +418,8 @@ export async function validarArtefatoDiploma(
         const tsId = descendentesPorLocalName(sigNode, 'SignatureTimeStamp')[0]?.getAttribute('Id') ?? '';
         try {
           const der = Buffer.from((tsEl.textContent ?? '').trim(), 'base64');
-          const r = verificarTokenCarimbo(der);
-          res.carimbo = { id: tsId, tokenOk: r.ok, act: r.act, genTime: r.genTime, erros: r.erros };
+          const r = await verificarTokenCarimbo(der, { verificarCadeiaCrl });
+          res.carimbo = { id: tsId, tokenOk: r.ok, act: r.act, genTime: r.genTime, erros: r.erros, cadeia: r.cadeia, revogacao: r.revogacao };
         } catch (e: any) {
           res.carimbo = { id: tsId, tokenOk: false, erros: ['EncapsulatedTimeStamp ilegível: ' + (e?.message ?? String(e))] };
         }
@@ -359,11 +444,24 @@ export async function validarArtefatoDiploma(
       !a.criptografiaOk ||
       a.certDigestOk === false ||
       (a.carimbo && !a.carimbo.tokenOk) ||
-      (exigirCarimbo && !a.carimbo)
+      (exigirCarimbo && !a.carimbo) ||
+      a.carimbo?.revogacao?.status === 'revogado'
   );
   for (const a of rejeitadas) {
     for (const e of a.errosCripto) pendencias.push(`Assinatura ${a.id}: ${e}`);
     if (a.carimbo && !a.carimbo.tokenOk) pendencias.push(`Assinatura ${a.id}: carimbo do tempo inválido — ${a.carimbo.erros.join('; ')}`);
+    if (a.carimbo?.revogacao?.status === 'revogado') pendencias.push(`Assinatura ${a.id}: certificado da TSA REVOGADO — ${a.carimbo.revogacao.detalhe}`);
+  }
+  // Cadeia/revogação INDISPONÍVEIS não rejeitam (dependência de
+  // rede/trust store) — viram pendências explícitas.
+  for (const a of assinaturas) {
+    if (a.carimbo?.cadeia && !a.carimbo.cadeia.ok) {
+      const motivo = a.carimbo.cadeia.erro ?? a.carimbo.cadeia.erros.join('; ');
+      pendencias.push(`Assinatura ${a.id}: cadeia da TSA não confirmada — ${motivo}`);
+    }
+    if (a.carimbo?.revogacao?.status === 'indeterminado') {
+      pendencias.push(`Assinatura ${a.id}: revogação da TSA indeterminada — ${a.carimbo.revogacao.detalhe}`);
+    }
   }
 
   const veredito: 'APROVADO' | 'REJEITADO' =

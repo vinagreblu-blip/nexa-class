@@ -815,8 +815,10 @@ function assinarHandler(
     // Sem TSA configurado ou com falha, segue sem carimbo com AVISO
     // EXPLÍCITO (nunca fabricado).
     const { obterTsaConfig } = await import('./tsa');
+    const { obterPoliticaAssinatura } = await import('./politica');
     const { carimbarDigest } = await import('../diploma-digital/tsa-cliente');
     const cfgTsa = obterTsaConfig();
+    const politica = obterPoliticaAssinatura();
     const carimbador: ((digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>) | undefined = cfgTsa
       ? async (digest) => {
           try {
@@ -850,6 +852,7 @@ function assinarHandler(
         return assinarTodosEsqueletos(lido.xml, {
           certPem,
           thumbprintA3: assinatura.certificado_a3_thumbprint,
+          politica,
           ...carimb,
         });
       }
@@ -857,6 +860,7 @@ function assinarHandler(
       return assinarTodosEsqueletos(lido.xml, {
         chavePem,
         certPem,
+        politica,
         ...carimb,
       });
     };
@@ -912,8 +916,9 @@ function assinarHandler(
 
     // VERIFICAÇÃO COMPLETA antes de liberar (fluxo oficial: validar
     // assinatura/certificado/carimbo, não só o schema). Assinatura que não
-    // confere criptograficamente NÃO marca como assinado.
-    const diagnostico = await validarArtefatoDiploma(xmlAssinado, artefatoXsd, { exigirCarimbo: false });
+    // confere criptograficamente NÃO marca como assinado. Cadeia/CRL da TSA
+    // ficam para o diagnóstico completo (aqui seria rede no meio da assinatura).
+    const diagnostico = await validarArtefatoDiploma(xmlAssinado, artefatoXsd, { exigirCarimbo: false, verificarCadeiaCrl: false });
     const assinaturasInvalidas = diagnostico.assinaturas.filter((a) => !a.criptografiaOk || a.certDigestOk === false);
     if (assinaturasInvalidas.length > 0) {
       db.prepare("UPDATE diplomas_digitais SET status = 'xml_invalido', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
@@ -1195,21 +1200,47 @@ function gerarRvddHandler(_event: IpcMainInvokeEvent, diplomaId: number): Promis
     const salvoPath = path.join(dir, 'rvdd.pdf');
     fs.writeFileSync(salvoPath, pdf);
 
+    // Conformidade PDF/A-1b: autochecagem estrutural SEMPRE + veraPDF
+    // (motor oficial) quando configurado — resultado persistido; sem
+    // veraPDF a pendência fica explícita (nunca "conforme" por fé).
+    const { verificarPdfA1b, caminhoVeraPdf, rodarVeraPdf } = await import('../diploma-digital/pdfa');
+    const auto = await verificarPdfA1b(pdf);
+    let veraPdf: { executado: boolean; conforme: boolean | null; detalhe: string; falhas?: string[] } | undefined;
+    const exeVera = caminhoVeraPdf(dbLikeParaVeraPdf());
+    if (exeVera) veraPdf = await rodarVeraPdf(exeVera, salvoPath);
+    const conformidade = { auto, veraPdf: veraPdf ?? { executado: false, conforme: null, detalhe: 'veraPDF não configurado (config "verapdf" ou env NEXA_VERAPDF) — validação estrutural interna apenas.' } };
+
     // Bucket privado (mesmo path do XML) — alimenta a URLRVDD da fiscalização.
     const storagePath = await subirXmlStorage(diplomaId, 'rvdd.pdf', pdf.toString('binary')).catch(() => null);
 
     db.prepare(
-      `INSERT INTO diploma_arquivos (diploma_id, tipo_arquivo, nome, caminho_storage, hash, versao_schema, valido_xsd, erros_validacao_json)
-       VALUES (?, 'rvdd', 'rvdd.pdf', ?, ?, '1.05', NULL, ?)`
+      `INSERT INTO diploma_arquivos (diploma_id, tipo_arquivo, nome, caminho_storage, hash, versao_schema, valido_xsd, erros_validacao_json, conformidade_pdfa)
+       VALUES (?, 'rvdd', 'rvdd.pdf', ?, ?, '1.05', NULL, ?, ?)`
     ).run(
       diplomaId,
       salvoPath,
       createHash('sha256').update(pdf).digest('hex'),
-      JSON.stringify({ pendencia: 'Conformidade PDF/A-1b não verificada (exige veraPDF + OutputIntent ICC) — ver DIPLOMA_DIGITAL.md' })
+      auto.conforme ? null : JSON.stringify({ pendencia: 'Autochecagem PDF/A-1b apontou não-conformidade — ver conformidade_pdfa.' }),
+      JSON.stringify(conformidade)
     );
-    auditar(diplomaId, 'geracao_rvdd', 'sucesso', { bytes: pdf.length, storage: !!storagePath });
-    return { ok: true, data: { salvoPath } };
+    auditar(diplomaId, 'geracao_rvdd', 'sucesso', {
+      bytes: pdf.length,
+      storage: !!storagePath,
+      pdfaAuto: auto.conforme,
+      veraPdf: veraPdf ? { executado: veraPdf.executado, conforme: veraPdf.conforme } : null,
+    });
+    return { ok: true, data: { salvoPath, pdfaAuto: auto.conforme, veraPdfConforme: veraPdf?.conforme ?? null } };
   })();
+}
+
+/** Acesso mínimo à tabela configuracoes p/ o pdfa.ts (chave 'verapdf'). */
+function dbLikeParaVeraPdf(): { preparar: (sql: string) => { get: (k: string) => unknown } } {
+  const db = getDb();
+  return {
+    preparar: (sql: string) => ({
+      get: (k: string) => db.prepare(sql).get(k),
+    }),
+  };
 }
 
 /** Gera o Arquivo de Fiscalização (emissora) para o período informado. */

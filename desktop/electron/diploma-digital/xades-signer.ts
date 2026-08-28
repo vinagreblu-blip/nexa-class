@@ -11,7 +11,7 @@
 //  - A1: node-forge. A3: SignHash bruto no token.
 //  - Carimbo/LTV aplicados por etapas posteriores (UnsignedProperties).
 import { createHash, randomBytes } from 'node:crypto';
-import { C14nCanonicalization } from 'xml-crypto';
+import { C14nCanonicalization, ExclusiveCanonicalization } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import { NS_DS, NS_XADES, escapeXml } from './xml-utils';
 
@@ -25,9 +25,19 @@ const XPATH_SEM_ASSINATURAS =
   'not(ancestor-or-self::*[namespace-uri()=&quot;http://www.w3.org/2000/09/xmldsig#&quot; and local-name()=&quot;Signature&quot;])';
 
 // ---- Política de assinatura (EPES): PA_AD_RC_v2_4 (ICP-Brasil) ----
+// digestBase64 = SHA-256 sobre a forma EXCLUSIVE-C14N do documento oficial
+// (o próprio PA declara <ds:Transform Algorithm="exc-c14n#"/> no cabeçalho).
+// CONFIRMADO em 28/08/2026 por DOIS motores independentes:
+//   .NET System.Security.Cryptography.Xml.XmlDsigExcC14NTransform e
+//   xml-crypto ExclusiveCanonicalization — ambos:
+//   U3FUu2OA+aOscqiTstbYyxLRWnLLE+x6nVX8WiZjUAw=
+// Fonte: http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.xml (13968 bytes,
+// cópia verbatim em fixtures/PA_AD_RC_v2_4.xml — teste recomputa o digest).
+// O valor anterior 'JMLU...' não derivava do documento oficial (provável
+// erro de origem não documentada) e foi CORRIGIDO.
 export const POLITICA_ASSINATURA: PoliticaXades = {
   identificador: 'urn:oid:2.16.76.1.7.1.9.2.4',
-  digestBase64: 'JMLUkTNofr0oLNIBbVn5FMnQ0QE/XoDOgSTHP5MJbd4=',
+  digestBase64: 'U3FUu2OA+aOscqiTstbYyxLRWnLLE+x6nVX8WiZjUAw=',
   spuri: 'http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.xml',
 };
 
@@ -35,6 +45,16 @@ export interface PoliticaXades {
   identificador: string;
   digestBase64: string;
   spuri?: string;
+}
+
+/** Digest SHA-256 (base64) de um documento de política oficial: SHA-256
+ *  sobre a forma exclusive-C14N do elemento raiz (transform declarado no
+ *  próprio documento da política ICP-Brasil). Usado para CONFIRMAR digests
+ *  em runtime (nunca aceitar digest que não derive do documento oficial). */
+export function calcularDigestPolitica(xmlPolitica: string): string {
+  const doc = new DOMParser().parseFromString(xmlPolitica, 'application/xml');
+  const c14n = new ExclusiveCanonicalization().process(doc.documentElement, {});
+  return createHash('sha256').update(Buffer.from(c14n, 'utf8')).digest('base64');
 }
 
 export interface OpcoesAssinaturaXades {

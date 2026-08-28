@@ -510,6 +510,9 @@ function migrateDiplomasDigitais(): void {
   addCol('diplomas_digitais', 'chave_req', 'chave_req TEXT');
   addCol('diplomas_digitais', 'anotacao_anulacao', 'anotacao_anulacao TEXT');
   addCol('diplomas_digitais', 'validado_mec_em', 'validado_mec_em TEXT');
+  // RVDD (PDF/A-1b): resultado da autochecagem estrutural + veraPDF (se
+  // configurado) — JSON { auto: { conforme, checagens[] }, veraPdf?: {...} }.
+  addCol('diploma_arquivos', 'conformidade_pdfa', 'conformidade_pdfa TEXT');
   // Data de expedição do diploma (DataExpedicaoDiploma do histórico/Formado):
   // gravada uma única vez na 1ª geração — antes era "fabricada" como a data
   // do dia a cada regeneração (divergia do mapeamento oficial).

@@ -4,6 +4,10 @@
 > geração/validação XML oficial, assinatura real + registro + consulta
 > pública, relatórios oficiais (Lista Anulados/Fiscalização), RVDD e
 > registro de validação manual no validador oficial do MEC.
+> **Conformidades fechadas (28/08/2026): XAdES-EPES** (política
+> configurável + digest PA-AD-RC v2.4 CONFIRMADO contra o documento
+> oficial), **cadeia TSA + revogação CRL** no validador consolidado e
+> **RVDD em PDF/A-1b** (autochecagem estrutural + veraPDF opcional).
 
 Este documento descreve a arquitetura do módulo de **Diploma Digital de
 graduação** conforme a especificação oficial do MEC (Sesu), que **substitui o
@@ -102,6 +106,8 @@ aguardando_conclusao → apto → em_preparacao → xml_gerado → (xml_invalido
 | IES Registradora habilitada | Contrato institucional | Registro (M4) |
 | e-MEC da IES/cursos, atos regulatórios | Secretaria da IES | Cadastro institucional (M2) |
 | Carimbo do tempo (TSA RFC 3161) | Fornecedor do certificado/ACT (configurável em Assinatura Digital → Carimbo do Tempo) | XAdES-T: carimba cada assinatura real (Histórico e DA) logo após criada — o token em `EncapsulatedTimeStamp` atesta a hora por terceiro auditado (nunca fabricado pelo app); sem TSA/falha → XAdES-BES com aviso de pendência |
+| Política de assinatura (XAdES-EPES) | ICP-Brasil (padrão PA-AD-RC v2.4 embutido, digest confirmado; customizável em Assinatura Digital → Política de Assinatura com "Confirmar digest") | Identifica a política no SignedProperties (identificador + digest SHA-256 exc-c14n + SPURI) |
+| veraPDF CLI (opcional) | PDF Association (pdfa.org) — config `verapdf` `{caminho}` ou env `NEXA_VERAPDF` | Validação oficial da RVDD em PDF/A-1b (`--flavour 1b`); sem ele vale a autochecagem estrutural + pendência explícita |
 
 ## 8. Atualização dos schemas
 
@@ -115,6 +121,11 @@ já emitidos (`versao_schema` por diploma/arquivo).
   cadeia de XSDs oficiais + erros estruturados (M1).
 - M3 adiciona: gerador × XSD (XML válido de ponta a ponta), pendências,
   permissões, duplicidade, anulação (15 cenários exigidos).
+- Conformidades 28/08/2026: `politica-oficial.test.ts` (digest EPES
+  recalculado do fixture oficial), `crl.test.ts` (parser + revogação
+  com CA/CRLs forjadas em forge), `validar-artefato.test.ts` (cadeia/CRL
+  no veredito), `relatorios-oficiais.test.ts` (RVDD PDF/A-1b na
+  autochecagem + integridade SHA-256 dos assets).
 
 ## 10. Roadmap
 
@@ -178,12 +189,20 @@ já emitidos (`versao_schema` por diploma/arquivo).
   DigestInfo DER + PKCS#1 v1.5 — o caminho PowerShell real com token
   físico permanece smoke-test manual na 1ª assinatura). O
   certificado público do KeyInfo é exportado em PEM do próprio Windows
-  Store. **Pendência de conformidade documentada**: política XAdES-EPES
-  — suporte OPCIONAL implementado (`politica: { identificador,
-  digestBase64 }` em `OpcoesAssinaturaXades` →
-  `SignaturePolicyIdentifier`); ligar somente com o identificador
-  oficial da IN-05 E o digest SHA-256 do documento da política
-  confirmados (o SigPolicyHash é obrigatório no EPES — não se inventa).
+  Store. **XAdES-EPES**: política PA-AD-RC v2.4 por padrão, com digest
+  SHA-256 **CONFIRMADO contra o documento oficial** (`U3FUu2OA…` —
+  SHA-256 sobre a forma *exclusive-C14N*, transform declarado no próprio
+  documento da política; reproduzido por dois motores independentes:
+  .NET `XmlDsigExcC14NTransform` e xml-crypto; fixture oficial em
+  `fixtures/PA_AD_RC_v2_4.xml` com teste que recalcula o digest). O valor
+  anterior `JMLU…` NÃO derivava do documento oficial e foi CORRIGIDO —
+  artefatos assinados antes de 28/08/2026 carregam digest inválido,
+  re-assinar gera XML novo. **Configurável** (Assinatura Digital →
+  Política de Assinatura): padrão / custom (OID-URN + digest + SPURI,
+  com botão "Confirmar digest" que baixa o SPURI, aplica exc-c14n +
+  SHA-256 e compara — anti-invenção) / sem política (XAdES-BES).
+  Persistido em `configuracoes` chave `politica-assinatura`
+  (`ipc/politica.ts`).
 - **Registro assistido** (`gerar-diploma-xml.ts` + handler): grava o
   RETORNO da registradora (livro/folha/nº/datas/responsável/
   CodigoValidacao `eMEC.eMEC.hex`), monta o **Diploma final**
@@ -199,7 +218,7 @@ já emitidos (`versao_schema` por diploma/arquivo).
   motivo + data + usuário + auditoria; documento e histórico NUNCA são
   apagados.
 - **Nuvem**: `supabase-diploma-digital.sql` atualizado (chave_req,
-  ato_autorizacao_registro_json — reaplicar).
+  ato_autorizacao_registro_json, conformidade_pdfa — reaplicar).
 
 ### Detalhe do M5 (implementado)
 
@@ -218,9 +237,17 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **RVDD** (`gerar-rvdd.ts`): PDF visual (pdfkit) com dados oficiais + QR
   apontando para a consulta pública `/d/:codigo` + chave de acesso VDip.
   Gravada no bucket privado (alimenta a URLRVDD da fiscalização).
-  **Pendência de conformidade**: PDF/A-1b não afirmado — exige OutputIntent
-  ICC + verificação veraPDF (registrado em `diploma_arquivos` com
-  `valido_xsd=NULL` e nota da pendência).
+  **PDF/A-1b (ISO 19005-1 nível b)**: fontes TrueType EMBUTIDAS (Noto
+  Sans OFL — `assets/fonts`, hash verificado em teste), OutputIntent
+  ICC sRGB (`assets/icc/sRGB-v2-magic.icc`), XMP `pdfaid:part=1
+  conformance=B`, header PDF 1.4 e serialização sem object streams
+  (pós-processo pdf-lib em `pdfa.ts`). Cada geração roda a
+  **autochecagem estrutural** (header/OutputIntent/XMP/fontes/sem
+  criptografia) e, com o **veraPDF** configurado (config
+  `verapdf` `{caminho}` ou env `NEXA_VERAPDF`), a validação oficial do
+  PDF Association (`--flavour 1b`) — resultados persistidos em
+  `diploma_arquivos.conformidade_pdfa`; sem veraPDF a pendência fica
+  explícita (nunca "conforme" por fé).
 - **Validador oficial MEC**: botão abre
   `verificadordiplomadigital.mec.gov.br/diploma`; o resultado da conferência
   MANUAL é registrado em `validado_mec_em` + auditoria (o app não integra
@@ -232,8 +259,13 @@ já emitidos (`versao_schema` por diploma/arquivo).
   elemento/linha), verificação criptográfica por assinatura (digests+RSA
   contra o certificado do KeyInfo), XAdES (SigningTime/CertDigest/PolicyId),
   carimbo do tempo (token RFC 3161 parseado: ACT, genTime e assinatura do
-  token verificada contra o certificado da TSA EMBUTIDO — cadeia ICP-Brasil
-  e OCSP/CRL são pendências), certificado (validade/uso/algoritmo/serial),
+  token verificada contra o certificado da TSA EMBUTIDO; **cadeia até a
+  raiz** via Windows X509Chain/AIA com status real por elemento e
+  confiança da raiz; **revogação via CRL** baixada das
+  CRLDistributionPoints, com assinatura da CRL verificada contra o
+  emissor da cadeia e checagem por serial — `crl.ts`; revogação
+  CONFIRMADA rejeita, cadeia/CRL indisponível vira pendência; OCSP é
+  fase futura), certificado (validade/uso/algoritmo/serial),
   hash SHA-256 e veredito **APROVADO/REJEITADO**. O fluxo de assinatura só
   marca "assinado" se a verificação criptográfica passar.
   **Comportamento comprovado empiricamente (27/08/2026, validator 1.5.15)**:

@@ -40,6 +40,7 @@ import { registrarExtracaoHandlers } from './ipc/extracao';
 import { registrarConversoesHandlers } from './ipc/conversoes';
 import { registrarAssinaturaHandlers } from './ipc/assinatura';
 import { registrarTsaHandlers } from './ipc/tsa';
+import { registrarPoliticaHandlers } from './ipc/politica';
 import { registrarCloudHandlers } from './ipc/cloud';
 import { initCloud, syncBidirecional, agendarSyncRapido, setOnDadosAlterados } from './cloud';
 import { iniciarRealtime, fecharRealtime, setOnEstadoConexao, obterEstadoConexao } from './realtime';
@@ -188,6 +189,7 @@ function registrarHandlers(): void {
   registrarConversoesHandlers();
   registrarAssinaturaHandlers();
   registrarTsaHandlers();
+  registrarPoliticaHandlers();
   registrarCloudHandlers();
   registrarDiplomasDigitaisHandlers();
   try {

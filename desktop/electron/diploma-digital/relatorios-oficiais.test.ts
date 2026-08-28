@@ -2,10 +2,14 @@
 // TESTE M5 — Lista Anulados + Fiscalização × XSD OFICIAL + RVDD
 // ============================================================
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { gerarListaDiplomasAnuladosXml } from './gerar-lista-anulados';
 import { gerarArquivoFiscalizacaoXml } from './gerar-arquivo-fiscalizacao';
 import { gerarRvddPdf } from './gerar-rvdd';
 import { validarXmlContraXsd } from './xsd-validator';
+import { verificarPdfA1b, caminhoAsset } from './pdfa';
 
 const REGISTRADORA = {
   id: 2, nome: 'UNIVERSIDADE REGISTRADORA', codigo_emec: 5678, cnpj: '00.000.000/0001-91',
@@ -121,26 +125,56 @@ describe('M5: Arquivo de Fiscalização (emissora) × XSD oficial', () => {
   });
 });
 
-describe('M5: RVDD (PDF)', () => {
-  it('gera PDF válido (bytes %PDF) com dados do diploma registrado', async () => {
-    const pdf = await gerarRvddPdf({
-      alunoNome: 'MARIA DA SILVA',
-      cpf: '12345678900',
-      cursoNome: 'ADMINISTRAÇÃO',
-      grauConferido: 'Bacharelado',
-      tituloConferido: 'Bacharel',
-      iesNome: 'INSTITUTO ERICH FROMM',
-      iesCodigoEmec: 1234,
-      livroRegistro: 'L1',
-      numeroRegistro: '000123',
-      dataColacao: '2024-12-20',
-      dataExpedicao: '2026-08-25',
-      dataRegistro: '2026-08-25',
-      codigoValidacao: '1234.5678.deadbeef1234',
-      chaveAcesso: 'VDip' + '1'.repeat(44),
-      urlConsulta: 'https://nexa-verificacao.onrender.com/d/1234.5678.deadbeef1234',
-    });
+describe('M5: RVDD (PDF/A-1b)', () => {
+  const DADOS_RVDD = {
+    alunoNome: 'MARIA DA SILVA',
+    cpf: '12345678900',
+    cursoNome: 'ADMINISTRAÇÃO',
+    grauConferido: 'Bacharelado',
+    tituloConferido: 'Bacharel',
+    iesNome: 'INSTITUTO ERICH FROMM',
+    iesCodigoEmec: 1234,
+    livroRegistro: 'L1',
+    numeroRegistro: '000123',
+    dataColacao: '2024-12-20',
+    dataExpedicao: '2026-08-25',
+    dataRegistro: '2026-08-25',
+    codigoValidacao: '1234.5678.deadbeef1234',
+    chaveAcesso: 'VDip' + '1'.repeat(44),
+    urlConsulta: 'https://nexa-verificacao.onrender.com/d/1234.5678.deadbeef1234',
+  };
+
+  it('gera PDF/A-1b conforme na autochecagem (fontes embutidas + OutputIntent sRGB + XMP pdfaid + PDF 1.4)', async () => {
+    const pdf = await gerarRvddPdf(DADOS_RVDD);
     expect(pdf.length).toBeGreaterThan(1000);
-    expect(pdf.slice(0, 4).toString()).toBe('%PDF');
-  }, 30000);
+    expect(pdf.slice(0, 8).toString()).toBe('%PDF-1.4');
+    const r = await verificarPdfA1b(pdf);
+    if (!r.conforme) console.error('CHECAGENS PDF/A:', r.checagens);
+    expect(r.conforme).toBe(true);
+    for (const c of r.checagens) expect(c.ok).toBe(true);
+  }, 60000);
+
+  it('conteúdo visual preservado (texto do diploma + QR presentes no PDF)', async () => {
+    const pdf = await gerarRvddPdf(DADOS_RVDD);
+    // Fontes subsettadas comprimem os streams — valida pelo número de
+    // imagens/objetos: QR (imagem) e 2 fontes TrueType embutidas
+    const texto = pdf.toString('latin1');
+    expect(texto).toContain('/Image');
+    expect((texto.match(/\/FontFile2/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(texto).toContain('/GTS_PDFA1');
+    expect(texto).not.toContain('/Encrypt');
+  }, 60000);
+
+  it('assets oficiais íntegros (hash SHA-256 de fontes e ICC não mudou)', () => {
+    const esperados: Record<string, string> = {
+      'fonts/NotoSans-Regular.ttf': '478C558EA716033CD60C03438F628DFA75694DCF6B5F6D505A2F05FD2B4F3823',
+      'fonts/NotoSans-Bold.ttf': '1DF075A380FC7CB898ACF64C1F7B3B4DD780DE3CAA860178BF929DE35817A913',
+      'icc/sRGB-v2-magic.icc': 'AF4EFE28F6D311799865F325BA39184A2E978B113CA74124D60AF7DE22B105F4',
+    };
+    for (const [rel, sha] of Object.entries(esperados)) {
+      const cam = caminhoAsset(path.join(...rel.split('/')));
+      expect(fs.existsSync(cam)).toBe(true);
+      expect(createHash('sha256').update(fs.readFileSync(cam)).digest('hex').toUpperCase()).toBe(sha);
+    }
+  });
 });

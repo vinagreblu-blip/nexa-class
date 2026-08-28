@@ -9,7 +9,7 @@
 // RFC2253) e o caminho A3 (assinarHashA3 mockado com node:crypto —
 // mesma semântica do SignHash do token: PKCS#1 v1.5 sobre o digest).
 import { describe, expect, it, vi } from 'vitest';
-import { assinarProximoEsqueleto } from './xades-signer';
+import { assinarProximoEsqueleto, POLITICA_ASSINATURA } from './xades-signer';
 import { gerarHistoricoXml } from './gerar-historico-xml';
 import { validarXmlContraXsd } from './xsd-validator';
 import { novoVerificador } from './verificador-teste';
@@ -185,5 +185,54 @@ describe('M4: caminho A3 (thumbprintA3 → assinarHashA3/SignHash)', () => {
     const ok = sig.checkSignature(assinado);
     if (!ok) for (const r of sig.getReferences()) console.error('REF', r.uri, '→', r.validationError);
     expect(ok).toBe(true);
+  }, 60000);
+});
+
+describe('F1: política de assinatura configurável (XAdES-EPES)', () => {
+  it('SEM opção → EPES com a política padrão (PA-AD-RC v2.4) no SignedProperties', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'xmldsig-testepes', chavePem, certPem });
+    expect(assinado).toContain('<xades:SignaturePolicyIdentifier>');
+    expect(assinado).toContain(POLITICA_ASSINATURA.identificador);
+    expect(assinado).toContain(POLITICA_ASSINATURA.digestBase64);
+    expect(assinado).toContain(POLITICA_ASSINATURA.spuri!);
+  }, 60000);
+
+  it('politica custom → EPES com identificador/digest/SPURI informados', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
+    const custom = {
+      identificador: 'urn:oid:2.16.76.1.7.1.9.9.9',
+      digestBase64: Buffer.alloc(32, 0xAB).toString('base64'),
+      spuri: 'http://example.org/politica-teste.xml',
+    };
+    const assinado = await assinarProximoEsqueleto(xml!, {
+      signatureId: 'xmldsig-testepes2', chavePem, certPem, politica: custom,
+    });
+    expect(assinado).toContain(custom.identificador);
+    expect(assinado).toContain(custom.digestBase64);
+    expect(assinado).toContain(custom.spuri);
+    expect(assinado).not.toContain(POLITICA_ASSINATURA.digestBase64);
+  }, 60000);
+
+  it('politica null → XAdES-BES (SEM SignaturePolicyIdentifier)', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
+    const assinado = await assinarProximoEsqueleto(xml!, {
+      signatureId: 'xmldsig-testbes', chavePem, certPem, politica: null,
+    });
+    expect(assinado).not.toContain('<xades:SignaturePolicyIdentifier>');
+    // BES continua com SigningTime + SigningCertificate
+    expect(assinado).toContain('<xades:SigningTime>');
+    expect(assinado).toContain('<xades:SigningCertificate>');
+    // E permanece XSD-válido + criptograficamente verificável
+    const r = await validarXmlContraXsd(assinado, 'historicoEscolar');
+    expect(r.valido).toBe(true);
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const docFinal = new DOMParser().parseFromString(assinado, 'text/xml');
+    const sigNode = docFinal.getElementsByTagNameNS('*', 'Signature')[0];
+    const sig = novoVerificador(certPem, sigNode);
+    expect(sig.checkSignature(assinado)).toBe(true);
   }, 60000);
 });

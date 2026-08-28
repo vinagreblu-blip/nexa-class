@@ -95,6 +95,16 @@ export function AssinaturaDigital() {
   const [tsaTestando, setTsaTestando] = useState(false);
   const [tsaMsg, setTsaMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
 
+  // Política de assinatura (XAdES-EPES)
+  const [polModo, setPolModo] = useState<'padrao' | 'custom' | 'bes'>('padrao');
+  const [polIdentificador, setPolIdentificador] = useState('');
+  const [polDigest, setPolDigest] = useState('');
+  const [polSpuri, setPolSpuri] = useState('');
+  const [polPadrao, setPolPadrao] = useState({ identificador: '', digestBase64: '', spuri: '' });
+  const [polSalvando, setPolSalvando] = useState(false);
+  const [polConfirmando, setPolConfirmando] = useState(false);
+  const [polMsg, setPolMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+
   useEffect(() => {
     void (async () => {
       const r = await api.assinatura.tsaObter();
@@ -102,6 +112,18 @@ export function AssinaturaDigital() {
         setTsaUrl(r.data.url);
         setTsaUsuario(r.data.usuario ?? '');
         setTsaTemSenha(r.data.temSenha);
+      }
+      const p = await api.assinatura.politicaObter();
+      if (p.ok && p.data) {
+        setPolModo(p.data.modo);
+        setPolIdentificador(p.data.identificador || p.data.padraoIdentificador);
+        setPolDigest(p.data.digestBase64 || p.data.padraoDigestBase64);
+        setPolSpuri(p.data.spuri || p.data.padraoSpuri);
+        setPolPadrao({
+          identificador: p.data.padraoIdentificador,
+          digestBase64: p.data.padraoDigestBase64,
+          spuri: p.data.padraoSpuri,
+        });
       }
     })();
   }, []);
@@ -135,6 +157,53 @@ export function AssinaturaDigital() {
     } else {
       setTsaMsg({ tipo: 'erro', texto: r.error ?? 'Falha no teste' });
     }
+  };
+
+  const salvarPolitica = async () => {
+    setPolMsg(null);
+    setPolSalvando(true);
+    const r = await api.assinatura.politicaSalvar({
+      modo: polModo,
+      identificador: polIdentificador,
+      digestBase64: polDigest,
+      spuri: polSpuri,
+    });
+    setPolSalvando(false);
+    if (r.ok) {
+      setPolMsg({
+        tipo: 'ok',
+        texto:
+          polModo === 'bes'
+            ? 'Salvo: assinaturas serão XAdES-BES (SEM política).'
+            : polModo === 'custom'
+              ? 'Política customizada salva. Use "Confirmar digest" para verificar contra o documento oficial do SPURI.'
+              : 'Salvo: política padrão PA-AD-RC v2.4 (ICP-Brasil).',
+      });
+    } else {
+      setPolMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao salvar' });
+    }
+  };
+
+  const confirmarPolitica = async () => {
+    setPolMsg(null);
+    setPolConfirmando(true);
+    const r = await api.assinatura.politicaConfirmar({
+      spuri: polModo === 'custom' ? polSpuri : polPadrao.spuri,
+      digestBase64: polModo === 'custom' ? polDigest : polPadrao.digestBase64,
+    });
+    setPolConfirmando(false);
+    if (!r.ok) {
+      setPolMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao confirmar' });
+      return;
+    }
+    setPolMsg(
+      r.data?.confere
+        ? { tipo: 'ok', texto: `Digest CONFIRMADO: o SHA-256 (exc-C14N) do documento oficial em ${r.data.spuriUsado} corresponde ao configurado.` }
+        : {
+            tipo: 'erro',
+            texto: `Digest NÃO confere! Calculado a partir do documento oficial (${r.data?.spuriUsado}): ${r.data?.calculado} — corrija antes de assinar (digest não se inventa).`,
+          }
+    );
   };
 
   async function carregar() {
@@ -608,6 +677,86 @@ export function AssinaturaDigital() {
           </button>
           <button className="btn-ghost" disabled={tsaTestando || !tsaUrl.trim()} onClick={() => void testarTsa()}>
             {tsaTestando ? 'Carimbando…' : 'Testar carimbo'}
+          </button>
+        </div>
+      </div>
+
+      {/* Política de Assinatura (XAdES-EPES) */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Política de Assinatura — XAdES-EPES</h3>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
+          O XAdES-EPES identifica a política de assinatura no XML (identificador + digest SHA-256 + SPURI). O
+          digest <strong>não se inventa</strong>: é o SHA-256 sobre a forma exclusive-C14N do documento oficial da
+          política. Padrão do app: <strong>PA-AD-RC v2.4</strong> (ICP-Brasil, {polPadrao.identificador}), digest
+          confirmado por dois motores independentes (.NET XmlDsigExcC14NTransform e xml-crypto). Use
+          "Confirmar digest" para re-verificar contra o documento oficial no SPURI.
+        </p>
+        <div style={{ display: 'flex', gap: 16, marginBottom: 10, flexWrap: 'wrap' }}>
+          {([
+            { modo: 'padrao' as const, titulo: 'Padrão (PA-AD-RC v2.4)', desc: 'Política ICP-Brasil homologada, já com digest confirmado' },
+            { modo: 'custom' as const, titulo: 'Personalizada', desc: 'Outra política oficial — confirme o digest antes de salvar' },
+            { modo: 'bes' as const, titulo: 'Sem política (XAdES-BES)', desc: 'Assinatura sem SignaturePolicyIdentifier' },
+          ]).map((op) => (
+            <label
+              key={op.modo}
+              style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start', padding: 12, cursor: 'pointer',
+                border: `2px solid ${polModo === op.modo ? '#22C55E' : 'var(--border)'}`, borderRadius: 10, flex: 1, minWidth: 220,
+              }}
+            >
+              <input type="radio" name="polModo" checked={polModo === op.modo} onChange={() => {
+                setPolModo(op.modo);
+                if (op.modo === 'padrao') {
+                  setPolIdentificador(polPadrao.identificador);
+                  setPolDigest(polPadrao.digestBase64);
+                  setPolSpuri(polPadrao.spuri);
+                }
+              }} style={{ marginTop: 3 }} />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13, color: '#0F172A' }}>{op.titulo}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{op.desc}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+        <div className="form-grid">
+          <div>
+            <label>Identificador (OID como URN) *</label>
+            <input
+              value={polIdentificador}
+              onChange={(e) => setPolIdentificador(e.target.value)}
+              placeholder="urn:oid:2.16.76.1.7.1.9.2.4"
+              disabled={polModo !== 'custom'}
+              style={{ fontFamily: 'monospace' }}
+            />
+          </div>
+          <div>
+            <label>Digest SHA-256 (base64) *</label>
+            <input
+              value={polDigest}
+              onChange={(e) => setPolDigest(e.target.value)}
+              placeholder="SHA-256 da forma exc-C14N do documento da política"
+              disabled={polModo !== 'custom'}
+              style={{ fontFamily: 'monospace' }}
+            />
+          </div>
+          <div className="full">
+            <label>SPURI (URL do documento oficial da política)</label>
+            <input
+              value={polSpuri}
+              onChange={(e) => setPolSpuri(e.target.value)}
+              placeholder="http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.xml"
+              disabled={polModo !== 'custom'}
+            />
+          </div>
+        </div>
+        {polMsg && <div className={polMsg.tipo === 'ok' ? 'alert alert-success' : 'alert alert-error'}>{polMsg.texto}</div>}
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <button className="btn-primary" disabled={polSalvando} onClick={() => void salvarPolitica()}>
+            {polSalvando ? 'Salvando…' : 'Salvar política'}
+          </button>
+          <button className="btn-ghost" disabled={polConfirmando} onClick={() => void confirmarPolitica()}>
+            {polConfirmando ? 'Confirmando…' : 'Confirmar digest'}
           </button>
         </div>
       </div>

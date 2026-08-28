@@ -55,9 +55,9 @@ export function montarRequisicao(digest: Buffer): { der: Buffer; nonce: Buffer }
         digest.toString('binary')),
     ]),
     // nonce [1] IMPLICIT INTEGER
-    asn1.create(asn1.Class.CONTEXT, 1, false, nonce.toString('binary')),
+    asn1.create(asn1.Class.CONTEXT_SPECIFIC, 1, false, nonce.toString('binary')),
     // certReq [2] IMPLICIT BOOLEAN TRUE (token inclui os certificados da TSA)
-    asn1.create(asn1.Class.CONTEXT, 2, false, '\u0001'),
+    asn1.create(asn1.Class.CONTEXT_SPECIFIC, 2, false, '\u0001'),
   ]);
   const der = Buffer.from(asn1.toDer(req).getBytes(), 'binary');
   return { der, nonce };
@@ -96,7 +96,7 @@ function dadosDoToken(token: any): { genTime?: string; nonce?: Buffer } {
       if (m) genTime = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`;
       return genTime === undefined;
     }
-    if (n.typeClass === asn1.Class.CONTEXT && n.type === 5 && n.constructed) {
+    if (n.tagClass === asn1.Class.CONTEXT_SPECIFIC && n.type === 5 && n.constructed) {
       const inteiro = n.value?.[0];
       if (inteiro?.type === 2) {
         try { nonce = Buffer.from(asn1.integerToDer(asn1.derToInteger(inteiro.value)).getBytes(), 'binary'); } catch { /* ignora */ }

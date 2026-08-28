@@ -93,10 +93,19 @@ CREATE TABLE IF NOT EXISTS diploma_arquivos (
   versao_schema TEXT NOT NULL,
   valido_xsd INTEGER,
   erros_validacao_json JSONB,
+  conformidade_pdfa JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_diploma_arquivos_diploma ON diploma_arquivos(diploma_id);
+
+-- Migração de bases existentes (idempotente):
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'diploma_arquivos' AND column_name = 'conformidade_pdfa') THEN
+    ALTER TABLE diploma_arquivos ADD COLUMN conformidade_pdfa JSONB;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS diploma_assinaturas (
   id BIGSERIAL PRIMARY KEY,
