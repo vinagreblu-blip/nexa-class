@@ -7,14 +7,15 @@
 // do handler (ipc/diplomas-digitais.ts), NUNCA no gerador.
 //
 // CONFORMIDADE JSON→XSD (tiposBasicos_v1.05):
-//  - IesEmissora.CodigoMEC/CNPJ/Endereco/Credenciamento: direto do cadastro
-//  - DadosCurso (TDadosMinimoCurso): NomeCurso + e-MEC + Autorizacao + Reconhecimento
-//  - ElementosHistorico: 1 Disciplina por linha de historico_disciplinas
-//    (código derivado do nome; CH→HoraAula|HoraRelogio; nota 0-10 ou
-//    conceito; status AP/CUMP→Aprovado, REP→Reprovado, demais→Pendente;
-//    Docentes{Nome,Titulacao-enum})
-//  - SituacaoAtualDiscente: Formado{Conclusao, Colacao, Expedicao}
-//  - ENADE: elemento vazio (a IES ainda não informou edições)
+//  - IesEmissora.CodigoMEC/CNPJ/Endereco/Credenciamento/Mantenedora
+//  - DadosCurso (TDadosMinimoCurso): NomeCurso + e-MEC + Habilitacao +
+//    Autorizacao + Reconhecimento (via InformacoesTramitacaoEMEC quando
+//    o curso tem processo e-MEC em vez de ato publicado)
+//  - ElementosHistorico: Disciplina (NotaAteCem 0-100 | Nota 0-10 |
+//    Conceito; <Aprovado/> vazio conforme referência) +
+//    AtividadeComplementar (quando houver)
+//  - SituacaoAtualDiscente: PeriodoLetivo → Formado
+//  - ENADE: estruturado (NaoHabilitado{Condicao, Edicao, Motivo|OutroMotivo})
 //  - SegurancaHistorico.CodigoValidacao: "eMEC.16hex" (gerado 1x)
 //
 import {
@@ -28,6 +29,62 @@ import {
 import { mapearTitulacao, mapearFormaAcesso, codigoDisciplinaDerivado } from './mapeamento-campos';
 import type { SnapshotDiploma } from './coletor';
 import { randomBytes } from 'node:crypto';
+
+/** Reconhecimento via InformacoesTramitacaoEMEC (ramo do choice do XSD
+ *  usado pela referência quando o curso tem processo no e-MEC em vez de
+ *  ato regulatório publicado). */
+function blocoTramitacaoEmec(json: string | null | undefined, tag: string): string | null {
+  if (!json) return null;
+  try {
+    const m = JSON.parse(json);
+    if (!m?.numeroProcesso || !m?.tipoProcesso || !normalizarData(m.dataCadastro) || !normalizarData(m.dataProtocolo)) {
+      return null;
+    }
+    return (
+      `<${tag}><InformacoesTramitacaoEMEC>` +
+      el('NumeroProcesso', m.numeroProcesso) +
+      el('TipoProcesso', m.tipoProcesso) +
+      el('DataCadastro', normalizarData(m.dataCadastro)) +
+      el('DataProtocolo', normalizarData(m.dataProtocolo)) +
+      `</InformacoesTramitacaoEMEC></${tag}>`
+    );
+  } catch { return null; }
+}
+
+/** Habilitacao do curso (opcional): {nome, data} ou {nomeHabilitacao, dataHabilitacao}. */
+function blocoHabilitacoes(json: string | null | undefined): string {
+  if (!json) return '';
+  try {
+    const raw = JSON.parse(json);
+    const lista = Array.isArray(raw) ? raw : [raw];
+    return lista
+      .filter((h: any) => h?.nomeHabilitacao || h?.nome)
+      .map((h: any) => {
+        const nome = h.nomeHabilitacao ?? h.nome;
+        const data = normalizarData(h.dataHabilitacao ?? h.data) ?? '';
+        return '<Habilitacao>' + el('NomeHabilitacao', nome) + (data ? el('DataHabilitacao', data) : '') + '</Habilitacao>';
+      })
+      .join('');
+  } catch { return ''; }
+}
+
+/** ENADE estruturado conforme referência: NaoHabilitado{Condicao, Edicao,
+ *  Motivo(enum)|OutroMotivo(string)} — 0..n. Dados do campo
+ *  enade_json do aluno/processo. */
+function blocoEnade(json: string | null | undefined): string {
+  if (!json) return '<ENADE />';
+  try {
+    const lista = JSON.parse(json);
+    if (!Array.isArray(lista) || lista.length === 0) return '<ENADE />';
+    return '<ENADE>' + lista.map((e: any) => {
+      if (!e?.condicao || !e?.edicao) return '';
+      const motivo = e.motivo ? el('Motivo', e.motivo) : '';
+      const outroMotivo = e.outroMotivo ? el('OutroMotivo', e.outroMotivo) : '';
+      if (!motivo && !outroMotivo) return '';
+      return '<NaoHabilitado>' + el('Condicao', e.condicao) + el('Edicao', e.edicao) + motivo + outroMotivo + '</NaoHabilitado>';
+    }).filter(Boolean).join('') + '</ENADE>';
+  } catch { return '<ENADE />'; }
+}
 
 /**
  * Bloco IesEmissora (TDadosIesEmissora).
@@ -47,6 +104,23 @@ export function blocoIesEmissora(s: SnapshotDiploma, tag = 'IesEmissora'): strin
     nomeMunicipio: ies.nome_municipio, uf: ies.uf, cep: ies.cep,
   });
   if (!end) return null;
+  // Mantenedora (opcional no XSD do histórico, presente na referência)
+  const mantenedora = (() => {
+    if (!ies.mantenedora_json) return '';
+    try {
+      const m = JSON.parse(ies.mantenedora_json);
+      if (!m?.razaoSocial || !normalizarCnpj(m.cnpj)) return '';
+      const endM = m.endereco ? blocoEndereco(m.endereco) : null;
+      if (!endM) return '';
+      return (
+        '<Mantenedora>' +
+        el('RazaoSocial', m.razaoSocial) +
+        el('CNPJ', normalizarCnpj(m.cnpj)) +
+        `<Endereco>${endM}</Endereco>` +
+        '</Mantenedora>'
+      );
+    } catch { return ''; }
+  })();
   return (
     `<${tag}>` +
     el('Nome', ies.nome) +
@@ -56,6 +130,7 @@ export function blocoIesEmissora(s: SnapshotDiploma, tag = 'IesEmissora'): strin
     (cred ?? '') +
     (recred ?? '') +
     (renov ?? '') +
+    mantenedora +
     `</${tag}>`
   );
 }
@@ -76,13 +151,17 @@ export function blocoHistoricoEscolar(s: SnapshotDiploma, agora: Date): string |
     if (aprovado) chIntegralizada += 'horaAula' in ch ? ch.horaAula : ch.horaRelogio;
 
     const nota = normalizarNota(d.nota);
+    // NotaAteCem (0-100) quando a escala da IES for centesimal;
+    // Nota (0-10) quando decimal; Conceito quando alfabético.
     const notaXml = !nota
       ? ''
-      : 'nota' in nota
-        ? el('Nota', nota.nota)
-        : el('Conceito', nota.conceito);
-    const situacaoXml = aprovado ? '<Aprovado><FormaIntegralizacao>Cursado</FormaIntegralizacao></Aprovado>'
-      : reprovado ? '<Reprovado/>' : '<Pendente/>';
+      : 'notaAteCem' in nota
+        ? el('NotaAteCem', nota.notaAteCem)
+        : 'nota' in nota
+          ? el('Nota', nota.nota)
+          : el('Conceito', nota.conceito);
+    const situacaoXml = aprovado ? '<Aprovado />'
+      : reprovado ? '<Reprovado />' : '<Pendente />';
     // Titulação fora do enum = pendência (coletor) — linha não entra no XML
     if (d.docente && mapearTitulacao(d.titulacao) == null) continue;
     const docente = d.docente
@@ -128,12 +207,18 @@ export function blocoHistoricoEscolar(s: SnapshotDiploma, agora: Date): string |
     '<ElementosHistorico>' + disciplinasXml.join('') + '</ElementosHistorico>' +
     el('DataEmissaoHistorico', dataEmissao) +
     el('HoraEmissaoHistorico', horaEmissao) +
-    '<SituacaoAtualDiscente><Formado>' +
+    '<SituacaoAtualDiscente>' +
+    // PeriodoLetivo (opcional, presente na referência: "2024/1")
+    (a.ano_conclusao && /^\d{4}$/.test(a.ano_conclusao)
+      ? el('PeriodoLetivo', `${a.ano_conclusao}/1`)
+      : '') +
+    '<Formado>' +
     el('DataConclusaoCurso', normalizarData(`${a.ano_conclusao}-01-01`) ?? '') +
     el('DataColacaoGrau', normalizarData(a.data_colacao) ?? '') +
     el('DataExpedicaoDiploma', expedicao) +
     '</Formado></SituacaoAtualDiscente>' +
-    '<ENADE/>' +
+    // ENADE estruturado conforme referência (NaoHabilitado{Condicao,Edicao,...})
+    blocoEnade(a.enade_json) +
     `<CargaHorariaCursoIntegralizada>${blocoCargaHoraria(
       Number.isInteger(chIntegralizada) ? { horaAula: chIntegralizada } : { horaRelogio: chIntegralizada }
     )}</CargaHorariaCursoIntegralizada>` +
@@ -175,8 +260,13 @@ export function gerarHistoricoXml(s: SnapshotDiploma, agora = new Date()): strin
     '<DadosCurso>' +
     el('NomeCurso', c.nome) +
     el('CodigoCursoEMEC', c.codigo_emec) +
+    // Habilitacao (opcional, presente na referência)
+    blocoHabilitacoes(c.habilitacao_json) +
     (blocoAto(c.autorizacao_json, 'Autorizacao') ?? '') +
-    (blocoAto(c.reconhecimento_json, 'Reconhecimento') ?? '') +
+    // Reconhecimento: ramo InformacoesTramitacaoEMEC quando houver processo
+    // e-MEC (conforme referência); senão ato completo
+    (blocoTramitacaoEmec(c.reconhecimento_emec_json, 'Reconhecimento') ??
+      blocoAto(c.reconhecimento_json, 'Reconhecimento') ?? '') +
     '</DadosCurso>';
 
   const iesXml = blocoIesEmissora(s);

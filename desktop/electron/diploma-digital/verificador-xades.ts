@@ -54,7 +54,9 @@ export class XPathFilterMec {
 }
 
 /** SignedXml configurado p/ o leiaute MEC (@id minúsculo além de
- *  Id/ID do XMLDSig). Já carrega o nó da assinatura. */
+ *  Id/ID do XMLDSig). Registra o XPath filter do padrão oficial como
+ *  NO-OP (o EnvelopedSignatureMec já remove todas as assinaturas — mesma
+ *  semântica do XPath) e o exc-c14n nativo do xml-crypto. */
 export function novoVerificador(certPem: string, sigNode: any): SignedXml {
   const sig = new SignedXml({ publicCert: publicCertPem(certPem) });
   sig.CanonicalizationAlgorithms['http://www.w3.org/2000/09/xmldsig#enveloped-signature'] =

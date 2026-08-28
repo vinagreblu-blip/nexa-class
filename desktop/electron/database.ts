@@ -532,6 +532,12 @@ function migrateDiplomasDigitais(): void {
   addCol('alunos', 'mae_sexo', 'mae_sexo TEXT');
   addCol('alunos', 'pai_nome', 'pai_nome TEXT');
   addCol('alunos', 'pai_sexo', 'pai_sexo TEXT');
+  addCol('alunos', 'enade_json', 'enade_json TEXT');
+  // Habilitacao/ReconhecimentoEMEC do curso (conforme XSD v1.05):
+  // habilitacao_json = [{nomeHabilitacao, dataHabilitacao}]; reconhecimento_emec_json =
+  // {numeroProcesso, tipoProcesso, dataCadastro, dataProtocolo}
+  addCol('cursos', 'habilitacao_json', 'habilitacao_json TEXT');
+  addCol('cursos', 'reconhecimento_emec_json', 'reconhecimento_emec_json TEXT');
 }
 
 function migrateAlunos(): void {

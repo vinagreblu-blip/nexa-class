@@ -24,7 +24,6 @@ import { ExclusiveCanonicalization } from 'xml-crypto';
 import { NS_DS, escapeXml } from './xml-utils';
 import { trechosAssinatura } from './xades-signer';
 
-const ALGO_C14N_EXC = 'http://www.w3.org/2001/10/xml-exc-c14n#';
 const ALGO_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
 
 export interface DadosLtv {
@@ -172,24 +171,25 @@ export async function aplicarLtv(
   const crlsOk = crls.filter((c): c is Buffer => c != null);
 
   // Blocos XL (idênticos para as assinaturas do MESMO signatário)
+  // Todos no namespace xades (default herdado do QualifyingProperties).
   const refsCert =
-    '<CompleteCertificateRefs><CertRefs>' +
+    '<xades:CompleteCertificateRefs><xades:CertRefs>' +
     infos
       .map(
         (i) =>
-          '<Cert>' +
-          '<CertDigest>' +
+          '<xades:Cert>' +
+          '<xades:CertDigest>' +
           `<DigestMethod Algorithm="${ALGO_SHA256}" xmlns="${NS_DS}" />` +
           `<DigestValue xmlns="${NS_DS}">${createHash('sha256').update(i.der).digest('base64')}</DigestValue>` +
-          '</CertDigest>' +
-          '<IssuerSerial>' +
+          '</xades:CertDigest>' +
+          '<xades:IssuerSerial>' +
           `<X509IssuerName xmlns="${NS_DS}">${escapeXml(i.issuerName)}</X509IssuerName>` +
           `<X509SerialNumber xmlns="${NS_DS}">${i.serial}</X509SerialNumber>` +
-          '</IssuerSerial>' +
-          '</Cert>'
+          '</xades:IssuerSerial>' +
+          '</xades:Cert>'
       )
       .join('') +
-    '</CertRefs></CompleteCertificateRefs>';
+    '</xades:CertRefs></xades:CompleteCertificateRefs>';
 
   const crlInfos = cadeiaSemLeaf.map((_pem, idx) => {
     const emissor = infos[idx];
@@ -197,40 +197,42 @@ export async function aplicarLtv(
     return { crl, emissor };
   }).filter((x) => x.crl);
 
+  // CRLRef conforme XAdES 1.3.2: DigestAlgAndValue + CRLIdentifier
   const refsCrl =
-    '<CompleteRevocationRefs><CRLRefs>' +
+    '<xades:CompleteRevocationRefs><xades:CRLRefs>' +
     crlInfos
       .map(
         (x) =>
-          '<CRLRef>' +
-          '<CRLIssuer>' +
-          `<X509IssuerName xmlns="${NS_DS}">${escapeXml(x.emissor.issuerName)}</X509IssuerName>` +
-          `<X509SerialNumber xmlns="${NS_DS}">${x.emissor.serial}</X509SerialNumber>` +
-          '</CRLIssuer>' +
-          '<CRLDigest>' +
+          '<xades:CRLRef>' +
+          '<xades:DigestAlgAndValue>' +
           `<DigestMethod Algorithm="${ALGO_SHA256}" xmlns="${NS_DS}" />` +
           `<DigestValue xmlns="${NS_DS}">${createHash('sha256').update(x.crl).digest('base64')}</DigestValue>` +
-          '</CRLDigest>' +
-          '</CRLRef>'
+          '</xades:DigestAlgAndValue>' +
+          '<xades:CRLIdentifier>' +
+          `<xades:Issuer>${escapeXml(x.emissor.issuerName)}</xades:Issuer>` +
+          `<xades:IssueTime>${new Date().toISOString().slice(0, 19) + 'Z'}</xades:IssueTime>` +
+          `<xades:Number>${Date.now()}</xades:Number>` +
+          '</xades:CRLIdentifier>' +
+          '</xades:CRLRef>'
       )
       .join('') +
-    '</CRLRefs></CompleteRevocationRefs>';
+    '</xades:CRLRefs></xades:CompleteRevocationRefs>';
 
   const valoresCert =
-    '<CertificateValues>' +
-    infos.map((i) => `<EncapsulatedX509Certificate>${i.b64}</EncapsulatedX509Certificate>`).join('') +
-    '</CertificateValues>';
+    '<xades:CertificateValues>' +
+    infos.map((i) => `<xades:EncapsulatedX509Certificate>${i.b64}</xades:EncapsulatedX509Certificate>`).join('') +
+    '</xades:CertificateValues>';
 
   const valoresCrl =
-    '<RevocationValues><CRLValues>' +
-    crlInfos.map((x) => `<EncapsulatedCRLValue>${x.crl.toString('base64')}</EncapsulatedCRLValue>`).join('') +
-    '</CRLValues></RevocationValues>';
+    '<xades:RevocationValues><xades:CRLValues>' +
+    crlInfos.map((x) => `<xades:EncapsulatedCRLValue>${x.crl.toString('base64')}</xades:EncapsulatedCRLValue>`).join('') +
+    '</xades:CRLValues></xades:RevocationValues>';
 
   let out = xml;
   // ordem REVERSA (offsets)
   for (const trecho of [...trechosAssinatura(xml)].reverse()) {
     if (trecho.esqueleto) continue;
-    if (trecho.texto.includes('<SigAndRefsTimeStamp')) continue; // já aplicado
+    if (trecho.texto.includes('<xades:SigAndRefsTimeStamp')) continue; // já aplicado
     const mFim = trecho.texto.indexOf('</SignatureTimeStamp>');
     if (mFim < 0) continue; // sem 1º carimbo — LTV exige carimbo antes
     const inserirApos = mFim + '</SignatureTimeStamp>'.length;
@@ -265,10 +267,10 @@ export async function aplicarLtv(
       }
     }
     const sigAndRefs =
-      '<SigAndRefsTimeStamp>' +
-      `<CanonicalizationMethod Algorithm="${ALGO_C14N_EXC}" xmlns="${NS_DS}" />` +
-      (token ? `<EncapsulatedTimeStamp>${token.toString('base64')}</EncapsulatedTimeStamp>` : '') +
-      '</SigAndRefsTimeStamp>';
+      '<xades:SigAndRefsTimeStamp>' +
+      `<CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#" xmlns="${NS_DS}" />` +
+      (token ? `<xades:EncapsulatedTimeStamp>${token.toString('base64')}</xades:EncapsulatedTimeStamp>` : '') +
+      '</xades:SigAndRefsTimeStamp>';
     const novoTrecho =
       trecho.texto.slice(0, inserirApos) + blocoXl + sigAndRefs + trecho.texto.slice(inserirApos);
     out = out.slice(0, trecho.inicio) + novoTrecho + out.slice(trecho.inicio + trecho.texto.length);

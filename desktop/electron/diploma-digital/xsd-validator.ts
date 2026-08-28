@@ -81,7 +81,7 @@ export interface ResultadoValidacao {
   validadoEm: string;
 }
 
-function dirSchemas(versao: string): string {
+export function dirSchemas(versao: string): string {
   // dev: <repo>/schemas/vX.YZ — em produção (ASAR) os schemas são
   // empacotados em extraResources (ver DIPLOMA_DIGITAL.md).
   const dirVersao = `v${versao}`;

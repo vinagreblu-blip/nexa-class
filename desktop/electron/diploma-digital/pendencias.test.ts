@@ -80,7 +80,15 @@ describe('normalizarNota (TNota 0-10 / TConceito)', () => {
   it('"9,5" → nota 9.5', () => expect(normalizarNota('9,5')).toEqual({ nota: 9.5 }));
   it('"AP" não é nota nem conceito do XSD → null', () => expect(normalizarNota('AP')).toBeNull());
   it('"A" → conceito', () => expect(normalizarNota('A')).toEqual({ conceito: 'A' }));
-  it('nota > 10 → null', () => expect(normalizarNota('11')).toBeNull());
+  it('nota > 100 → null', () => expect(normalizarNota('101')).toBeNull());
+  it('nota 0-100 em escala centesimal → notaAteCem', () => {
+    const r = normalizarNota('72');
+    expect(r).toEqual({ notaAteCem: 72 });
+  });
+  it('nota 0-10 em escala decimal → nota', () => {
+    const r = normalizarNota('9,5');
+    expect(r).toEqual({ nota: 9.5 });
+  });
 });
 
 // ---------- pendências (cenários exigidos: 1-6 do item 28) ----------

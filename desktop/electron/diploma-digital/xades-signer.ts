@@ -11,15 +11,18 @@
 //  - A1: node-forge. A3: SignHash bruto no token.
 //  - Carimbo/LTV aplicados por etapas posteriores (UnsignedProperties).
 import { createHash, randomBytes } from 'node:crypto';
-import { C14nCanonicalization, findAncestorNs } from 'xml-crypto';
+import { C14nCanonicalization } from 'xml-crypto';
 import { DOMParser } from '@xmldom/xmldom';
 import { NS_DS, NS_XADES, escapeXml } from './xml-utils';
 
-const ALGO_C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+const ALGO_C14N_EXC = 'http://www.w3.org/2001/10/xml-exc-c14n#';
 const ALGO_ENV = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
+const ALGO_XPATH = 'http://www.w3.org/TR/1999/REC-xpath-19991116';
 const ALGO_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
 const ALGO_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
 const TYPE_SIGNED_PROPERTIES = 'http://uri.etsi.org/01903#SignedProperties';
+const XPATH_SEM_ASSINATURAS =
+  'not(ancestor-or-self::*[namespace-uri()=&quot;http://www.w3.org/2000/09/xmldsig#&quot; and local-name()=&quot;Signature&quot;])';
 
 // ---- Política de assinatura (EPES): PA_AD_RC_v2_4 (ICP-Brasil) ----
 export const POLITICA_ASSINATURA: PoliticaXades = {
@@ -173,20 +176,6 @@ function qualifyingProperties(
   );
 }
 
-function extrairSubtreePorId(xml: string, tag: string, id: string): string | null {
-  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>[\\s\\S]*?</${tag}>`, 'g');
-  for (const m of xml.matchAll(re)) {
-    if (new RegExp(`(?:^|\\s)(?:id|Id|ID)="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`).test(m[0].slice(0, m[0].indexOf('>') + 1))) {
-      return m[0];
-    }
-  }
-  return null;
-}
-
-function semAssinaturas(fragmento: string): string {
-  return fragmento.replace(/<(?:ds:)?Signature(?:\s[^>]*)?>[\s\S]*?<\/(?:ds:)?Signature>/g, '');
-}
-
 export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinaturaXades): Promise<string> {
   const forge = require('node-forge');
   const alvo = trechosAssinatura(xml).find((t) => t.esqueleto);
@@ -211,34 +200,62 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
     opts.politica === null ? null : (opts.politica ?? POLITICA_ASSINATURA);
   const qp = qualifyingProperties(certDer, { issuerName, serialNumber: serial }, signatureId, agora, politicaFinal);
 
-  // ---- digest #1: elemento alvo SEM assinaturas (c14n inclusivo)
-  const alvoSemAssinaturas = refId
-    ? semAssinaturas(extrairSubtreePorId(xml, ancestral.tagName, refId) ?? '')
-    : semAssinaturas(xml);
-  if (refId && !alvoSemAssinaturas) throw new Error(`Elemento com id="${refId}" não encontrado`);
-  const docAlvo = parseDoc(alvoSemAssinaturas);
-  const nodeAlvo = refId ? acharElementoPorId(docAlvo, ancestral.tagName, refId) : docAlvo.documentElement;
-  if (!nodeAlvo) throw new Error('Nó alvo da Reference não localizado');
-  const ancestorNsAlvo = refId
-    ? [{ prefix: '', namespaceURI: 'http://portal.mec.gov.br/diplomadigital/arquivos-em-xsd' }]
-    : [];
-  const c14nAlvo = new C14nCanonicalization().process(nodeAlvo as any, { ancestorNamespaces: ancestorNsAlvo });
+  // ---- digest #1: elemento alvo SEM assinaturas (computado no DOM do
+  // documento COMPLETO para preservar o namespace herdado da raiz)
+  const docBase = parseDoc(xml);
+  let nodeAlvo: any;
+  if (refId) {
+    // acha o ancestral com @id no DOM completo
+    const ancestralDom = acharElementoPorId(docBase, ancestral.tagName, refId);
+    if (!ancestralDom) throw new Error(`Elemento com id="${refId}" não encontrado`);
+    // CLONA e remove TODAS as Signature do clone (semântica do XPath)
+    const clone = ancestralDom.cloneNode(true);
+    const removerSigs = (el: any) => {
+      for (let i = 0; i < el.childNodes?.length; i++) {
+        const c = el.childNodes[i];
+        if (c.localName === 'Signature' && (c.namespaceURI === NS_DS || c.namespaceURI === 'https://www.w3.org/2000/09/xmldsig#')) {
+          el.removeChild(c); i--;
+        } else if (c.nodeType === 1) {
+          removerSigs(c);
+        }
+      }
+    };
+    removerSigs(clone);
+    nodeAlvo = clone;
+  } else {
+    // sem @id: documento inteiro sem assinaturas
+    const clone = docBase.documentElement.cloneNode(true);
+    const removerSigs = (el: any) => {
+      for (let i = 0; i < el.childNodes?.length; i++) {
+        const c = el.childNodes[i];
+        if (c.localName === 'Signature' && (c.namespaceURI === NS_DS || c.namespaceURI === 'https://www.w3.org/2000/09/xmldsig#')) {
+          el.removeChild(c); i--;
+        } else if (c.nodeType === 1) {
+          removerSigs(c);
+        }
+      }
+    };
+    removerSigs(clone);
+    nodeAlvo = clone;
+  }
+  const c14nAlvo = new C14nCanonicalization().process(nodeAlvo, {} as any);
   const digestDoc = b64(createHash('sha256').update(Buffer.from(c14nAlvo, 'utf8')).digest());
 
   const signedInfo =
     `<ds:SignedInfo xmlns:ds="${NS_DS}">` +
-    `<ds:CanonicalizationMethod Algorithm="${ALGO_C14N}"></ds:CanonicalizationMethod>` +
+    `<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></ds:CanonicalizationMethod>` +
     `<ds:SignatureMethod Algorithm="${ALGO_RSA}"></ds:SignatureMethod>` +
     `<ds:Reference URI="${refId ? '#' + refId : ''}">` +
     `<ds:Transforms>` +
     `<ds:Transform Algorithm="${ALGO_ENV}"></ds:Transform>` +
-    `<ds:Transform Algorithm="${ALGO_C14N}"></ds:Transform>` +
+    `<ds:Transform Algorithm="${ALGO_XPATH}"><ds:XPath>${XPATH_SEM_ASSINATURAS}</ds:XPath></ds:Transform>` +
+    `<ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></ds:Transform>` +
     `</ds:Transforms>` +
     `<ds:DigestMethod Algorithm="${ALGO_SHA256}"></ds:DigestMethod>` +
     `<ds:DigestValue>${digestDoc}</ds:DigestValue>` +
     `</ds:Reference>` +
     `<ds:Reference URI="#${spId}" Type="${TYPE_SIGNED_PROPERTIES}">` +
-    `<ds:Transforms><ds:Transform Algorithm="${ALGO_C14N}"></ds:Transform></ds:Transforms>` +
+    `<ds:Transforms><ds:Transform Algorithm="${ALGO_C14N_EXC}"></ds:Transform></ds:Transforms>` +
     `<ds:DigestMethod Algorithm="${ALGO_SHA256}"></ds:DigestMethod>` +
     `<ds:DigestValue></ds:DigestValue>` +
     `</ds:Reference>` +
@@ -262,8 +279,7 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
   const docPh = parseDoc(inserirPh(placeholder));
   const spNode = acharElementoPorId(docPh, 'SignedProperties', spId);
   if (!spNode) throw new Error('SignedProperties não montado');
-  const ancestorSp = findAncestorNs(docPh as any, "//*[local-name()='SignedProperties']");
-  const c14nSp = new C14nCanonicalization().process(spNode as any, { ancestorNamespaces: ancestorSp });
+  const c14nSp = new C14nCanonicalization().process(spNode as any, {} as any);
   const digestSp = b64(createHash('sha256').update(Buffer.from(c14nSp, 'utf8')).digest());
 
   const signedInfoFinal = signedInfo.replace('<ds:DigestValue></ds:DigestValue>', `<ds:DigestValue>${digestSp}</ds:DigestValue>`);
@@ -278,6 +294,13 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
     if (sigPh.childNodes[i].localName === 'SignedInfo') siNode = sigPh.childNodes[i];
   }
   if (!siNode) throw new Error('SignedInfo não montado');
+  // exc-c14n: apenas namespaces VISIVELMENTE utilizados pelo próprio nó
+  // (o ds: do SignedInfo é herdado mas utilizável → incluído; MEC não é
+  // utilizável → excluído). SEM ancestorNamespaces (essência do exclusive).
+  // C14n do SignedInfo com os MESMOS ancestorNamespaces que o verificador
+  // computará via findAncestorNs no documento final — sem isso o SignedInfo
+  // canônico diverge (faltaria xmlns herdado) e o RSA não verifica
+  const { findAncestorNs } = await import('xml-crypto');
   const ancestorSi = findAncestorNs(docPh2 as any, "//*[local-name()='SignedInfo']");
   const c14nSi = new C14nCanonicalization().process(siNode as any, { ancestorNamespaces: ancestorSi });
 

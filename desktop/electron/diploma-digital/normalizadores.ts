@@ -111,18 +111,21 @@ export function normalizarCargaHoraria(
 }
 
 /**
- * Nota → TNota (0–10, até 2 casas) | TConceito | null.
- * O banco guarda texto ("9,5", "10", "AP", "A"...). Conceitos
+ * Nota → TNota (0–10, até 2 casas) | TConceito | NotaAteCem (0-100) | null.
+ * O banco guarda texto ("9,5", "10", "72", "AP", "A"...). Conceitos
  * válidos conforme enum TConceito/TConceitoRM do XSD.
+ * Notas >10 são interpretadas como escala 0-100 (NotaAteCem).
  */
 const CONCEITOS = new Set(['A+','A','A-','B+','B','B-','C+','C','C-','D+','D','D-','E+','E','E-','F+','F','F-','APD','APP','APR']);
-export function normalizarNota(v: string | null | undefined): { nota: number } | { conceito: string } | null {
+export function normalizarNota(v: string | null | undefined): { nota?: number; conceito?: string; notaAteCem?: number } | null {
   if (v == null) return null;
   const s = String(v).trim();
   if (!s) return null;
   if (CONCEITOS.has(s.toUpperCase())) return { conceito: s.toUpperCase() };
   const n = Number(s.replace(',', '.'));
-  if (Number.isFinite(n) && n >= 0 && n <= 10) return { nota: Math.round(n * 100) / 100 };
+  if (!Number.isFinite(n)) return null;
+  if (n >= 0 && n <= 10) return { nota: Math.round(n * 100) / 100 };
+  if (n > 10 && n <= 100) return { notaAteCem: Math.round(n) };
   return null;
 }
 
