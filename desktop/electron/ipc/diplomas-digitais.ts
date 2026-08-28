@@ -122,7 +122,19 @@ function listarAptos(_event: IpcMainInvokeEvent, busca?: string): ApiResult<any[
 }
 
 function pendencias(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<PendenciaDiploma[]> {
-  return { ok: true, data: verificarPendenciasDiploma(getDb(), alunoId) };
+  const db = getDb();
+  const pendsCriacao = verificarPendenciasDiploma(db, alunoId);
+  // Inclui pendências de ARTEFATO (histórico/DA) quando o processo existe —
+  // a tela de detalhe chama este canal para o botão "Ver pendências"
+  const processo = db.prepare('SELECT id FROM diplomas_digitais WHERE aluno_id = ?').get(alunoId) as any;
+  if (processo) {
+    const snapshot = coletarSnapshot(db as any, processo.id);
+    if (snapshot) {
+      const pendsHistorico = pendenciasHistorico(snapshot);
+      return { ok: true, data: [...pendsCriacao, ...pendsHistorico] };
+    }
+  }
+  return { ok: true, data: pendsCriacao };
 }
 
 function criar(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<DiplomaDigitalRow> {
@@ -406,15 +418,21 @@ function cursoGraduacaoSalvar(
     tituloConferido?: string;
     outroTitulo?: string;
     grauConferido?: string;
+    cargaHoraria?: string;
     enderecoJson?: string;
     autorizacaoJson?: string;
     reconhecimentoJson?: string;
+    reconhecimentoEmecJson?: string;
+    habilitacaoJson?: string;
     renovacaoReconhecimentoJson?: string;
   }
 ): ApiResult<any> {
   if (!input.nome?.trim()) return { ok: false, error: 'Nome do curso é obrigatório' };
   if (input.modalidade && !['Presencial', 'EAD'].includes(input.modalidade)) {
     return { ok: false, error: 'Modalidade deve ser Presencial ou EAD' };
+  }
+  if (input.cargaHoraria && !/^\d+$/.test(input.cargaHoraria)) {
+    return { ok: false, error: 'Carga horária deve ser um número inteiro de horas (ex.: 3000)' };
   }
   const db = getDb();
   const ies = db.prepare('SELECT id FROM ies WHERE id = ?').get(input.iesId) as any;
@@ -427,15 +445,19 @@ function cursoGraduacaoSalvar(
     input.tituloConferido?.trim() || null,
     input.outroTitulo?.trim() || null,
     input.grauConferido?.trim() || null,
+    input.cargaHoraria?.trim() || null,
     input.enderecoJson?.trim() || null,
     input.autorizacaoJson?.trim() || null,
     input.reconhecimentoJson?.trim() || null,
+    input.reconhecimentoEmecJson?.trim() || null,
+    input.habilitacaoJson?.trim() || null,
     input.renovacaoReconhecimentoJson?.trim() || null,
   ];
   if (input.id) {
     db.prepare(
       `UPDATE cursos SET ies_id=?, nome=?, codigo_emec=?, modalidade=?, titulo_conferido=?, outro_titulo=?,
-       grau_conferido=?, endereco_json=?, autorizacao_json=?, reconhecimento_json=?, renovacao_reconhecimento_json=?,
+       grau_conferido=?, carga_horaria=?, endereco_json=?, autorizacao_json=?, reconhecimento_json=?,
+       reconhecimento_emec_json=?, habilitacao_json=?, renovacao_reconhecimento_json=?,
        updated_at=datetime('now') WHERE id=?`
     ).run(...vals, input.id);
     auditar(null, 'curso_atualizacao', 'sucesso', { cursoId: input.id });
@@ -444,8 +466,9 @@ function cursoGraduacaoSalvar(
   const info = db
     .prepare(
       `INSERT INTO cursos (ies_id, nome, codigo_emec, modalidade, titulo_conferido, outro_titulo,
-       grau_conferido, endereco_json, autorizacao_json, reconhecimento_json, renovacao_reconhecimento_json)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+       grau_conferido, carga_horaria, endereco_json, autorizacao_json, reconhecimento_json,
+       reconhecimento_emec_json, habilitacao_json, renovacao_reconhecimento_json)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(...vals);
   auditar(null, 'curso_cadastro', 'sucesso', { cursoId: info.lastInsertRowid });
@@ -490,6 +513,39 @@ async function subirXmlStorage(diplomaId: number, arquivo: string, conteudo: str
   }
 }
 
+/** Diagnóstico ESPECÍFICO quando o histórico retorna null — em vez de
+ *  "dados insuficientes", informa o campo exato que bloqueou. */
+function diagnosticarFalhaHistorico(s: any): string {
+  const motivos: string[] = [];
+  if (!s.aluno) motivos.push('aluno não encontrado');
+  if (!s.curso) motivos.push('curso do aluno não encontrado no Cadastro Institucional (verifique nome/acentos/ativo)');
+  if (!s.ies) motivos.push('IES emissora não encontrada');
+  if (s.aluno && !s.ies?.logradouro) motivos.push('endereço da IES incompleto');
+  if (s.aluno && s.curso && !s.curso.carga_horaria) motivos.push('carga horária total do curso ausente (Cadastre no Cadastro Institucional → Curso)');
+  // Verifica se alguma disciplina tem CH/aprovada
+  const disciplinasValidas = (s.disciplinas ?? []).filter((d: any) => {
+    const status = (d.status ?? '').trim().toUpperCase();
+    return status === 'AP' || status === 'CUMP' || status.startsWith('APROV');
+  });
+  if (disciplinasValidas.length === 0) motivos.push('nenhuma disciplina com status aprovado (AP/CUMP) — a carga horária integralizada ficaria zero');
+  return motivos.length > 0 ? motivos.join('; ') : 'causa não identificada (contate o suporte com o ID do processo)';
+}
+
+/** Diagnóstico ESPECÍFICO quando a DA retorna null. */
+function diagnosticarFalhaDA(_db: any, s: any, docs: { caminho: string; tipo: string }[]): string {  const motivos: string[] = diagnosticarFalhaHistorico(s).split('; ').filter((m: string) => m && !m.includes('contate'));
+  // Documentos físicos
+  const docsExistentes = docs.filter((d) => {
+    try { return fs.existsSync(d.caminho); } catch { return false; }
+  });
+  if (docs.length > 0 && docsExistentes.length === 0) {
+    motivos.push(`${docs.length} documento(s) registrado(s) mas arquivo(s) físico(s) não encontrado(s) em disco — reanexe em Alunos → Documentos`);
+  }
+  // Genitores
+  const temGenitor = (s.aluno?.mae_nome && s.aluno?.mae_sexo) || (s.aluno?.pai_nome && s.aluno?.pai_sexo);
+  if (!temGenitor) motivos.push('filiação incompleta (nome E sexo de pelo menos um genitor)');
+  return motivos.length > 0 ? motivos.join('; ') : 'causa não identificada';
+}
+
 function gerarXmlHandler(
   _event: IpcMainInvokeEvent,
   diplomaId: number,
@@ -500,31 +556,42 @@ function gerarXmlHandler(
     const snapshot = coletarSnapshot(db as any, diplomaId);
     if (!snapshot) return { ok: false, error: 'Processo de diploma não encontrado' };
 
-    // 1) Pendências específicas do artefato — nada é gerado com dado faltante
-    const pends: PendenciaDiploma[] =
+    // 1) RE-EXECUTA pendências de criação (dados podem ter degradado
+    //    após a criação do processo: endereço IES editado, curso
+    //    desativado, CPF apagado etc.) — antes eram silenciosas
+    const pendsCriacao = verificarPendenciasDiploma(db as any, snapshot.aluno.id);
+    const pendsArtefato: PendenciaDiploma[] =
       artefato === 'historico_escolar' ? pendenciasHistorico(snapshot) : pendenciasDA(db as any, snapshot);
+    const pends = [...pendsCriacao, ...pendsArtefato];
     if (pends.length > 0) {
       auditar(diplomaId, `geracao_xml_${artefato}`, 'bloqueado', { pendencias: pends.length });
+      const detalhe = pends
+        .slice(0, 6)
+        .map((p) => `• ${p.campo}: ${p.motivo}`)
+        .join('\n');
       return {
         ok: false,
-        error: `XML não gerado: ${pends.length} pendência(s). ${pends.map((p) => p.campo).join('; ')}`,
+        error: `XML não gerado — ${pends.length} pendência(s):\n${detalhe}${pends.length > 6 ? `\n… e mais ${pends.length - 6}` : ''}`,
       };
     }
 
-    // 2) GERA
+    // 2) GERA (com mensagens específicas quando falha)
     let xml: string | null;
+    let motivoFalha = '';
     if (artefato === 'historico_escolar') {
       xml = gerarHistoricoXml(snapshot);
+      if (!xml) motivoFalha = diagnosticarFalhaHistorico(snapshot);
     } else {
       const docs = (db
         .prepare('SELECT * FROM aluno_documentos WHERE aluno_id = ? AND caminho IS NOT NULL')
         .all(snapshot.aluno.id) as any[])
         .map((d) => ({ caminho: d.caminho, tipo: tipoDocumentoMec(d.nome ?? '') }));
       xml = gerarDocumentacaoAcademicaXml(snapshot, docs);
+      if (!xml) motivoFalha = diagnosticarFalhaDA(db as any, snapshot, docs);
     }
     if (!xml) {
-      auditar(diplomaId, `geracao_xml_${artefato}`, 'erro_geracao');
-      return { ok: false, error: 'Falha ao montar o XML (dados insuficientes — verifique as pendências).' };
+      auditar(diplomaId, `geracao_xml_${artefato}`, 'erro_geracao', { motivo: motivoFalha });
+      return { ok: false, error: `Falha ao montar o XML: ${motivoFalha}` };
     }
 
     // 3) VALIDA contra o XSD oficial — inválido NÃO continua

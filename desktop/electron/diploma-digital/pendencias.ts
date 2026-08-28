@@ -143,10 +143,14 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
   }
 
   // --- DadosCurso (TDadosCurso): precisa de curso cadastrado e completo ---
+  // Match com normalização de acentos (LOWER() do SQLite não remove)
+  const normalizarTexto = (t: string) =>
+    t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
   const curso = aluno.curso
-    ? (db
-        .prepare('SELECT c.*, i.nome AS ies_nome, i.codigo_emec AS ies_codigo_emec, i.cnpj AS ies_cnpj, i.logradouro AS ies_logradouro, i.bairro AS ies_bairro, i.codigo_municipio AS ies_codigo_municipio, i.nome_municipio AS ies_nome_municipio, i.uf AS ies_uf, i.cep AS ies_cep, i.credenciamento_json AS ies_credenciamento FROM cursos c JOIN ies i ON i.id = c.ies_id WHERE LOWER(c.nome) = LOWER(?) AND c.ativo = 1 ORDER BY c.id LIMIT 1')
-        .get(aluno.curso) as any)
+    ? ((db
+        .prepare('SELECT * FROM cursos WHERE ativo = 1')
+        .all?.() ?? []) as any[])
+        .find((c: any) => normalizarTexto(c.nome ?? '') === normalizarTexto(aluno.curso))
     : undefined;
   if (!aluno.curso) {
     pend.push({
@@ -221,43 +225,48 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
     }
   }
 
+  // Busca a IES do curso (ou a IES emissora ativa se o curso não estiver vinculado)
+  const iesDoCurso: any = curso
+    ? (db.prepare('SELECT * FROM ies WHERE id = ?').get(curso.ies_id) as any)
+    : (db.prepare("SELECT * FROM ies WHERE papel IN ('emissora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1").get() as any);
+
   // --- IesEmissora (TDadosIesEmissora) ---
-  if (!curso || !curso.ies_codigo_emec) {
+  if (!iesDoCurso || !iesDoCurso.codigo_emec) {
     pend.push({
       campo: 'Código e-MEC da IES emissora',
       elementoXml: 'IesEmissora.CodigoMEC',
       origem: 'ies.codigo_emec',
-      motivo: !curso ? 'IES não identificada (curso não cadastrado)' : 'não cadastrado',
+      motivo: !iesDoCurso ? 'IES emissora não encontrada (cadastre no Cadastro Institucional)' : 'não cadastrado',
       comoObter: 'Informe o código e-MEC da IES no Cadastro Institucional.',
     });
   }
-  if (!curso || !normalizarCnpj(curso.ies_cnpj)) {
+  if (!iesDoCurso || !normalizarCnpj(iesDoCurso.cnpj)) {
     pend.push({
       campo: 'CNPJ da IES emissora',
       elementoXml: 'IesEmissora.CNPJ',
       origem: 'ies.cnpj',
-      motivo: !curso ? 'IES não identificada' : !curso.ies_cnpj ? 'não cadastrado' : 'formato inválido (esperado 14 dígitos)',
+      motivo: !iesDoCurso ? 'IES não identificada' : !iesDoCurso.cnpj ? 'não cadastrado' : 'formato inválido (esperado 14 dígitos)',
       comoObter: 'Informe o CNPJ (14 dígitos) da IES.',
     });
   }
-  if (!atoRegulatorioOk(curso?.ies_credenciamento)) {
+  if (!atoRegulatorioOk(iesDoCurso?.credenciamento_json)) {
     pend.push({
       campo: 'Credenciamento da IES',
       elementoXml: 'IesEmissora.Credenciamento',
       origem: 'ies.credenciamento_json',
-      motivo: !curso ? 'IES não identificada' : !curso?.ies_credenciamento ? 'ato de credenciamento não cadastrado' : 'ato incompleto/inválido (exige tipo, número e data AAAA-MM-DD)',
+      motivo: !iesDoCurso ? 'IES não identificada' : !iesDoCurso?.credenciamento_json ? 'ato de credenciamento não cadastrado' : 'ato incompleto/inválido (exige tipo, número e data AAAA-MM-DD)',
       comoObter: 'Informe o ato de credenciamento da IES (tipo, número e data).',
     });
   }
   const iesEndOk =
-    !!curso && !!curso.ies_logradouro && !!curso.ies_bairro && !!curso.ies_codigo_municipio &&
-    !!curso.ies_nome_municipio && !!curso.ies_uf && !!normalizarCep(curso.ies_cep);
+    !!iesDoCurso && !!iesDoCurso.logradouro && !!iesDoCurso.bairro && !!iesDoCurso.codigo_municipio &&
+    !!iesDoCurso.nome_municipio && !!iesDoCurso.uf && !!normalizarCep(iesDoCurso.cep);
   if (!iesEndOk) {
     pend.push({
       campo: 'Endereço da IES emissora',
       elementoXml: 'IesEmissora.Endereco',
       origem: 'ies.logradouro/bairro/codigo_municipio/nome_municipio/uf/cep',
-      motivo: !curso ? 'IES não identificada' : 'endereço incompleto (logradouro, bairro, município IBGE, nome do município, UF e CEP)',
+      motivo: !iesDoCurso ? 'IES não identificada' : 'endereço incompleto (logradouro, bairro, município IBGE, nome do município, UF e CEP)',
       comoObter: 'Complete o endereço da IES no Cadastro Institucional.',
     });
   }

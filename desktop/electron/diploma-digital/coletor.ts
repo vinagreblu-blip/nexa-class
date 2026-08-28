@@ -40,8 +40,22 @@ export function coletarSnapshot(db: AdapterDb, diplomaId: number): SnapshotDiplo
     .get(diplomaId) as any;
   if (!processo) return null;
   const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(processo.aluno_id) as any;
+  // Match do curso: normaliza ACENTOS (LOWER() do SQLite não remove) e
+  // case — "ADMINISTRACAO" deve casar com "ADMINISTRAÇÃO"
   const curso = aluno?.curso
-    ? (db.prepare('SELECT * FROM cursos WHERE LOWER(nome) = LOWER(?) AND ativo = 1 ORDER BY id LIMIT 1').get(aluno.curso) as any)
+    ? (db.prepare(`
+        SELECT * FROM cursos
+        WHERE LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+          REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+          LOWER(nome),
+          'á','a'),('à','a'),('ã','a'),('â','a'),('é','e'),('ê','e'),('í','i'),('ó','o'),('ô','o'),('õ','o'),('ú','u'),('ç','c'),
+          ('Á','a'),('À','a'),('Ã','a'),('Â','a'),('É','e'),('Ê','e'),('Í','i'),('Ó','o'),('Ô','o'),('Õ','o'),('Ú','u'),('Ç','c'))
+        = LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+          REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+          LOWER(?),
+          'á','a'),('à','a'),('ã','a'),('â','a'),('é','e'),('ê','e'),('í','i'),('ó','o'),('ô','o'),('õ','o'),('ú','u'),('ç','c'),
+          ('Á','a'),('À','a'),('Ã','a'),('Â','a'),('É','e'),('Ê','e'),('Í','i'),('Ó','o'),('Ô','o'),('Õ','o'),('Ú','u'),('Ç','c'))
+        AND ativo = 1 ORDER BY id LIMIT 1`).get(aluno.curso) as any)
     : undefined;
   const ies = db.prepare('SELECT * FROM ies WHERE id = ?').get(processo.ies_emissora_id) as any;
   const disciplinas = db
@@ -75,7 +89,9 @@ export function pendenciasHistorico(s: SnapshotDiploma): PendenciaDiploma[] {
   let aprovadas = 0;
   for (const d of s.disciplinas) {
     const ch = normalizarCargaHoraria(d.ch);
-    if (ch && (d.status === 'AP' || d.status === 'CUMP')) aprovadas++;
+    const status = (d.status ?? '').trim().toUpperCase();
+    const ehAprovada = status === 'AP' || status === 'CUMP' || status === 'APROVADO' || status === 'APROVADA' || status === 'CUMPRIDA';
+    if (ch && ehAprovada) aprovadas++;
   }
   if (s.disciplinas.length > 0 && aprovadas === 0) {
     p.push({
@@ -154,16 +170,26 @@ export function pendenciasDA(db: AdapterDb, s: SnapshotDiploma): PendenciaDiplom
       comoObter: 'Informe o nome e o sexo da mãe e/ou do pai no cadastro do aluno (exigência do XSD da DA).',
     });
   }
-  // Documentação comprobatória: ≥ 1 documento anexado
+  // Documentação comprobatória: ≥ 1 documento ANEXADO E EXISTENTE EM DISCO
   const docs = db
     .prepare('SELECT * FROM aluno_documentos WHERE aluno_id = ? AND caminho IS NOT NULL')
     .all(s.aluno.id) as any[];
+  const docsInexistentes = docs.filter((d) => {
+    try { return !require('node:fs').existsSync(d.caminho); } catch { return true; }
+  });
   if (docs.length === 0) {
     p.push({
       campo: 'Documentação comprobatória', elementoXml: 'RegistroReq.DocumentacaoComprobatoria.Documento',
       origem: 'aluno_documentos',
       motivo: 'nenhum documento anexado ao aluno (PDF embutido no XML)',
       comoObter: 'Anexe ao aluno ao menos um documento (ex.: documento de identidade) em Alunos → Documentos.',
+    });
+  } else if (docsInexistentes.length === docs.length) {
+    p.push({
+      campo: 'Documentação comprobatória', elementoXml: 'RegistroReq.DocumentacaoComprobatoria.Documento',
+      origem: 'aluno_documentos.caminho',
+      motivo: `${docs.length} documento(s) registrado(s) mas NENHUM arquivo existe em disco — reanexe os arquivos em Alunos → Documentos`,
+      comoObter: 'Reanexe os documentos do aluno (os arquivos foram movidos ou apagados do disco).',
     });
   }
   return p;

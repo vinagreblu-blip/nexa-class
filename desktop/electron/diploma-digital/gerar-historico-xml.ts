@@ -146,8 +146,13 @@ export function blocoHistoricoEscolar(s: SnapshotDiploma, agora: Date): string |
   for (const d of s.disciplinas) {
     const ch = normalizarCargaHoraria(d.ch);
     if (!ch) continue; // já é pendência via coletor quando ausente em todas
-    const aprovado = d.status === 'AP' || d.status === 'CUMP';
-    const reprovado = d.status === 'REP';
+    // Normaliza status: trim + uppercase + mapeia valores comuns
+    const statusRaw = (d.status ?? '').trim().toUpperCase();
+    const status = statusRaw === 'APROVADO' || statusRaw === 'APROVADA' || statusRaw === 'CUMPRIDA'
+      ? statusRaw === 'CUMPRIDA' ? 'CUMP' : 'AP'
+      : statusRaw;
+    const aprovado = status === 'AP' || status === 'CUMP';
+    const reprovado = status === 'REP' || status === 'REPROVADO' || status === 'REPROVADA';
     if (aprovado) chIntegralizada += 'horaAula' in ch ? ch.horaAula : ch.horaRelogio;
 
     const nota = normalizarNota(d.nota);
@@ -256,17 +261,18 @@ export function gerarHistoricoXml(s: SnapshotDiploma, agora = new Date()): strin
     });
   if (!diplomado) return null;
 
+  // Reconhecimento é OBRIGATÓRIO no XSD do histórico: exige ato OU EMEC
+  const reconhecimento = blocoTramitacaoEmec(c.reconhecimento_emec_json, 'Reconhecimento')
+    ?? blocoAto(c.reconhecimento_json, 'Reconhecimento');
+  if (!reconhecimento) return null; // pendência de criação já cobre
+
   const cursoXml =
     '<DadosCurso>' +
     el('NomeCurso', c.nome) +
     el('CodigoCursoEMEC', c.codigo_emec) +
-    // Habilitacao (opcional, presente na referência)
     blocoHabilitacoes(c.habilitacao_json) +
     (blocoAto(c.autorizacao_json, 'Autorizacao') ?? '') +
-    // Reconhecimento: ramo InformacoesTramitacaoEMEC quando houver processo
-    // e-MEC (conforme referência); senão ato completo
-    (blocoTramitacaoEmec(c.reconhecimento_emec_json, 'Reconhecimento') ??
-      blocoAto(c.reconhecimento_json, 'Reconhecimento') ?? '') +
+    reconhecimento +
     '</DadosCurso>';
 
   const iesXml = blocoIesEmissora(s);

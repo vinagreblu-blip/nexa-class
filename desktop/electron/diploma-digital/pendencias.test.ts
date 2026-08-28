@@ -95,31 +95,21 @@ describe('normalizarNota (TNota 0-10 / TConceito)', () => {
 
 /** DB fake em memória com as tabelas/consultas usadas por verificarPendenciasDiploma. */
 function dbFake({ aluno, curso, ies }: { aluno: any; curso?: any; ies?: any }) {
-  // Espelha os aliases do SELECT real (i.credenciamento_json AS ies_credenciamento etc.)
-  const comIes = (c: any) =>
-    ies
-      ? {
-          ...c,
-          ies_codigo_emec: ies.codigo_emec,
-          ies_cnpj: ies.cnpj,
-          ies_logradouro: ies.logradouro,
-          ies_bairro: ies.bairro,
-          ies_codigo_municipio: ies.codigo_municipio,
-          ies_nome_municipio: ies.nome_municipio,
-          ies_uf: ies.uf,
-          ies_cep: ies.cep,
-          ies_credenciamento: ies.credenciamento_json,
-        }
-      : undefined;
+  const cursosAtivos = curso ? [curso] : [];
   return {
     prepare(sql: string) {
       return {
         get: (...args: any[]) => {
           if (sql.startsWith('SELECT * FROM alunos')) return args[0] === aluno?.id ? aluno : undefined;
-          if (sql.includes('FROM cursos c JOIN ies i')) return curso && ies ? comIes(curso) : undefined;
-          if (sql.includes('SELECT id FROM cursos')) return curso;
-          if (sql.includes("SELECT id FROM ies WHERE papel = 'emissora'")) return ies;
+          if (sql.includes('SELECT * FROM ies WHERE id = ?')) {
+            return args[0] === ies?.id || (curso && args[0] === curso.ies_id) ? ies : undefined;
+          }
+          if (sql.includes("SELECT * FROM ies WHERE papel IN")) return ies;
           return undefined;
+        },
+        all: (..._args: any[]) => {
+          if (sql.includes('SELECT * FROM cursos WHERE ativo')) return cursosAtivos;
+          return [];
         },
       };
     },

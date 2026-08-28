@@ -598,11 +598,20 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
     const r = await api.diplomasDigitais.gerarXml(id, artefato);
     setGerando(null);
     if (r.ok) {
-      setMsg({ tipo: 'ok', texto: `XML gerado e V√ÅLIDO contra o XSD oficial 1.05 (schema ${artefato}). Assinatura digital: etapa M4 ‚Äî aguardando configura√ß√£o do certificado da IES.` });
+      setMsg({ tipo: 'ok', texto: `XML gerado e V√ÅLIDO contra o XSD oficial 1.05 (schema ${artefato}). Use 'Assinar' para a assinatura digital.` });
     } else {
+      // Erros agora v√™m com campo+motivo espec√≠ficos do backend
       setMsg({ tipo: 'erro', texto: r.error ?? 'Falha na gera√ß√£o' });
     }
     await carregar();
+  };
+
+  const [pendenciasDetalhe, setPendenciasDetalhe] = useState<any[] | null>(null);
+  const verPendencias = async () => {
+    const alunoId = dados?.processo?.aluno_id ?? id;
+    const r = await api.diplomasDigitais.pendencias(alunoId);
+    if (r.ok) setPendenciasDetalhe(r.data ?? []);
+    else setPendenciasDetalhe([]);
   };
 
   if (!dados) {
@@ -630,12 +639,43 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
           {msg.texto}
         </div>
       )}
+      {pendenciasDetalhe !== null && (
+        <div style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 8, padding: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+            <strong style={{ fontSize: 13 }}>
+              Pend√™ncias ({pendenciasDetalhe.length})
+            </strong>
+            <button className="btn-ghost btn-sm" onClick={() => setPendenciasDetalhe(null)}>Fechar</button>
+          </div>
+          {pendenciasDetalhe.length === 0 ? (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+              Nenhuma pend√™ncia ‚Äî todos os dados obrigat√≥rios est√£o completos.
+            </p>
+          ) : (
+            <table style={{ fontSize: 12 }}>
+              <thead><tr><th>Campo</th><th>Motivo</th><th>Como resolver</th></tr></thead>
+              <tbody>
+                {pendenciasDetalhe.map((p: any, i: number) => (
+                  <tr key={i}>
+                    <td style={{ fontWeight: 600 }}>{p.campo}</td>
+                    <td>{p.motivo}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{p.comoObter}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <button className="btn-primary btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('historico_escolar')}>
           {gerando === 'historico_escolar' ? 'Gerando e validando‚Ä¶' : 'Gerar XML ‚Äî Hist√≥rico Escolar Digital'}
         </button>
         <button className="btn-accent btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('documentacao_academica')}>
           {gerando === 'historico_escolar' ? 'Gerando e validando‚Ä¶' : 'Gerar XML ‚Äî Documenta√ß√£o Acad√™mica (Registro)'}
+        </button>
+        <button className="btn-ghost btn-sm" onClick={() => void verPendencias()}>
+          Ver pend√™ncias
         </button>
         {['aguardando_assinatura', 'xml_gerado', 'xml_invalido'].includes(dados.status) && (
           <>
@@ -863,9 +903,12 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
     tituloConferido: '',
     outroTitulo: '',
     grauConferido: '',
+    cargaHoraria: '',
   });
   const [autorizacao, setAutorizacao] = useState({ tipo: '', numero: '', data: '' });
   const [reconhecimento, setReconhecimento] = useState({ tipo: '', numero: '', data: '' });
+  const [reconhecimentoEmec, setReconhecimentoEmec] = useState({ numeroProcesso: '', tipoProcesso: '', dataCadastro: '', dataProtocolo: '' });
+  const [habilitacao, setHabilitacao] = useState({ nome: '', data: '' });
 
   const carregar = useCallback(async () => {
     const r = await api.diplomasDigitais.iesListar();
@@ -963,6 +1006,12 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
       return;
     }
     setSalvando(true);
+    const reconhecimentoEmecJson = reconhecimentoEmec.numeroProcesso && reconhecimentoEmec.dataCadastro
+      ? JSON.stringify(reconhecimentoEmec)
+      : undefined;
+    const habilitacaoJson = habilitacao.nome
+      ? JSON.stringify([{ nomeHabilitacao: habilitacao.nome, dataHabilitacao: habilitacao.data }])
+      : undefined;
     const r = await api.diplomasDigitais.cursoGraduacaoSalvar({
       id: curso.id,
       iesId: Number(curso.iesId),
@@ -972,17 +1021,22 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
       tituloConferido: curso.tituloConferido && curso.tituloConferido !== 'Outro' ? curso.tituloConferido : undefined,
       outroTitulo: curso.tituloConferido === 'Outro' ? curso.outroTitulo : undefined,
       grauConferido: curso.grauConferido || undefined,
+      cargaHoraria: curso.cargaHoraria || undefined,
       autorizacaoJson: atoJson(autorizacao),
       reconhecimentoJson: atoJson(reconhecimento),
-    });
+      reconhecimentoEmecJson,
+      habilitacaoJson,
+    } as any);
     setSalvando(false);
     if (!r.ok) {
       onErro(r.error ?? 'Falha ao salvar curso');
       return;
     }
-    setCurso({ id: undefined, iesId: curso.iesId, nome: '', codigoEmec: '', modalidade: '', tituloConferido: '', outroTitulo: '', grauConferido: '' });
+    setCurso({ id: undefined, iesId: curso.iesId, nome: '', codigoEmec: '', modalidade: '', tituloConferido: '', outroTitulo: '', grauConferido: '', cargaHoraria: '' });
     setAutorizacao({ tipo: '', numero: '', data: '' });
     setReconhecimento({ tipo: '', numero: '', data: '' });
+    setReconhecimentoEmec({ numeroProcesso: '', tipoProcesso: '', dataCadastro: '', dataProtocolo: '' });
+    setHabilitacao({ nome: '', data: '' });
     await carregar();
   };
 
@@ -991,6 +1045,7 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
       id: c.id, iesId: String(c.ies_id), nome: c.nome ?? '', codigoEmec: c.codigo_emec?.toString() ?? '',
       modalidade: c.modalidade ?? '', tituloConferido: c.outro_titulo ? 'Outro' : (c.titulo_conferido ?? ''),
       outroTitulo: c.outro_titulo ?? '', grauConferido: c.grau_conferido ?? '',
+      cargaHoraria: c.carga_horaria?.toString() ?? '',
     });
     const parse = (j: string | null) => {
       if (!j) return { tipo: '', numero: '', data: '' };
@@ -998,6 +1053,21 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
     };
     setAutorizacao(parse(c.autorizacao_json));
     setReconhecimento(parse(c.reconhecimento_json));
+    const emec = c.reconhecimento_emec_json ? (() => {
+      try { return JSON.parse(c.reconhecimento_emec_json); } catch { return {}; }
+    })() : {};
+    setReconhecimentoEmec({
+      numeroProcesso: emec.numeroProcesso ?? '', tipoProcesso: emec.tipoProcesso ?? '',
+      dataCadastro: emec.dataCadastro ?? '', dataProtocolo: emec.dataProtocolo ?? '',
+    });
+    const hab = c.habilitacao_json ? (() => {
+      try {
+        const l = JSON.parse(c.habilitacao_json);
+        const h = Array.isArray(l) ? l[0] : l;
+        return { nome: h?.nomeHabilitacao ?? '', data: h?.dataHabilitacao ?? '' };
+      } catch { return { nome: '', data: '' }; }
+    })() : { nome: '', data: '' };
+    setHabilitacao(hab);
   };
 
   return (
@@ -1177,9 +1247,55 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
                 {GRAUS.map((g) => <option key={g} value={g}>{g || '‚Äî'}</option>)}
               </select>
             </div>
+            <div>
+              <label style={labelStyle}>Carga hor√°ria total (h) *</label>
+              <input
+                value={curso.cargaHoraria}
+                onChange={(e) => setCurso({ ...curso, cargaHoraria: e.target.value.replace(/\D/g, '') })}
+                placeholder="3000"
+              />
+            </div>
           </div>
           <CampoAto titulo="Autoriza√ß√£o do curso" valor={autorizacao} onChange={setAutorizacao} />
-          <CampoAto titulo="Reconhecimento do curso" valor={reconhecimento} onChange={setReconhecimento} />
+          <CampoAto titulo="Reconhecimento do curso (ato publicado)" valor={reconhecimento} onChange={setReconhecimento} />
+          <div style={{ marginTop: 10, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+              Reconhecimento via processo e-MEC (usar QUANDO N√ÉO h√° ato publicado)
+            </div>
+            <div className="form-grid">
+              <div>
+                <label style={labelStyle}>N¬∫ do processo</label>
+                <input value={reconhecimentoEmec.numeroProcesso} onChange={(e) => setReconhecimentoEmec({ ...reconhecimentoEmec, numeroProcesso: e.target.value })} placeholder="202118250" />
+              </div>
+              <div>
+                <label style={labelStyle}>Tipo do processo</label>
+                <input value={reconhecimentoEmec.tipoProcesso} onChange={(e) => setReconhecimentoEmec({ ...reconhecimentoEmec, tipoProcesso: e.target.value })} placeholder="RECONHECIMENTO" />
+              </div>
+              <div>
+                <label style={labelStyle}>Data cadastro (AAAA-MM-DD)</label>
+                <input value={reconhecimentoEmec.dataCadastro} onChange={(e) => setReconhecimentoEmec({ ...reconhecimentoEmec, dataCadastro: e.target.value })} placeholder="2021-08-02" />
+              </div>
+              <div>
+                <label style={labelStyle}>Data protocolo (AAAA-MM-DD)</label>
+                <input value={reconhecimentoEmec.dataProtocolo} onChange={(e) => setReconhecimentoEmec({ ...reconhecimentoEmec, dataProtocolo: e.target.value })} placeholder="2021-09-03" />
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop: 10, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+              Habilita√ß√£o (opcional ‚Äî quando o curso tem habilita√ß√µes espec√≠ficas)
+            </div>
+            <div className="form-grid">
+              <div>
+                <label style={labelStyle}>Nome da habilita√ß√£o</label>
+                <input value={habilitacao.nome} onChange={(e) => setHabilitacao({ ...habilitacao, nome: e.target.value })} placeholder="Design Gr√°fico" />
+              </div>
+              <div>
+                <label style={labelStyle}>Data da habilita√ß√£o (AAAA-MM-DD)</label>
+                <input value={habilitacao.data} onChange={(e) => setHabilitacao({ ...habilitacao, data: e.target.value })} placeholder="2024-06-28" />
+              </div>
+            </div>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <button className="btn-primary" disabled={salvando || !curso.nome.trim() || !curso.iesId} onClick={() => void salvarCurso()}>
               {salvando ? 'Salvando‚Ä¶' : curso.id ? 'Atualizar curso' : 'Cadastrar curso'}
@@ -1450,17 +1566,17 @@ function ModalRelatoriosOficiais({
 }
 
 // ============================================================
-// Modal: DiagnÛstico ó "Validar Diploma Digital"
+// Modal: DiagnÔøΩstico ÔøΩ "Validar Diploma Digital"
 // ============================================================
 
 function LinhaDiag({ rotulo, ok, detalhe, neutro }: { rotulo: string; ok?: boolean | null; detalhe?: string; neutro?: boolean }) {
   const cor = neutro || ok == null ? 'var(--text-muted)' : ok ? '#16A34A' : '#DC2626';
-  const simbolo = neutro || ok == null ? 'ó' : ok ? 'OK' : 'FALHOU';
+  const simbolo = neutro || ok == null ? 'ÔøΩ' : ok ? 'OK' : 'FALHOU';
   return (
     <div style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
       <span style={{ width: 90, fontWeight: 600, color: 'var(--text-muted)' }}>{rotulo}</span>
       <span style={{ width: 62, fontWeight: 700, color: cor }}>{simbolo}</span>
-      <span style={{ flex: 1, color: detalhe ? 'inherit' : 'var(--text-muted)' }}>{detalhe || 'ó'}</span>
+      <span style={{ flex: 1, color: detalhe ? 'inherit' : 'var(--text-muted)' }}>{detalhe || 'ÔøΩ'}</span>
     </div>
   );
 }
@@ -1468,7 +1584,7 @@ function LinhaDiag({ rotulo, ok, detalhe, neutro }: { rotulo: string; ok?: boole
 function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () => void }) {
   const aprovado = resultado.veredito === 'APROVADO';
   return (
-    <Modal title="Validar Diploma Digital ó DiagnÛstico" onClose={onClose} width={760}>
+    <Modal title="Validar Diploma Digital ÔøΩ DiagnÔøΩstico" onClose={onClose} width={760}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Veredito final</div>
@@ -1477,8 +1593,8 @@ function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () 
           </div>
         </div>
         <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
-          <div>Padr„o MEC: <strong>{resultado.versaoPadrao}</strong> (IN Sesu 1/2020)</div>
-          <div style={{ fontFamily: 'monospace', marginTop: 4 }}>SHA-256: {resultado.hashSha256?.slice(0, 32)}Ö</div>
+          <div>PadrÔøΩo MEC: <strong>{resultado.versaoPadrao}</strong> (IN Sesu 1/2020)</div>
+          <div style={{ fontFamily: 'monospace', marginTop: 4 }}>SHA-256: {resultado.hashSha256?.slice(0, 32)}ÔøΩ</div>
         </div>
       </div>
 
@@ -1488,10 +1604,10 @@ function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () 
         ok={resultado.xsd?.ok}
         detalhe={
           resultado.xsd?.ok
-            ? `v·lido contra o XSD ${resultado.versaoPadrao}`
+            ? `vÔøΩlido contra o XSD ${resultado.versaoPadrao}`
             : (resultado.xsd?.erros ?? []).slice(0, 5).map((e: any) =>
                 `${e.elemento ? `elemento <${e.elemento}>` : ''}${e.linha ? ` (linha ${e.linha})` : ''}: ${e.mensagem}`
-              ).join(' ∑ ')
+              ).join(' ÔøΩ ')
         }
       />
 
@@ -1500,37 +1616,37 @@ function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () 
         <div key={a.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, marginTop: 8 }}>
           <div style={{ fontFamily: 'monospace', fontSize: 12, marginBottom: 4 }}>{a.id}</div>
           <LinhaDiag rotulo="Cripto" ok={a.criptografiaOk} detalhe={a.criptografiaOk ? 'digests + RSA conferem com o certificado do KeyInfo' : (a.errosCripto ?? []).join('; ')} />
-          <LinhaDiag rotulo="XAdES" ok={a.certDigestOk !== false} detalhe={`SigningTime ${a.signingTime ?? 'ó'} ∑ CertDigest ${a.certDigestOk == null ? 'ausente' : a.certDigestOk ? 'confere' : 'DIVERGE'}${a.policyId ? ` ∑ PolÌtica: ${a.policyId}` : ''}`} />
+          <LinhaDiag rotulo="XAdES" ok={a.certDigestOk !== false} detalhe={`SigningTime ${a.signingTime ?? 'ÔøΩ'} ÔøΩ CertDigest ${a.certDigestOk == null ? 'ausente' : a.certDigestOk ? 'confere' : 'DIVERGE'}${a.policyId ? ` ÔøΩ PolÔøΩtica: ${a.policyId}` : ''}`} />
           <LinhaDiag
             rotulo="Certificado"
             ok={a.certificado ? a.certificado.validoAgora && a.certificado.usoAssinaturaDigital : null}
             detalhe={
               a.certificado
-                ? `${a.certificado.subject} ∑ ${a.certificado.algoritmo} ∑ serial ${a.certificado.serial} ∑ v·lido atÈ ${String(a.certificado.validoAte).slice(0, 10)}`
-                : 'n„o encontrado'
+                ? `${a.certificado.subject} ÔøΩ ${a.certificado.algoritmo} ÔøΩ serial ${a.certificado.serial} ÔøΩ vÔøΩlido atÔøΩ ${String(a.certificado.validoAte).slice(0, 10)}`
+                : 'nÔøΩo encontrado'
             }
           />
           {a.carimbo ? (
             <LinhaDiag
               rotulo="Carimbo"
               ok={a.carimbo.tokenOk}
-              detalhe={`ACT ${a.carimbo.act ?? 'n„o identificada'} ∑ hora ${a.carimbo.genTime ?? 'ilegÌvel'}${a.carimbo.erros?.length ? ' ∑ ' + a.carimbo.erros.join('; ') : ''}`}
+              detalhe={`ACT ${a.carimbo.act ?? 'nÔøΩo identificada'} ÔøΩ hora ${a.carimbo.genTime ?? 'ilegÔøΩvel'}${a.carimbo.erros?.length ? ' ÔøΩ ' + a.carimbo.erros.join('; ') : ''}`}
             />
           ) : (
-            <LinhaDiag rotulo="Carimbo" ok={false} detalhe="sem carimbo do tempo (XAdES-BES) ó polÌtica exige XAdES-T" />
+            <LinhaDiag rotulo="Carimbo" ok={false} detalhe="sem carimbo do tempo (XAdES-BES) ÔøΩ polÔøΩtica exige XAdES-T" />
           )}
         </div>
       ))}
 
       {resultado.esqueletos > 0 && (
         <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-          {resultado.esqueletos} posiÁ„o(ıes) de assinatura da IES Registradora aguardando (competÍncia do sistema dela).
+          {resultado.esqueletos} posiÔøΩÔøΩo(ÔøΩes) de assinatura da IES Registradora aguardando (competÔøΩncia do sistema dela).
         </div>
       )}
 
       {(resultado.pendencias ?? []).length > 0 && (
         <div className="alert alert-error" style={{ marginTop: 12 }}>
-          <strong>PendÍncias:</strong>
+          <strong>PendÔøΩncias:</strong>
           <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
             {resultado.pendencias.map((p: string, i: number) => <li key={i} style={{ fontSize: 12 }}>{p}</li>)}
           </ul>

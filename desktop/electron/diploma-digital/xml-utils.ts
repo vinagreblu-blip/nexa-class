@@ -14,7 +14,7 @@
 // assinado; ver DIPLOMA_DIGITAL.md § anti-simulação.
 //
 
-import { normalizarCep } from './normalizadores';
+import { normalizarCep, normalizarData } from './normalizadores';
 
 export const NS_MEC = 'http://portal.mec.gov.br/diplomadigital/arquivos-em-xsd';
 // Namespace MEC em http:// — CONFIRMADO pelo XML de referência real aceito
@@ -90,9 +90,14 @@ export function blocoAto(prefixoJson: string | null | undefined, tag: string): s
   let ato: any;
   try { ato = JSON.parse(prefixoJson); } catch { return null; }
   if (!ato?.tipo || !ato?.numero || !ato?.data) return null;
-  let inner = el('Tipo', ato.tipo) + el('Numero', ato.numero) + el('Data', ato.data);
+  // Normaliza a data para AAAA-MM-DD (TData = xs:date) — o gate aceita
+  // DD/MM/AAAA mas o XSD rejeita; SEM isso o XML sai inválido silenciosamente
+  const dataIso = normalizarData(ato.data);
+  if (!dataIso) return null;
+  let inner = el('Tipo', ato.tipo) + el('Numero', ato.numero) + el('Data', dataIso);
+  const dataPub = normalizarData(ato.dataPublicacao ?? ato.dataPub);
   if (ato.veiculo) inner += el('VeiculoPublicacao', ato.veiculo);
-  if (ato.dataPublicacao) inner += el('DataPublicacao', ato.dataPublicacao);
+  if (dataPub) inner += el('DataPublicacao', dataPub);
   if (ato.secao != null) inner += el('SecaoPublicacao', ato.secao);
   if (ato.pagina != null) inner += el('PaginaPublicacao', ato.pagina);
   if (ato.dou != null) inner += el('NumeroDOU', ato.dou);
