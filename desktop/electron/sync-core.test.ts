@@ -300,12 +300,23 @@ describe('push incremental (watermark)', () => {
     expect((lote3[0] as any).nome).toBe('Aluno A (editado)');
   });
 
-  it('linhaParaRemoto converte boolean e timestamp', () => {
+  it('linhaParaRemoto mantém flags como INTEGER 0/1 e converte timestamp', () => {
     const remoto = linhaParaRemoto({
-      id: 1, matricula: 'ma', nome: 'A', ativo: 1, updated_at: '2026-08-25 10:00:00',
+      id: 1, matricula: 'ma', nome: 'A', ativo: 1, enviado_web: 0, updated_at: '2026-08-25 10:00:00',
     });
-    expect(remoto.ativo).toBe(true);
+    // Colunas de flag na nuvem são INTEGER: enviar `true` derruba o push
+    // com "invalid input syntax for type integer" (ver FLAG_COLS).
+    expect(remoto.ativo).toBe(1);
+    expect(remoto.enviado_web).toBe(0);
+    expect(remoto.ativo).not.toBe(true);
     expect(remoto.updated_at).toBe('2026-08-25T10:00:00Z');
+  });
+
+  it('linhaParaRemoto normaliza boolean legacy para 0/1 (nunca envia boolean)', () => {
+    const remoto = linhaParaRemoto({ id: 2, ativo: true, valido_xsd: false, created_at: null });
+    expect(remoto.ativo).toBe(1);
+    expect(remoto.valido_xsd).toBe(0);
+    expect(remoto.created_at).toBeNull();
   });
 });
 

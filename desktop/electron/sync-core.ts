@@ -36,7 +36,13 @@ export const TABELAS_SINCRONIZADAS = [
 
 export type TabelaSincronizada = (typeof TABELAS_SINCRONIZADAS)[number];
 
-const BOOL_COLS = new Set(['ativo', 'enviado_web', 'convertido', 'valido_xsd']);
+// Colunas de flag: no SQLite local e no schema da nuvem (supabase-*.sql)
+// são INTEGER (0/1) — NÃO boolean. Enviar `true`/`false` JSON para uma
+// coluna INTEGER do Postgres falha com "invalid input syntax for type
+// integer" e derruba o push da tabela inteira a cada ciclo (bug real:
+// assinaturas/ies/cursos/declaracoes nunca subiam por isso). A conversão
+// inversa (boolean remoto → 0/1 local) continua em aplicarLinhaRemota.
+const FLAG_COLS = new Set(['ativo', 'enviado_web', 'convertido', 'valido_xsd']);
 const TS_COLS = new Set(['created_at', 'updated_at', 'emitido_em']);
 
 /** Converte timestamp ISO do Supabase para formato SQLite (mantém ms). */
@@ -219,8 +225,10 @@ export function linhaParaRemoto(row: Record<string, any>): Record<string, any> {
   const r: Record<string, any> = {};
   for (const [k, v] of Object.entries(row)) {
     if (v === undefined) continue;
-    if (BOOL_COLS.has(k)) {
-      r[k] = v === 1 || v === true;
+    if (FLAG_COLS.has(k)) {
+      // Flags são INTEGER (0/1) nos dois lados — nunca boolean (ver
+      // comentário na definição de FLAG_COLS).
+      r[k] = v === true ? 1 : v === false ? 0 : v;
     } else if (TS_COLS.has(k)) {
       r[k] = v === null ? null : sqliteToIso(String(v));
     } else {

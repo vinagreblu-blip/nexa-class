@@ -20,12 +20,14 @@ CREATE TABLE IF NOT EXISTS usuarios (
   senha_temporaria INTEGER NOT NULL DEFAULT 0,
   reset_token TEXT,
   reset_expires TEXT,
+  reset_attempts INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Migração para installs Supabase já existentes (rode uma vez no SQL Editor):
 -- ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria INTEGER NOT NULL DEFAULT 0;
+-- ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_attempts INTEGER NOT NULL DEFAULT 0;
 
 -- Tabela: alunos
 CREATE TABLE IF NOT EXISTS alunos (
@@ -50,6 +52,16 @@ CREATE TABLE IF NOT EXISTS alunos (
   ano_ingresso TEXT,
   ano_conclusao TEXT,
   data_nascimento TEXT,
+  origem TEXT DEFAULT 'sistema',
+  rg_uf TEXT,
+  nome_social TEXT,
+  naturalidade_codigo_ibge TEXT,
+  naturalidade_uf TEXT,
+  naturalidade_estrangeira TEXT,
+  mae_nome TEXT,
+  mae_sexo TEXT,
+  pai_nome TEXT,
+  pai_sexo TEXT,
   created_by BIGINT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -102,11 +114,15 @@ CREATE TABLE IF NOT EXISTS declaracoes (
   enviado_web INTEGER NOT NULL DEFAULT 0,
   pdf_caminho TEXT,
   formato TEXT NOT NULL DEFAULT 'pdf',
+  tipo TEXT NOT NULL DEFAULT 'generico',
+  diploma_id BIGINT,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Migração para installs já existentes (rode uma vez no SQL Editor):
 -- ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS formato TEXT NOT NULL DEFAULT 'pdf';
+-- ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'generico';
+-- ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS diploma_id BIGINT;
 
 -- Tabela: assinaturas
 CREATE TABLE IF NOT EXISTS assinaturas (
@@ -254,3 +270,33 @@ CREATE TABLE IF NOT EXISTS arquivos (
 ALTER TABLE arquivos ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "allow_all" ON arquivos;
 CREATE POLICY "allow_all" ON arquivos FOR ALL USING (true) WITH CHECK (true);
+
+-- ============================================================
+-- MIGRAÇÃO DE COLUNAS (idempotente) — installs já existentes
+-- ============================================================
+-- O app desktop adiciona colunas ao SQLite local em versões novas; sem
+-- estas colunas aqui o PUSH falha com erro 42703 ("column does not
+-- exist") em TODA tentativa e a tabela para de sincronizar em silêncio.
+-- Rodar este bloco de novo nunca faz mal (IF NOT EXISTS).
+
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS reset_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS origem TEXT DEFAULT 'sistema';
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS rg_uf TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS nome_social TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS naturalidade_codigo_ibge TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS naturalidade_uf TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS naturalidade_estrangeira TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS mae_nome TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS mae_sexo TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS pai_nome TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS pai_sexo TEXT;
+ALTER TABLE alunos ADD COLUMN IF NOT EXISTS enade_json TEXT;
+
+ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'generico';
+ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS diploma_id BIGINT;
+ALTER TABLE declaracoes ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Installs criados com a primeira versão do schema não tinham a coluna:
+ALTER TABLE historico_disciplinas ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();

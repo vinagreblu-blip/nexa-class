@@ -52,8 +52,12 @@ CREATE TABLE IF NOT EXISTS delecoes (
   tabela TEXT NOT NULL,
   id BIGINT NOT NULL,
   deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  origem TEXT NOT NULL DEFAULT 'local',
   PRIMARY KEY (tabela, id)
 );
+
+-- Coluna adicionada depois da criação original (idempotente).
+ALTER TABLE delecoes ADD COLUMN IF NOT EXISTS origem TEXT NOT NULL DEFAULT 'local';
 
 ALTER TABLE delecoes ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "delecoes_auth" ON delecoes;
