@@ -146,11 +146,11 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
   // Match com normalização de acentos (LOWER() do SQLite não remove)
   const normalizarTexto = (t: string) =>
     t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const cursosAtivos: any[] = aluno.curso
+    ? ((db.prepare('SELECT * FROM cursos WHERE ativo = 1').all?.() ?? []) as any[])
+    : [];
   const curso = aluno.curso
-    ? ((db
-        .prepare('SELECT * FROM cursos WHERE ativo = 1')
-        .all?.() ?? []) as any[])
-        .find((c: any) => normalizarTexto(c.nome ?? '') === normalizarTexto(aluno.curso))
+    ? cursosAtivos.find((c: any) => normalizarTexto(c.nome ?? '') === normalizarTexto(aluno.curso))
     : undefined;
   if (!aluno.curso) {
     pend.push({
@@ -161,12 +161,24 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
       comoObter: 'Vincule o aluno a um curso de graduação.',
     });
   } else if (!curso) {
+    // Diagnóstico: o vínculo aluno↔curso é por NOME. Listar os cursos já
+    // cadastrados evita o trava-eterno de "cadastrei e a pendência continua"
+    // (diferença de um único caractere — ex. plural — já invalida o match).
+    const nomesCadastrados = cursosAtivos
+      .map((c: any) => String(c.nome ?? '').trim())
+      .filter(Boolean);
     pend.push({
       campo: `Curso "${aluno.curso}" no cadastro institucional`,
       elementoXml: 'DadosCurso.*',
       origem: 'cursos (cadastro institucional)',
-      motivo: 'curso de graduação não cadastrado (dados oficiais ausentes)',
-      comoObter: 'Cadastre o curso em Diplomas Digitais → Cadastro Institucional com código e-MEC, modalidade, título, grau e atos regulatórios.',
+      motivo:
+        nomesCadastrados.length === 0
+          ? 'curso de graduação não cadastrado (nenhum curso no Cadastro Institucional)'
+          : 'curso de graduação não cadastrado (dados oficiais ausentes)',
+      comoObter:
+        nomesCadastrados.length === 0
+          ? 'Cadastre o curso em Diplomas Digitais → Cadastro Institucional com código e-MEC, modalidade, título, grau e atos regulatórios.'
+          : `Cadastre o curso "${aluno.curso}" em Diplomas Digitais → Cadastro Institucional — o NOME deve bater com o do aluno (acentos e maiúsculas são ignorados; o restante deve ser idêntico). Cursos já cadastrados: ${nomesCadastrados.join(', ')}.`,
     });
   } else {
     if (!curso.codigo_emec) {

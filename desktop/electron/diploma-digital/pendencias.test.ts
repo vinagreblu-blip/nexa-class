@@ -184,6 +184,21 @@ describe('verificarPendenciasDiploma', () => {
     expect(c?.comoObter).toMatch(/Cadastro Institucional/);
   });
 
+  it('curso cadastrado com nome divergente do aluno → pendência lista o curso cadastrado (diagnóstico de mismatch)', () => {
+    const db = dbFake({
+      aluno: { ...ALUNO_COMPLETO, curso: 'Sistema de Informação' },
+      curso: { ...CURSO_COMPLETO, nome: 'Sistemas de Informação' },
+      ies: IES_COMPLETA,
+    });
+    const p = verificarPendenciasDiploma(db as any, 1);
+    const c = p.find((x) => x.origem === 'cursos (cadastro institucional)');
+    expect(c).toBeTruthy();
+    // A pendência deve mostrar o nome já cadastrado para o operador ver
+    // a diferença (ex.: singular vs plural) sem precisar adivinhar.
+    expect(c?.comoObter).toContain('Sistemas de Informação');
+    expect(c?.comoObter).toContain('Sistema de Informação');
+  });
+
   it('curso sem e-MEC / atos → pendências de DadosCurso', () => {
     const cursoIncompleto = { nome: 'ADMINISTRAÇÃO' };
     const db = dbFake({ aluno: ALUNO_COMPLETO, curso: cursoIncompleto, ies: IES_COMPLETA });
