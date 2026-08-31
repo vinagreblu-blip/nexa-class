@@ -225,6 +225,7 @@ export interface DesktopApi {
     iesSalvar: (input: any) => Promise<ApiResult<any>>;
     cursoGraduacaoListar: (iesId?: number) => Promise<ApiResult<any[]>>;
     cursoGraduacaoSalvar: (input: any) => Promise<ApiResult<any>>;
+    cursoGraduacaoDesativar: (id: number) => Promise<ApiResult<true>>;
   };
   historico: {
     listar: (alunoId: number) => Promise<ApiResult<HistoricoDisciplina[]>>;

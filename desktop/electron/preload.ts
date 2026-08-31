@@ -187,6 +187,8 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_LISTAR, iesId),
     cursoGraduacaoSalvar: (input: any): Promise<ApiResult<any>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_SALVAR, input),
+    cursoGraduacaoDesativar: (id: number): Promise<ApiResult<true>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CURSO_GRADUACAO_DESATIVAR, id),
   },
   historico: {
     listar: (alunoId: number): Promise<ApiResult<HistoricoDisciplina[]>> =>

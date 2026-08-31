@@ -350,6 +350,7 @@ export const IPC_CHANNELS = {
   IES_SALVAR: 'ies:salvar',
   CURSO_GRADUACAO_LISTAR: 'curso-graduacao:listar',
   CURSO_GRADUACAO_SALVAR: 'curso-graduacao:salvar',
+  CURSO_GRADUACAO_DESATIVAR: 'curso-graduacao:desativar',
   DADOS_ATUALIZADOS: 'dados:atualizados',
   CONEXAO_ESTADO: 'conexao:estado',
   SYNC_RESULTADO: 'cloud:sync-resultado',

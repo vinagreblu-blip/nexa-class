@@ -839,6 +839,23 @@ const TITULOS = ['', 'Licenciado', 'Tecnólogo', 'Bacharel', 'Médico'];
 const GRAUS = ['', 'Bacharelado', 'Licenciatura', 'Tecnólogo', 'Curso sequencial'];
 const UFS_BR = ['','AC','AL','AM','AP','BA','CE','DF','ES','GO','MA','MG','MS','MT','PA','PB','PE','PI','PR','RJ','RN','RO','RR','RS','SC','SE','SP','TO'];
 
+/** Formatos de data aceitos pelo validador (espelha normalizarData do
+ *  electron/diploma-digital/normalizadores.ts — feedback na hora de digitar
+ *  evita descobrir o erro só na emissão, como no caso "2005-07--27"). */
+const DATA_ATO_OK = (d: string): boolean =>
+  !!d && (/^\d{4}-\d{2}-\d{2}/.test(d) || /^\d{4}\/\d{2}\/\d{2}$/.test(d) || /^\d{2}\/\d{2}\/\d{4}$/.test(d) || /^\d{2}\/\d{2}\/\d{2}$/.test(d));
+
+/** Primeiro ato com data preenchida e inválida — bloqueia o salvamento. */
+const atoComDataInvalida = (
+  ...atos: { titulo: string; valor: { data: string } }[]
+): string | null => {
+  for (const a of atos) {
+    const d = a.valor.data.trim();
+    if (d !== '' && !DATA_ATO_OK(d)) return a.titulo;
+  }
+  return null;
+};
+
 function CampoAto({
   titulo,
   valor,
@@ -848,6 +865,7 @@ function CampoAto({
   valor: { tipo: string; numero: string; data: string };
   onChange: (v: { tipo: string; numero: string; data: string }) => void;
 }) {
+  const dataInvalida = valor.data.trim() !== '' && !DATA_ATO_OK(valor.data.trim());
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{titulo}</div>
@@ -864,7 +882,17 @@ function CampoAto({
         </div>
         <div>
           <label style={labelStyle}>Data (AAAA-MM-DD)</label>
-          <input value={valor.data} onChange={(e) => onChange({ ...valor, data: e.target.value })} placeholder="2020-01-31" />
+          <input
+            value={valor.data}
+            onChange={(e) => onChange({ ...valor, data: e.target.value })}
+            placeholder="2020-01-31"
+            style={dataInvalida ? { borderColor: '#f87171', boxShadow: '0 0 0 1px #f87171' } : undefined}
+          />
+          {dataInvalida && (
+            <div style={{ color: '#f87171', fontSize: 11, marginTop: 3 }}>
+              Data inválida — use AAAA-MM-DD (ou DD/MM/AAAA). Ex.: 2005-07-27
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -963,6 +991,15 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
   }, []);
 
   const salvarIes = async () => {
+    const atoRuim = atoComDataInvalida(
+      { titulo: 'Credenciamento da IES', valor: credenciamento },
+      { titulo: 'Recredenciamento', valor: recredenciamento },
+      { titulo: 'Renovação de recredenciamento', valor: renovacaoRecred },
+    );
+    if (atoRuim) {
+      onErro(`Data do ato "${atoRuim}" está inválida — use AAAA-MM-DD (ex.: 1998-07-08).`);
+      return;
+    }
     setSalvando(true);
     const r = await api.diplomasDigitais.iesSalvar({
       id: ies.id,
@@ -1009,6 +1046,14 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
   const salvarCurso = async () => {
     if (!curso.iesId) {
       onErro('Selecione a IES do curso.');
+      return;
+    }
+    const atoRuim = atoComDataInvalida(
+      { titulo: 'Autorização do curso', valor: autorizacao },
+      { titulo: 'Reconhecimento do curso', valor: reconhecimento },
+    );
+    if (atoRuim) {
+      onErro(`Data do ato "${atoRuim}" está inválida — use AAAA-MM-DD (ex.: 2005-07-27).`);
       return;
     }
     setSalvando(true);
@@ -1313,13 +1358,32 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
               <thead><tr><th>Curso</th><th>e-MEC</th><th>Modalidade</th><th>Grau</th><th /></tr></thead>
               <tbody>
                 {cursos.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.nome}</td>
+                  <tr key={c.id} style={c.ativo === 0 ? { opacity: 0.5 } : undefined}>
+                    <td>
+                      {c.nome}
+                      {c.ativo === 0 && <span style={{ fontSize: 11, color: 'var(--danger, #f87171)' }}> (inativo)</span>}
+                    </td>
                     <td>{c.codigo_emec ?? '—'}</td>
                     <td>{c.modalidade ?? '—'}</td>
                     <td>{c.grau_conferido ?? '—'}</td>
                     <td>
                       <button className="btn-ghost btn-sm" onClick={() => editCurso(c)}>Editar</button>
+                      {c.ativo !== 0 && (
+                        <button
+                          className="btn-ghost btn-sm"
+                          style={{ marginLeft: 6 }}
+                          onClick={() => {
+                            if (!window.confirm(`Desativar o curso "${c.nome}"?\n\nEle deixa de ser usado nas pendências e na geração do diploma (o registro é preservado). Use para limpar duplicados.`)) return;
+                            void (async () => {
+                              const r = await api.diplomasDigitais.cursoGraduacaoDesativar(c.id);
+                              if (!r.ok) { onErro(r.error ?? 'Falha ao desativar'); return; }
+                              await carregar();
+                            })();
+                          }}
+                        >
+                          Desativar
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

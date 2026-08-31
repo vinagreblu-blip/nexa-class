@@ -437,6 +437,19 @@ function cursoGraduacaoSalvar(
   const db = getDb();
   const ies = db.prepare('SELECT id FROM ies WHERE id = ?').get(input.iesId) as any;
   if (!ies) return { ok: false, error: 'IES não encontrada' };
+  // Duplicidade: mesmo nome (normalizado — acentos/caixa) na mesma IES.
+  // O vínculo aluno↔curso casa por nome; duas linhas iguais criam ambiguidade
+  // (a pendência/geração usam a primeira por id) e já aconteceu na prática.
+  const normalizarTexto = (t: string) =>
+    t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const duplicado = (db.prepare('SELECT id, nome FROM cursos WHERE ies_id = ?').all(input.iesId) as any[])
+    .find((c: any) => c.id !== input.id && normalizarTexto(c.nome ?? '') === normalizarTexto(input.nome));
+  if (duplicado) {
+    return {
+      ok: false,
+      error: `Já existe o curso "${duplicado.nome}" (id ${duplicado.id}) nesta IES — edite o existente em vez de cadastrar novamente.`,
+    };
+  }
   const vals = [
     input.iesId,
     input.nome.trim(),
@@ -473,6 +486,17 @@ function cursoGraduacaoSalvar(
     .run(...vals);
   auditar(null, 'curso_cadastro', 'sucesso', { cursoId: info.lastInsertRowid });
   return { ok: true, data: db.prepare('SELECT * FROM cursos WHERE id=?').get(info.lastInsertRowid) };
+}
+
+/** Desativação soft (ativo=0): o curso some do matching de pendências/geração
+ *  sem perder histórico — usado p/ limpar duplicados (o vínculo aluno↔curso é
+ *  por nome; duas linhas ativas iguais causam ambiguidade). */
+function cursoGraduacaoDesativar(_event: IpcMainInvokeEvent, id: number): ApiResult<true> {
+  const db = getDb();
+  const info = db.prepare('UPDATE cursos SET ativo = 0, updated_at = datetime(\'now\') WHERE id = ?').run(id);
+  if (info.changes === 0) return { ok: false, error: 'Curso não encontrado' };
+  auditar(null, 'curso_desativacao', 'sucesso', { cursoId: id });
+  return { ok: true, data: true };
 }
 
 // ---------- Geração de XML oficial (M3): GERAR → VALIDAR XSD → PERSISTIR ----------
@@ -1491,6 +1515,7 @@ export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.IES_SALVAR, requerAdmin(iesSalvar));
   ipcMain.handle(IPC_CHANNELS.CURSO_GRADUACAO_LISTAR, requerAuth(cursoGraduacaoListar));
   ipcMain.handle(IPC_CHANNELS.CURSO_GRADUACAO_SALVAR, requerAdmin(cursoGraduacaoSalvar));
+  ipcMain.handle(IPC_CHANNELS.CURSO_GRADUACAO_DESATIVAR, requerAdmin(cursoGraduacaoDesativar));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_GERAR_XML, requerAuth(gerarXmlHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ASSINAR, requerAuth(assinarHandler));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_REGISTRAR, requerAuth(registrarHandler));

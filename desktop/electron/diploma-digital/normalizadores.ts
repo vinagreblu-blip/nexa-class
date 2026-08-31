@@ -31,13 +31,16 @@ export function normalizarCep(v: string | null | undefined): string | null {
 
 /**
  * Data → AAAA-MM-DD (TData = xs:date). Aceita os formatos usados
- * no banco: YYYY-MM-DD(THH:mm...), DD/MM/YYYY e DD/MM/YY.
+ * no banco: YYYY-MM-DD(THH:mm...), DD/MM/YYYY, DD/MM/YY e AAAA/MM/DD
+ * (usuário digita a data invertida com barras — perdoada desde v1.4.2).
  * Null se não conseguir interpretar (não inventa).
  */
 export function normalizarData(v: string | null | undefined): string | null {
   if (!v) return null;
   const s = String(v).trim();
   let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(s);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
   if (m) return `${m[3]}-${m[2]}-${m[1]}`;

@@ -37,10 +37,12 @@ describe('normalizarData (TData AAAA-MM-DD)', () => {
   it('aceita ISO com hora', () => expect(normalizarData('2026-08-25T10:00:00Z')).toBe('2026-08-25'));
   it('converte DD/MM/AAAA', () => expect(normalizarData('25/08/2026')).toBe('2026-08-25'));
   it('converte DD/MM/AA', () => expect(normalizarData('25/08/26')).toBe('2026-08-25'));
+  it('perdoa AAAA/MM/DD (barras invertidas, v1.4.2)', () => expect(normalizarData('2005/07/27')).toBe('2005-07-27'));
   it('rejeita formato desconhecido', () => {
     expect(normalizarData('25-08-2026')).toBeNull();
     expect(normalizarData('Cursando')).toBeNull();
     expect(normalizarData('')).toBeNull();
+    expect(normalizarData('2005-07--27')).toBeNull();
   });
 });
 
