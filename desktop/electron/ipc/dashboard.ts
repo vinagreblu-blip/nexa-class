@@ -70,7 +70,7 @@ export interface MetricasDashboard {
     }>;
   };
   status: {
-    cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null };
+    cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null; erros: string[] };
     cloudAuth: {
       autenticado: boolean;
       identityEmail: string | null;

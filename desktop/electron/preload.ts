@@ -312,6 +312,17 @@ const api = {
         ipcRenderer.removeListener(IPC_CHANNELS.CONEXAO_ESTADO, listener);
       };
     },
+    /** Resultado do último ciclo de sync: erros por tabela, se houver. */
+    onResultadoSync: (
+      cb: (r: { ok: boolean; erros: string[]; em: string }) => void
+    ): (() => void) => {
+      const listener = (_e: IpcRendererEvent, r: { ok: boolean; erros: string[]; em: string }): void =>
+        cb(r);
+      ipcRenderer.on(IPC_CHANNELS.SYNC_RESULTADO, listener);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.SYNC_RESULTADO, listener);
+      };
+    },
   },
 };
 

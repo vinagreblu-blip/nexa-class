@@ -73,7 +73,7 @@ export interface MetricasDashboard {
     }>;
   };
   status: {
-    cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null };
+    cloudSync: { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null; erros: string[] };
     cloudAuth: {
       autenticado: boolean;
       identityEmail: string | null;
@@ -296,6 +296,8 @@ export interface DesktopApi {
   conexao: {
     /** Estado da sincronização em tempo real (online/offline/conectando). */
     onEstado: (cb: (estado: 'conectando' | 'online' | 'offline') => void) => () => void;
+    /** Resultado do último ciclo de sync: erros por tabela, se houver. */
+    onResultadoSync: (cb: (r: { ok: boolean; erros: string[]; em: string }) => void) => () => void;
   };
 }
 

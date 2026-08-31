@@ -37,9 +37,27 @@ let client: SupabaseClient | null = null;
 let syncing = false;
 
 // Status do último sync bidirecional — lido pelo Dashboard.
-// `ultimoSyncEm` = ISO timestamp; `ultimoSyncOk` = true se foi bem-sucedido.
+// `ultimoSyncEm` = ISO timestamp; `ultimoSyncOk` = true se foi bem-sucedido;
+// `errosUltimoSync` = mensagens por tabela que falhou (push ou pull).
 let ultimoSyncEm: string | null = null;
 let ultimoSyncOk: boolean | null = null;
+let errosUltimoSync: string[] = [];
+
+export interface SyncResultado {
+  ok: boolean;
+  erros: string[];
+  em: string;
+}
+
+// Notificação main → renderer ao final de cada ciclo de sync. O main.ts
+// repassa via webContents.send para o indicador da sidebar (dot laranja
+// quando há erro — antes a falha só aparecia no log, com dot verde).
+type SyncResultadoListener = (r: SyncResultado) => void;
+let onSyncResultado: SyncResultadoListener | null = null;
+
+export function setOnSyncResultado(cb: SyncResultadoListener | null): void {
+  onSyncResultado = cb;
+}
 
 // ============================================================
 // NOTIFICAÇÃO DE DADOS ALTERADOS (main → renderer)
@@ -223,11 +241,17 @@ async function registrarInstalacao(identity: IdentityFile): Promise<void> {
   }
 }
 
-export function obterStatusCloud(): { ativo: boolean; ultimoSyncEm: string | null; ultimoSyncOk: boolean | null } {
+export function obterStatusCloud(): {
+  ativo: boolean;
+  ultimoSyncEm: string | null;
+  ultimoSyncOk: boolean | null;
+  erros: string[];
+} {
   return {
     ativo: client !== null,
     ultimoSyncEm,
     ultimoSyncOk,
+    erros: errosUltimoSync,
   };
 }
 
@@ -375,6 +399,14 @@ export async function syncBidirecional(getDbFn: () => any): Promise<void> {
   // acelerado (senão cada pull geraria um push em loop).
   setSuppressLocalWriteNotify(true);
   const alteradas = new Set<string>();
+  // Erros por tabela (primeira mensagem de cada uma) — alimenta o
+  // indicador da UI e o Dashboard. Antes disto, um push rejeitado pelo
+  // Supabase (ex.: coluna ausente — drift de schema) só gerava logger.warn
+  // e o app ficava "verde" sem sincronizar nada daquela tabela.
+  const erros = new Map<string, string>();
+  const registrarErro = (tabela: string, msg: string): void => {
+    if (!erros.has(tabela)) erros.set(tabela, msg);
+  };
 
   try {
     const db = getDbFn();
@@ -429,6 +461,7 @@ export async function syncBidirecional(getDbFn: () => any): Promise<void> {
           } catch { /* tabela sem autoincrement */ }
         }
       } catch (e: any) {
+        registrarErro(tabela, `pull: ${e?.message ?? String(e)}`);
         logger.warn({ err: e, tabela }, 'Erro no pull da tabela');
       }
     }
@@ -491,10 +524,12 @@ export async function syncBidirecional(getDbFn: () => any): Promise<void> {
             const { error } = await client.from(tabela).upsert(chunk);
             if (error) {
               falhou = true;
+              registrarErro(tabela, `push: ${error.message}`);
               logger.warn({ err: error.message, tabela, range: `${i}-${i + chunk.length}` }, 'Erro ao enviar chunk');
             }
           } catch (e: any) {
             falhou = true;
+            registrarErro(tabela, `push: ${e?.message ?? String(e)}`);
             logger.warn({ err: e, tabela, range: `${i}-${i + chunk.length}` }, 'Erro ao enviar chunk');
           }
         }
@@ -502,6 +537,7 @@ export async function syncBidirecional(getDbFn: () => any): Promise<void> {
         // de falha parcial, o próximo ciclo reenvia (upsert idempotente).
         if (!falhou) salvarWatermarkPush(db, tabela, inicioTs);
       } catch (e: any) {
+        registrarErro(tabela, `push: ${e?.message ?? String(e)}`);
         logger.warn({ err: e, tabela }, 'Erro no push da tabela');
       }
     }
@@ -537,21 +573,37 @@ export async function syncBidirecional(getDbFn: () => any): Promise<void> {
       }
       salvarConfig(db, WM_PUSH_DEL_PREFIXO, inicioTs);
     } catch (e: any) {
+      registrarErro('delecoes', `tombstones: ${e?.message ?? String(e)}`);
       logger.warn({ err: e }, 'Erro no push de tombstones');
     }
   } catch (e: any) {
     logger.warn({ err: e }, 'Erro no sync bidirecional');
     ultimoSyncEm = new Date().toISOString();
     ultimoSyncOk = false;
+    errosUltimoSync = [`sync: ${e?.message ?? String(e)}`];
   } finally {
     setSuppressLocalWriteNotify(false);
     syncing = false;
   }
 
-  // Sem erros neste ponto → sync OK.
-  if (ultimoSyncEm === null || ultimoSyncOk !== false) {
+  // Sync concluído sem exceção global: OK só se NENHUMA tabela falhou
+  // (antes qualquer ciclo sem exceção marcava ok=true mesmo com pushes
+  // rejeitados — era impossível detectar drift de schema pela UI).
+  if (ultimoSyncOk !== false) {
+    errosUltimoSync = Array.from(erros.entries()).map(([tabela, msg]) => `${tabela} — ${msg}`);
+    ultimoSyncOk = errosUltimoSync.length === 0;
     ultimoSyncEm = new Date().toISOString();
-    ultimoSyncOk = true;
+  }
+  if (onSyncResultado) {
+    try {
+      onSyncResultado({
+        ok: ultimoSyncOk === true,
+        erros: errosUltimoSync,
+        em: ultimoSyncEm ?? new Date().toISOString(),
+      });
+    } catch (e: any) {
+      logger.warn({ err: e }, 'Callback de resultado de sync falhou');
+    }
   }
   notificarDadosAlterados(alteradas);
 }

@@ -49,6 +49,8 @@ const CONEXAO_INFO: Record<EstadoConexao, { cor: string; label: string }> = {
   offline: { cor: '#f87171', label: 'Offline — aguardando conexão' },
 };
 
+const ERRO_SYNC_INFO = { cor: '#f59e0b', label: 'Erro de sincronização' };
+
 export function Layout() {
   const { usuario, logout } = useAuth();
   const { tema, alternar } = useTheme();
@@ -58,6 +60,8 @@ export function Layout() {
   const [trocandoFoto, setTrocandoFoto] = useState(false);
   const [conexao, setConexao] = useState<EstadoConexao>('conectando');
   const conexaoAnterior = useRef<EstadoConexao>('conectando');
+  const [errosSync, setErrosSync] = useState<string[]>([]);
+  const syncOkAnterior = useRef<boolean | null>(null);
 
   // Estado da sincronização em tempo real (dot no rodapé + toasts nas
   // transições de queda/reconexão). O main envia o estado atual no load.
@@ -72,6 +76,24 @@ export function Layout() {
       conexaoAnterior.current = estado;
     });
   }, [toast]);
+
+  // Resultado de cada ciclo de sync: push rejeitado pela nuvem (ex.:
+  // schema desatualizado) vira dot laranja com a mensagem — antes a
+  // falha era silenciosa e os dados ficavam só na máquina local.
+  useEffect(() => {
+    return api.conexao.onResultadoSync((r) => {
+      setErrosSync(r.ok ? [] : r.erros);
+      if (!r.ok && syncOkAnterior.current !== false) {
+        toast.error(
+          `Falha ao sincronizar com a nuvem: ${r.erros[0] ?? 'erro desconhecido'}`,
+          8000
+        );
+      }
+      syncOkAnterior.current = r.ok;
+    });
+  }, [toast]);
+
+  const erroSyncVisivel = errosSync.length > 0 && conexao !== 'offline';
 
   const itens: { id: Aba; label: string; adminOnly?: boolean }[] = [
     { id: 'home', label: 'Home' },
@@ -237,9 +259,11 @@ export function Layout() {
               fontSize: 12,
             }}
             title={
-              conexao === 'online'
-                ? 'Alterações de outros usuários aparecem automaticamente.'
-                : 'Sem conexão com a nuvem. Seus dados locais continuam salvos e sincronizam ao voltar.'
+              erroSyncVisivel
+                ? `Falha no envio/recebimento de dados com a nuvem:\n${errosSync.join('\n')}\nOs dados locais continuam salvos — verifique o schema do Supabase (supabase-fix-sync-drift.sql).`
+                : conexao === 'online'
+                  ? 'Alterações de outros usuários aparecem automaticamente.'
+                  : 'Sem conexão com a nuvem. Seus dados locais continuam salvos e sincronizam ao voltar.'
             }
           >
             <span
@@ -247,12 +271,14 @@ export function Layout() {
                 width: 9,
                 height: 9,
                 borderRadius: '50%',
-                background: CONEXAO_INFO[conexao].cor,
-                boxShadow: `0 0 6px ${CONEXAO_INFO[conexao].cor}`,
+                background: erroSyncVisivel ? ERRO_SYNC_INFO.cor : CONEXAO_INFO[conexao].cor,
+                boxShadow: `0 0 6px ${erroSyncVisivel ? ERRO_SYNC_INFO.cor : CONEXAO_INFO[conexao].cor}`,
                 flexShrink: 0,
               }}
             />
-            <span style={{ opacity: 0.85 }}>{CONEXAO_INFO[conexao].label}</span>
+            <span style={{ opacity: 0.85 }}>
+              {erroSyncVisivel ? ERRO_SYNC_INFO.label : CONEXAO_INFO[conexao].label}
+            </span>
           </div>
           <button
             onClick={logout}

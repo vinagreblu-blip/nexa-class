@@ -391,12 +391,16 @@ export function Dashboard() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <ItemStatus
             label="Cloud sync (Supabase)"
-            ok={metricas.status.cloudSync.ativo}
+            ok={metricas.status.cloudSync.ativo && metricas.status.cloudSync.ultimoSyncOk !== false}
             texto={
               metricas.status.cloudSync.ativo
                 ? metricas.status.cloudSync.ultimoSyncEm
                   ? `Último sync: ${formatarData(metricas.status.cloudSync.ultimoSyncEm)} ${
                       metricas.status.cloudSync.ultimoSyncOk === false ? '(falhou)' : '(ok)'
+                    }${
+                      metricas.status.cloudSync.erros?.length
+                        ? ` — ${metricas.status.cloudSync.erros[0]}`
+                        : ''
                     }`
                   : 'Ativo, ainda não sincronizou'
                 : 'Inativo'

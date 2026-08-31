@@ -352,4 +352,5 @@ export const IPC_CHANNELS = {
   CURSO_GRADUACAO_SALVAR: 'curso-graduacao:salvar',
   DADOS_ATUALIZADOS: 'dados:atualizados',
   CONEXAO_ESTADO: 'conexao:estado',
+  SYNC_RESULTADO: 'cloud:sync-resultado',
 } as const;

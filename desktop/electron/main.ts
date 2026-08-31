@@ -42,7 +42,7 @@ import { registrarAssinaturaHandlers } from './ipc/assinatura';
 import { registrarTsaHandlers } from './ipc/tsa';
 import { registrarPoliticaHandlers } from './ipc/politica';
 import { registrarCloudHandlers } from './ipc/cloud';
-import { initCloud, syncBidirecional, agendarSyncRapido, setOnDadosAlterados } from './cloud';
+import { initCloud, syncBidirecional, agendarSyncRapido, setOnDadosAlterados, setOnSyncResultado } from './cloud';
 import { iniciarRealtime, fecharRealtime, setOnEstadoConexao, obterEstadoConexao } from './realtime';
 import { setLocalWriteListener, shutdown as dbShutdown } from './sqlite-adapter';
 import { getDb } from './database';
@@ -57,7 +57,31 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 // para não depender do Vite dev server rodando.
 const isE2E = process.env.NEXA_E2E === '1';
 
+// ============================================================
+// SINGLE INSTANCE LOCK — obrigatório para integridade do banco.
+// O adapter sql.js mantém o SQLite INTEIRO em memória e persiste o
+// arquivo por cima a cada escrita. Duas instâncias com o mesmo
+// userData se sobrescrevem no nível do ARQUIVO: a mais antiga apaga
+// silenciosamente tudo que a mais nova gravou depois do boot dela
+// (sem tombstone, sem log — perda de dados irreversível).
+// O lock é por userData: testes E2E (userData temporário único por
+// teste) e múltiplas instalações não são afetados.
+// ============================================================
+const pegouLock = app.requestSingleInstanceLock();
+if (!pegouLock) {
+  app.quit();
+}
+
 let mainWindow: BrowserWindow | null = null;
+
+// Segunda tentativa de abrir o app (lock já segurado acima): foca a janela
+// existente em vez de abrir outra instância que sobrescreveria o banco.
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 /**
  * Content Security Policy — bloqueia XSS, inline scripts não autorizados, conexões
@@ -244,6 +268,10 @@ function configurarAutoUpdate(): void {
 }
 
 app.whenReady().then(async () => {
+  // Segunda instância: o app.quit() acima já foi disparado — não inicializar
+  // DB/nuvem/janela (o boot gravaria arquivos de uma instância que morre).
+  if (!pegouLock) return;
+
   // Aplica CSP antes de criar qualquer janela
   aplicarCsp();
 
@@ -278,6 +306,16 @@ app.whenReady().then(async () => {
       for (const win of BrowserWindow.getAllWindows()) {
         try {
           win.webContents.send(IPC_CHANNELS.CONEXAO_ESTADO, estado);
+        } catch { /* janela fechando */ }
+      }
+    });
+    // Resultado de cada ciclo de sync (ok/erros por tabela) — alimenta o
+    // indicador da sidebar: push rejeitado pela nuvem vira dot LARANJA
+    // com a mensagem, em vez de falhar em silêncio com dot verde.
+    setOnSyncResultado((resultado) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          win.webContents.send(IPC_CHANNELS.SYNC_RESULTADO, resultado);
         } catch { /* janela fechando */ }
       }
     });
