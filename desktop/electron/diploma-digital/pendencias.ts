@@ -26,6 +26,7 @@ interface AdapterDb {
 }
 
 import { normalizarCpf, normalizarCnpj, normalizarCep, normalizarData, normalizarSexo, normalizarRg, normalizarUf } from './normalizadores';
+import { encontrarCursoPorNome } from './match-curso';
 
 /** Ato regulatório válido = JSON parseável com tipo+numero+data AAAA-MM-DD
  *  (exigência do XSD: o ato completo ou nada — gate de mera presença do
@@ -143,15 +144,11 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
   }
 
   // --- DadosCurso (TDadosCurso): precisa de curso cadastrado e completo ---
-  // Match com normalização de acentos (LOWER() do SQLite não remove)
-  const normalizarTexto = (t: string) =>
-    t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  // Match por nome normalizado (helper único — ver match-curso.ts)
   const cursosAtivos: any[] = aluno.curso
-    ? ((db.prepare('SELECT * FROM cursos WHERE ativo = 1').all?.() ?? []) as any[])
+    ? ((db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all?.() ?? []) as any[])
     : [];
-  const curso = aluno.curso
-    ? cursosAtivos.find((c: any) => normalizarTexto(c.nome ?? '') === normalizarTexto(aluno.curso))
-    : undefined;
+  const curso = aluno.curso ? encontrarCursoPorNome(cursosAtivos, aluno.curso) : undefined;
   if (!aluno.curso) {
     pend.push({
       campo: 'Curso do aluno',

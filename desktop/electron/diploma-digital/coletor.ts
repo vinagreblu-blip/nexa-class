@@ -10,6 +10,7 @@ import {
   normalizarData, normalizarSexo, normalizarCargaHoraria,
 } from './normalizadores';
 import { mapearTitulacao, mapearFormaAcesso } from './mapeamento-campos';
+import { encontrarCursoPorNome } from './match-curso';
 import type { PendenciaDiploma } from './pendencias';
 
 export interface AdapterDb {
@@ -40,22 +41,16 @@ export function coletarSnapshot(db: AdapterDb, diplomaId: number): SnapshotDiplo
     .get(diplomaId) as any;
   if (!processo) return null;
   const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(processo.aluno_id) as any;
-  // Match do curso: normaliza ACENTOS (LOWER() do SQLite não remove) e
-  // case — "ADMINISTRACAO" deve casar com "ADMINISTRAÇÃO"
+  // Match do curso por NOME normalizado em JS. O SQL anterior com 24
+  // REPLACE( aninhados tinha parênteses errados — "syntax error near
+  // LIMIT" no SQLite real, quebrando coletarSnapshot na geração do XML
+  // (bug pego em dry-run com o código compilado; testes com DB fake
+  // não executavam esse SQL e não pegavam).
   const curso = aluno?.curso
-    ? (db.prepare(`
-        SELECT * FROM cursos
-        WHERE LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-          REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-          LOWER(nome),
-          'á','a'),('à','a'),('ã','a'),('â','a'),('é','e'),('ê','e'),('í','i'),('ó','o'),('ô','o'),('õ','o'),('ú','u'),('ç','c'),
-          ('Á','a'),('À','a'),('Ã','a'),('Â','a'),('É','e'),('Ê','e'),('Í','i'),('Ó','o'),('Ô','o'),('Õ','o'),('Ú','u'),('Ç','c'))
-        = LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-          REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-          LOWER(?),
-          'á','a'),('à','a'),('ã','a'),('â','a'),('é','e'),('ê','e'),('í','i'),('ó','o'),('ô','o'),('õ','o'),('ú','u'),('ç','c'),
-          ('Á','a'),('À','a'),('Ã','a'),('Â','a'),('É','e'),('Ê','e'),('Í','i'),('Ó','o'),('Ô','o'),('Õ','o'),('Ú','u'),('Ç','c'))
-        AND ativo = 1 ORDER BY id LIMIT 1`).get(aluno.curso) as any)
+    ? encontrarCursoPorNome(
+        db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
+        aluno.curso
+      )
     : undefined;
   const ies = db.prepare('SELECT * FROM ies WHERE id = ?').get(processo.ies_emissora_id) as any;
   const disciplinas = db

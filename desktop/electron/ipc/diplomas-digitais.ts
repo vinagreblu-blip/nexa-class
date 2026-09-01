@@ -16,6 +16,7 @@ import { IPC_CHANNELS } from '../types';
 import type { ApiResult } from '../types';
 import { getSessao, requerAuth, requerAdmin } from './auth';
 import { verificarPendenciasDiploma, type PendenciaDiploma } from '../diploma-digital/pendencias';
+import { encontrarCursoPorNome } from '../diploma-digital/match-curso';
 import { normalizarCnpj, normalizarCep, normalizarUf, normalizarCpf, normalizarData } from '../diploma-digital/normalizadores';
 import { logger } from '../utils/logger';
 import { coletarSnapshot, pendenciasHistorico, pendenciasDA } from '../diploma-digital/coletor';
@@ -161,7 +162,10 @@ function criar(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<DiplomaDi
   if (!ies) return { ok: false, error: 'Nenhuma IES emissora cadastrada. Configure o Cadastro Institucional primeiro.' };
 
   const curso = aluno.curso
-    ? (db.prepare('SELECT id FROM cursos WHERE LOWER(nome) = LOWER(?) AND ativo = 1 ORDER BY id LIMIT 1').get(aluno.curso) as any)
+    ? encontrarCursoPorNome(
+        db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
+        aluno.curso
+      )
     : undefined;
 
   const info = db
@@ -1307,7 +1311,10 @@ function gerarFiscalizacaoHandler(
       const urlRvdd = await signedUrlStorage(`${r.id}/rvdd.pdf`);
       if (!urlXml || !urlRvdd) { semUrl.push(r.id); continue; }
       const curso = r.aluno_curso
-        ? (db.prepare('SELECT codigo_emec FROM cursos WHERE LOWER(nome) = LOWER(?) AND ativo = 1 LIMIT 1').get(r.aluno_curso) as any)
+        ? encontrarCursoPorNome(
+            db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
+            r.aluno_curso
+          )
         : null;
       diplomas.push({
         codigoValidacao: reg.codigoValidacao,
