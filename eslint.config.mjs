@@ -58,6 +58,9 @@ export default [
         HTMLSelectElement: 'readonly',
         KeyboardEvent: 'readonly',
         Event: 'readonly',
+        // DOM (xmldom) — comparador-estrutural (Element/Document)
+        Element: 'readonly',
+        Document: 'readonly',
         React: 'readonly',
         confirm: 'readonly',
         alert: 'readonly',

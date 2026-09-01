@@ -161,11 +161,22 @@ function extrairModelo(arquivos: string[]): ModeloXsd {
     }));
   }
 
-  // grupos primeiro (podem referenciar-se entre si)
+  // grupos primeiro (podem referenciar-se entre si).
+  // BUG corrigido (v1.4.3): todo grupo era registrado como 'choice' —
+  // mas grupos como GPessoa são <xs:sequence> (Nome → NomeSocial → Sexo).
+  // Como choice, casava apenas 1 elemento e derrubava a sequência
+  // inteira de TDadosDiplomado (falsos positivos de ordem/obrigatório).
   for (const g of todosElements('group')) {
     const nome = g.getAttribute('name');
-    if (!nome) continue;
-    grupos.set(nome, { kind: 'choice', min: 1, max: 1, filhos: particulasDe(g) });
+    if (!nome) continue; // <xs:group ref="..."> — referência, não definição
+    const seq = primeiroFilho(g, 'sequence');
+    const escolha = primeiroFilho(g, 'choice');
+    grupos.set(nome, {
+      kind: seq ? 'seq' : 'choice',
+      min: 1,
+      max: 1,
+      filhos: particulasDe(seq ?? escolha ?? g),
+    });
   }
 
   for (const st of todosElements('simpleType')) {
@@ -213,7 +224,9 @@ function conteudoDoElemento(p: ParticulaElemento, m: ModeloXsd): Particula[] {
 /** true quando o elemento aceita texto (tipo simples) — ex.: Nome, CPF. */
 function aceitaTexto(p: ParticulaElemento, m: ModeloXsd): boolean {
   if (p.simplesInline) return true;
-  if (!p.nomeTipo) return true; // sem type → qualquer conteúdo
+  // No leiaute MEC, <xs:element name="X"/> SEM type é marcador VAZIO
+  // (ex.: <Aprovado/>) — texto é divergência de conteúdo, não aceito.
+  if (!p.nomeTipo) return false;
   return m.simples.has(p.nomeTipo);
 }
 function attrsDoElemento(p: ParticulaElemento, m: ModeloXsd): AtributoTipo[] {
@@ -327,10 +340,22 @@ function tentaCasarGrupo(ctx: Ctx, g: ParticulaGrupo, filhos: Element[], i: numb
   if (g.kind === 'choice') {
     const f = filhos[i];
     if (!f) return 0;
-    const ramo = g.filhos.find((p) => p.kind === 'elemento' && casaElemento(p, f));
-    if (!ramo) return 0;
-    validarElemento(ctx, ramo as ParticulaElemento, f, caminhoBase);
-    return 1;
+    // Ramos do choice podem ser elementos OU sequências aninhadas
+    // (padrão MEC: <xs:choice><xs:sequence>…município…</xs:sequence>
+    // <xs:sequence>…exterior…</xs:sequence></xs:choice>) — antes só
+    // ramos-elemento eram tentados e o grupo inteiro falhava.
+    for (const ramo of g.filhos) {
+      if (ramo.kind === 'elemento') {
+        if (casaElemento(ramo, f)) {
+          validarElemento(ctx, ramo, f, caminhoBase);
+          return 1;
+        }
+      } else {
+        const c = tentaCasarGrupo(ctx, ramo, filhos, i, caminhoBase);
+        if (c > 0) return c;
+      }
+    }
+    return 0;
   }
   // sequence interna: casa cada partícula em ordem
   let j = i;
@@ -538,10 +563,26 @@ export function compararEstruturaHistorico(xml: string, versao = '1.05'): Result
   }
   const conteudoRaiz = modelo.conteudos.get(nomeTipoRaiz) ?? [];
   const ctx: Ctx = { m: modelo, divs };
-  // valida apenas o ramo MEC (infHistoricoEscolar); ds:Signature é arquitetural
+  // valida apenas o ramo MEC (infHistoricoEscolar); ds:Signature é arquitetural.
+  // BUG corrigido (v1.4.3): o conteúdo da raiz vem embrulhado em um grupo
+  // <xs:sequence> ({kind:'seq', filhos:[...]}), e o find por 'elemento' no
+  // nível superior nunca achava infHistoricoEscolar → caía no fallback sem
+  // nomeTipo → a caminhada NÃO descia para dentro do documento e mutações
+  // estruturais (ordem, inesperado, obrigatório ausente) passavam batidas.
+  const buscarParticula = (particulas: Particula[], nome: string): ParticulaElemento | undefined => {
+    for (const p of particulas) {
+      if (p.kind === 'elemento') {
+        if (p.nome === nome) return p;
+      } else {
+        const achado = buscarParticula(p.filhos, nome);
+        if (achado) return achado;
+      }
+    }
+    return undefined;
+  };
   const infParticula: ParticulaElemento = { kind: 'elemento', nome: 'infHistoricoEscolar', min: 1, max: 1 };
   if (inf) {
-    const pInf = conteudoRaiz.find((p) => p.kind === 'elemento' && p.nome === 'infHistoricoEscolar') as ParticulaElemento | undefined;
+    const pInf = buscarParticula(conteudoRaiz, 'infHistoricoEscolar');
     validarElemento(ctx, pInf ?? infParticula, inf, '/DocumentoHistoricoEscolarFinal');
   }
 
