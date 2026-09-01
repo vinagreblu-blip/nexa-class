@@ -664,7 +664,9 @@ function gerarXmlHandler(
     fs.writeFileSync(localPath, xml, 'utf8');
     const hash = createHash('sha256').update(xml, 'utf8').digest('hex');
 
-    const storagePath = await subirXmlStorage(diplomaId, nomeArquivo, xml);
+    // Upload ao bucket privado (o caminho da nuvem é derivável; a coluna
+    // caminho_storage fica com o caminho LOCAL — ver INSERT abaixo).
+    await subirXmlStorage(diplomaId, nomeArquivo, xml);
 
     // Persiste chaves/códigos na 1ª geração
     if (artefato === 'historico_escolar' && !snapshot.processo?.codigo_validacao_historico) {
@@ -693,7 +695,11 @@ function gerarXmlHandler(
         `INSERT INTO diploma_arquivos (diploma_id, tipo_arquivo, nome, caminho_storage, hash, versao_schema, valido_xsd, erros_validacao_json)
          VALUES (?, ?, ?, ?, ?, '1.05', ?, ?)`
       )
-      .run(diplomaId, artefato, nomeArquivo, storagePath ?? localPath, hash, validacao.valido ? 1 : 0, JSON.stringify(validacao.erros));
+      // v1.4.8: caminho_storage é SEMPRE o caminho local absoluto (o do
+      // storage é derivável: ${diplomaId}/${nomeArquivo}). Entre v1.4.4-1.4.7
+      // gravava-se o caminho do STORAGE quando o upload dia certo — e o
+      // fs.readFileSync de ASSINAR/REGISTRAR nunca achava o arquivo.
+      .run(diplomaId, artefato, nomeArquivo, localPath, hash, validacao.valido ? 1 : 0, JSON.stringify(validacao.erros));
 
     const novoStatus = validacao.valido ? 'aguardando_assinatura' : 'xml_invalido';
     db.prepare('UPDATE diplomas_digitais SET status = ?, updated_at = datetime(\'now\') WHERE id = ?').run(novoStatus, diplomaId);
@@ -714,10 +720,29 @@ function gerarXmlHandler(
 
 // ---------- M4: ASSINAR / REGISTRAR / PUBLICAR / ANULAR ----------
 
-/** Lê o XML mais recente do artefato (arquivo local do processo).
- *  Diagnóstico específico (v1.4.7): a mensagem genérica "gere antes de
- *  assinar" escondia as causas reais e confundia o operador. */
-function lerXmlArquivo(diplomaId: number, tipo: string): { id: number; xml: string } | null {
+/** Caminho local canônico do artefato (em disco E gravado no banco). */
+function caminhoArtefatoLocal(diplomaId: number, nomeArquivo: string): string {
+  return path.join(app.getPath('userData'), 'diplomas-digitais', String(diplomaId), nomeArquivo);
+}
+
+/**
+ * Lê o XML VÁLIDO mais recente do artefato, resolvendo o arquivo em 3
+ * camadas (v1.4.8):
+ *  1. caminho absoluto da coluna existindo em disco;
+ *  2. caminho local canônico (a coluna podia ter o CAMINHO DO STORAGE —
+ *     bug v1.4.4-1.4.7: o gerador gravava "1/arquivo.xml" quando o upload
+ *     dava certo, e o fs.readFileSync nunca achava, quebrando ASSINAR e
+ *     REGISTRAR mesmo com o arquivo salvo em disco);
+ *  3. restauração do bucket privado da nuvem para o caminho canônico
+ *     (arquivo gerado em outra máquina / disco mudou).
+ * Nas camadas 2-3 a coluna é AUTO-CORRIGIDA para o caminho local — os
+ * registros antigos se reparam sozinhos no primeiro uso.
+ * Retorna { lido } ou { motivo } com a causa real.
+ */
+async function lerXmlArquivoComMotivo(
+  diplomaId: number,
+  tipo: string
+): Promise<{ lido: { id: number; xml: string } | null; motivo: string }> {
   const db = getDb();
   const row = db
     .prepare(
@@ -726,59 +751,80 @@ function lerXmlArquivo(diplomaId: number, tipo: string): { id: number; xml: stri
        ORDER BY id DESC LIMIT 1`
     )
     .get(diplomaId, tipo) as any;
-  if (!row?.caminho_storage) return null;
-  try {
-    const xml = fs.readFileSync(row.caminho_storage, 'utf8');
-    return { id: row.id, xml };
-  } catch {
-    return null;
+  if (!row) {
+    const ultima = db
+      .prepare(
+        `SELECT id, valido_xsd FROM diploma_arquivos
+         WHERE diploma_id = ? AND tipo_arquivo = ? ORDER BY id DESC LIMIT 1`
+      )
+      .get(diplomaId, tipo) as any;
+    if (!ultima) return { lido: null, motivo: 'Nenhum XML deste artefato foi gerado ainda — clique em "Gerar XML".' };
+    if (!ultima.valido_xsd) {
+      return { lido: null, motivo: 'O último XML gerado está INVÁLIDO contra o XSD — gere novamente e corrija os erros antes de assinar.' };
+    }
+    return { lido: null, motivo: 'XML válido não encontrado' };
   }
+  if (!row.caminho_storage) return { lido: null, motivo: 'Registro do arquivo sem caminho — gere o XML novamente.' };
+
+  const nome = path.basename(row.caminho_storage);
+  const candidatos = [
+    ...(path.isAbsolute(row.caminho_storage) ? [row.caminho_storage] : []),
+    caminhoArtefatoLocal(diplomaId, nome),
+  ];
+  for (const caminho of candidatos) {
+    try {
+      const xml = fs.readFileSync(caminho, 'utf8');
+      if (caminho !== row.caminho_storage) {
+        db.prepare('UPDATE diploma_arquivos SET caminho_storage = ? WHERE id = ?').run(caminho, row.id);
+        logger.info({ arquivoId: row.id, caminho }, 'caminho_storage auto-corrigido para o local canônico');
+      }
+      return { lido: { id: row.id, xml }, motivo: '' };
+    } catch { /* tenta o próximo */ }
+  }
+
+  // 3) restaura do bucket privado para o caminho canônico
+  const destino = caminhoArtefatoLocal(diplomaId, nome);
+  const r = await baixarXmlStorage(diplomaId, nome, destino);
+  if (r.ok) {
+    db.prepare('UPDATE diploma_arquivos SET caminho_storage = ? WHERE id = ?').run(destino, row.id);
+    try {
+      return { lido: { id: row.id, xml: fs.readFileSync(destino, 'utf8') }, motivo: '' };
+    } catch { /* segue para o motivo */ }
+  }
+  return {
+    lido: null,
+    motivo:
+      `O XML válido existe (registro #${row.id}) mas o arquivo não foi encontrado em disco ` +
+      `nem na nuvem (${r.erro ?? 'storage indisponível'}). ` +
+      `Gere o XML novamente nesta máquina — o processo e o histórico não são afetados.`,
+  };
 }
 
-/** Motivo pelo qual o XML do artefato não está disponível para assinar —
- *  distingue: nunca gerado / gerado inválido / arquivo físico sumido. */
-async function diagnosticarXmlAusente(diplomaId: number, tipo: string): Promise<string> {
-  const db = getDb();
-  const ultima = db
-    .prepare(
-      `SELECT id, valido_xsd, caminho_storage FROM diploma_arquivos
-       WHERE diploma_id = ? AND tipo_arquivo = ? ORDER BY id DESC LIMIT 1`
-    )
-    .get(diplomaId, tipo) as any;
-  if (!ultima) return `Nenhum XML deste artefato foi gerado ainda — clique em "Gerar XML" antes de assinar.`;
-  if (!ultima.valido_xsd) {
-    return `O último XML gerado está INVÁLIDO contra o XSD (gere novamente e corrija os erros antes de assinar).`;
-  }
-  // Existe válido, mas o arquivo físico sumiu — tenta restaurar da nuvem
-  const restaurado = await baixarXmlStorage(diplomaId, tipo, ultima.caminho_storage);
-  if (restaurado) {
-    return ''; // restaurado — o chamador deve tentar ler de novo
-  }
-  return (
-    `O XML válido existe (registro #${ultima.id}) mas o ARQUIVO físico não foi encontrado em disco ` +
-    `("${ultima.caminho_storage}") nem na nuvem — provavelmente outra máquina o gerou ou o disco mudou. ` +
-    `Gere o XML novamente nesta máquina (o conteúdo é idêntico; o processo não é afetado).`
-  );
+/** Atalho síncrono-assíncrono: apenas o XML (sem o motivo). */
+async function lerXmlArquivo(diplomaId: number, tipo: string): Promise<{ id: number; xml: string } | null> {
+  return (await lerXmlArquivoComMotivo(diplomaId, tipo)).lido;
 }
 
-/** Baixa o XML do storage da nuvem de volta para o caminho local.
- *  Retorna true se restaurou o arquivo. */
-async function baixarXmlStorage(diplomaId: number, _tipo: string, caminhoLocal: string): Promise<boolean> {
+/** Baixa o XML do bucket privado para o caminho local indicado. */
+async function baixarXmlStorage(
+  diplomaId: number,
+  nomeArquivo: string,
+  destino: string
+): Promise<{ ok: boolean; erro?: string }> {
   try {
     const client = getClient();
-    if (!client) return false;
-    const nome = path.basename(caminhoLocal);
+    if (!client) return { ok: false, erro: 'nuvem não inicializada' };
     const { data, error } = await client.storage
       .from('diplomas-digitais')
-      .download(`${diplomaId}/${nome}`);
-    if (error || !data) return false;
-    fs.mkdirSync(path.dirname(caminhoLocal), { recursive: true });
-    fs.writeFileSync(caminhoLocal, Buffer.from(await data.arrayBuffer()), 'utf8');
-    logger.info({ diplomaId, arquivo: nome }, 'XML restaurado do storage da nuvem');
-    return true;
+      .download(`${diplomaId}/${nomeArquivo}`);
+    if (error || !data) return { ok: false, erro: error?.message ?? 'objeto ausente no bucket' };
+    fs.mkdirSync(path.dirname(destino), { recursive: true });
+    fs.writeFileSync(destino, Buffer.from(await data.arrayBuffer()), 'utf8');
+    logger.info({ diplomaId, arquivo: nomeArquivo }, 'XML restaurado do storage da nuvem');
+    return { ok: true };
   } catch (e: any) {
     logger.warn({ err: e?.message, diplomaId }, 'Restauração do XML do storage falhou');
-    return false;
+    return { ok: false, erro: e?.message ?? String(e) };
   }
 }
 
@@ -891,15 +937,8 @@ function assinarHandler(
     if (!['aguardando_assinatura', 'xml_gerado', 'xml_invalido'].includes(proc.status)) {
       return { ok: false, error: `Status atual "${labelStatus(proc.status)}" não permite assinar (gere/valide o XML antes).` };
     }
-    let lido = lerXmlArquivo(diplomaId, artefato);
-    if (!lido) {
-      // v1.4.7: tenta restaurar da nuvem e explica a causa real em vez
-      // do genérico "gere antes de assinar" (que escondia arquivo sumido
-      // e XML inválido, confundindo o operador).
-      const motivo = await diagnosticarXmlAusente(diplomaId, artefato);
-      if (motivo === '') lido = lerXmlArquivo(diplomaId, artefato);
-      if (!lido) return { ok: false, error: motivo || 'Nenhum XML válido disponível — gere antes de assinar.' };
-    }
+    const { lido, motivo } = await lerXmlArquivoComMotivo(diplomaId, artefato);
+    if (!lido) return { ok: false, error: motivo || 'Nenhum XML válido disponível — gere antes de assinar.' };
     if (contarEsqueletos(lido.xml) === 0) return { ok: false, error: 'Artefato já assinado.' };
 
     const assinatura = db
@@ -1092,7 +1131,9 @@ function registrarHandler(
     if (!registradora) {
       return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: cadastre a IES Registradora (com mantenedora) no Cadastro Institucional.' };
     }
-    const da = lerXmlArquivo(diplomaId, 'documentacao_academica_assinada') ?? lerXmlArquivo(diplomaId, 'documentacao_academica');
+    const da =
+      (await lerXmlArquivo(diplomaId, 'documentacao_academica_assinada')) ??
+      (await lerXmlArquivo(diplomaId, 'documentacao_academica'));
     if (!da) return { ok: false, error: 'Documentação Acadêmica assinada não encontrada.' };
 
     const chaveVdip = `VDip${(snapshot.processo.chave_acesso ?? '').replace(/^Dip/, '')}`;
