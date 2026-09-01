@@ -9,6 +9,7 @@ import {
   normalizarUf,
   normalizarCargaHoraria,
   normalizarNota,
+  derivarDataIngresso,
 } from './normalizadores';
 import { verificarPendenciasDiploma } from './pendencias';
 
@@ -137,6 +138,24 @@ const ALUNO_COMPLETO = {
   naturalidade_uf: 'BA', rg: '1.234.567', rg_uf: 'BA', data_nascimento: '2000-05-10',
   curso: 'ADMINISTRAÇÃO', ano_conclusao: '2024', data_colacao: '20/12/2024',
 };
+
+describe('derivarDataIngresso (regressão v1.4.5 — semestre do formulário)', () => {
+  it('ano_ingresso em formato SEMESTRE "2021.2" deriva AAAA-01-01 (antes: rejeitava e travava a emissão)', () => {
+    expect(derivarDataIngresso({ ano_ingresso: '2021.2', data_vestibular: null })).toBe('2021-01-01');
+    expect(derivarDataIngresso({ ano_ingresso: '2005.1', data_vestibular: null })).toBe('2005-01-01');
+  });
+  it('ano puro "2024" continua derivando', () => {
+    expect(derivarDataIngresso({ ano_ingresso: '2024', data_vestibular: null })).toBe('2024-01-01');
+  });
+  it('data_vestibular tem precedência sobre o ano', () => {
+    expect(derivarDataIngresso({ ano_ingresso: '2021.2', data_vestibular: '15/01/2021' })).toBe('2021-01-15');
+  });
+  it('nada informado → null (não inventa)', () => {
+    expect(derivarDataIngresso({ ano_ingresso: null, data_vestibular: null })).toBeNull();
+    expect(derivarDataIngresso(undefined)).toBeNull();
+    expect(derivarDataIngresso({ ano_ingresso: 'xx', data_vestibular: 'xx' })).toBeNull();
+  });
+});
 
 describe('verificarPendenciasDiploma', () => {
   it('aluno completo com curso/IES completos → ZERO pendências', () => {

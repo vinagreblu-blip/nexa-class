@@ -7,7 +7,7 @@
 // inventam dado): filiação (DA), CH do curso, forma de acesso,
 // titulação de docente, documentação comprobatória.
 import {
-  normalizarData, normalizarSexo, normalizarCargaHoraria,
+  normalizarSexo, normalizarCargaHoraria, derivarDataIngresso,
 } from './normalizadores';
 import { mapearTitulacao, mapearFormaAcesso } from './mapeamento-campos';
 import { encontrarCursoPorNome } from './match-curso';
@@ -113,9 +113,7 @@ export function pendenciasHistorico(s: SnapshotDiploma): PendenciaDiploma[] {
       comoObter: 'Informe a forma de ingresso com uma das opções do Censo (ex.: Vestibular, Enem).',
     });
   }
-  const ingresso =
-    normalizarData(s.aluno?.data_vestibular) ??
-    (s.aluno?.ano_ingresso && /^\d{4}$/.test(s.aluno.ano_ingresso) ? `${s.aluno.ano_ingresso}-01-01` : null);
+  const ingresso = derivarDataIngresso(s.aluno);
   if (!ingresso) {
     p.push({
       campo: 'Data de ingresso', elementoXml: 'HistoricoEscolar.IngressoCurso.Data',

@@ -49,6 +49,23 @@ export function normalizarData(v: string | null | undefined): string | null {
   return null;
 }
 
+/**
+ * Data de ingresso no curso (TData do IngressoCurso). Aceita, em ordem:
+ *  1. data_vestibular em qualquer formato suportado por normalizarData;
+ *  2. ano_ingresso "2024", "2024.1" ou "2024.2" (formato SEMESTRE gravado
+ *     pelo formulário de matrícula — regex antiga /^(\d{4})$/ rejeitava
+ *     "2024.1" e travava a emissão de TODO aluno matriculado) → AAAA-01-01.
+ * Null se nada derivável (nunca inventa).
+ */
+export function derivarDataIngresso(
+  aluno: { data_vestibular?: string | null; ano_ingresso?: string | null } | null | undefined
+): string | null {
+  const direta = normalizarData(aluno?.data_vestibular);
+  if (direta) return direta;
+  const m = /^(\d{4})(?:\.[12])?$/.exec(String(aluno?.ano_ingresso ?? '').trim());
+  return m ? `${m[1]}-01-01` : null;
+}
+
 /** Sexo do cadastro ('M'/'F' livres, 'Masculino'...) → TSexo (M|F). Null se indefinido. */
 export function normalizarSexo(v: string | null | undefined): 'M' | 'F' | null {
   if (!v) return null;

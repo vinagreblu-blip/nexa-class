@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import initSqlJs from 'sql.js';
-import { coletarSnapshot, type AdapterDb } from './coletor';
+import { coletarSnapshot, pendenciasHistorico, type AdapterDb } from './coletor';
 
 // ============================================================
 // REGRESSÃO (v1.4.3): o match de curso do coletor era um SQL com 24
@@ -41,7 +41,7 @@ beforeEach(async () => {
   const SQL = await initSqlJs();
   db = new SQL.Database();
   db.exec(`
-    CREATE TABLE alunos (id INTEGER PRIMARY KEY, nome TEXT, curso TEXT);
+    CREATE TABLE alunos (id INTEGER PRIMARY KEY, nome TEXT, curso TEXT, ano_ingresso TEXT, data_vestibular TEXT);
     CREATE TABLE ies (id INTEGER PRIMARY KEY, nome TEXT, papel TEXT, ativo INTEGER DEFAULT 1);
     CREATE TABLE cursos (id INTEGER PRIMARY KEY, ies_id INTEGER, nome TEXT, ativo INTEGER DEFAULT 1);
     CREATE TABLE historico_disciplinas (id INTEGER PRIMARY KEY, aluno_id INTEGER, periodo TEXT, disciplina TEXT, ordem INTEGER DEFAULT 0);
@@ -92,5 +92,14 @@ describe('coletarSnapshot — match de curso com SQL real (regressão do REPLACE
 
   it('processo inexistente → null', () => {
     expect(coletarSnapshot(wrap(db), 9999)).toBeNull();
+  });
+
+  it('pendências de histórico NÃO exigem data de ingresso quando ano_ingresso é semestre (regressão v1.4.5)', () => {
+    // Formato gravado pelo formulário de matrícula ("2021.2") — a regex
+    // antiga /^(\d{4})$/ rejeitava e reportava "não cadastrado".
+    db.exec('UPDATE alunos SET ano_ingresso = "2021.2", data_vestibular = NULL WHERE id = 10');
+    const s = coletarSnapshot(wrap(db), 100);
+    const pends = pendenciasHistorico(s!);
+    expect(pends.some((p) => p.elementoXml === 'HistoricoEscolar.IngressoCurso.Data')).toBe(false);
   });
 });

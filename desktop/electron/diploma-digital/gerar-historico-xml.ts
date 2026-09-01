@@ -24,7 +24,7 @@ import {
 } from './xml-utils';
 import {
   normalizarCpf, normalizarCnpj, normalizarData, normalizarSexo, normalizarRg, normalizarUf,
-  normalizarCargaHoraria, normalizarNota, dataHoraBrasilia,
+  normalizarCargaHoraria, normalizarNota, dataHoraBrasilia, derivarDataIngresso,
 } from './normalizadores';
 import { mapearTitulacao, mapearFormaAcesso, codigoDisciplinaDerivado } from './mapeamento-campos';
 import type { SnapshotDiploma } from './coletor';
@@ -193,9 +193,7 @@ export function blocoHistoricoEscolar(s: SnapshotDiploma, agora: Date): string |
 
   const chCurso = normalizarCargaHoraria(c.carga_horaria);
   const formaAcesso = mapearFormaAcesso(a.forma_ingresso);
-  const ingresso =
-    normalizarData(a.data_vestibular) ??
-    (a.ano_ingresso && /^\d{4}$/.test(a.ano_ingresso) ? `${a.ano_ingresso}-01-01` : null);
+  const ingresso = derivarDataIngresso(a);
   if (!chCurso || !formaAcesso || !ingresso) return null;
 
   // Emissão em hora local de Brasília (mapeamento oficial: data/hora
