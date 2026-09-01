@@ -7,6 +7,7 @@ import { IPC_CHANNELS } from '../types';
 import type { Aluno, AlunoInput, ApiResult } from '../types';
 import { requerAuth, getSessao } from './auth';
 import { logger } from '../utils/logger';
+import { normalizarData } from '../diploma-digital/normalizadores';
 import { HISTORICO_PADRAO_HELIOROCHA_ADM, HISTORICO_PADRAO_HELIOROCHA_COM_SOCIAL_PP, HISTORICO_PADRAO_HELIOROCHA_ENG_CIVIL, HISTORICO_PADRAO_HELIOROCHA_ENG_PRODUCAO, HISTORICO_PADRAO_HELIOROCHA_ENG_ELETRICA, HISTORICO_PADRAO_HELIOROCHA_FISIOTERAPIA, HISTORICO_PADRAO_HELIOROCHA_SERVICO_SOCIAL, HISTORICO_PADRAO_HELIOROCHA_SISTEMA_INFORMACAO, HISTORICO_PADRAO_HELIOROCHA_TURISMO, HISTORICO_PADRAO_FACIIP_ADM, HISTORICO_PADRAO_FACIIP_ADM_HOSPITALAR, HISTORICO_PADRAO_FACIIP_COM_SOCIAL_RP, HISTORICO_PADRAO_FACIIP_CONTABEIS, HISTORICO_PADRAO_FACIIP_ENG_PRODUCAO_MEC, HISTORICO_PADRAO_FACIIP_JORNALISMO, HISTORICO_PADRAO_FACIIP_PEDAGOGIA, HISTORICO_PADRAO_FACIIP_TURISMO_HOTELARIA, HISTORICO_PADRAO_FATECE_PEDAGOGIA, HISTORICO_PADRAO_FATECE_TEOLOGIA } from '../historico-template';
 
 // Gera sequência de semestres a partir de um período inicial (ex: "2021.1" → ["2021.1","2021.2","2022.1",...])
@@ -114,6 +115,14 @@ function validarInput(input: AlunoInput): string | null {
   if (!input.cpf?.trim()) return 'CPF é obrigatório';
   if (!input.rg?.trim()) return 'RG é obrigatório';
   if (!input.ano_ingresso?.trim()) return 'Ano de ingresso é obrigatório (necessário para gerar a matrícula)';
+  // Data do vestibular obrigatória (v1.4.6): alimenta IngressoCurso.Data do
+  // Diploma Digital com a data REAL (antes derivava 01/01 do semestre).
+  if (!input.data_vestibular?.trim()) {
+    return 'Data do vestibular é obrigatória (usada no Diploma Digital)';
+  }
+  if (!normalizarData(input.data_vestibular)) {
+    return 'Data do vestibular em formato não reconhecido (use AAAA-MM-DD).';
+  }
   if (input.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
     return 'E-mail inválido';
   }

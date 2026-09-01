@@ -562,6 +562,27 @@ export function Alunos() {
               </select>
             </div>
             <div className="form-row">
+              <label>Data do Vestibular *</label>
+              <input
+                type="date"
+                value={form.data_vestibular}
+                onChange={(e) => {
+                  const data = e.target.value;
+                  // Semestre vazio → sugere a partir da data (1º sem. até jun)
+                  const semestreSugerido = (() => {
+                    const m = /^(\d{4})-(\d{2})-/.exec(data);
+                    if (!m) return '';
+                    return `${m[1]}.${Number(m[2]) <= 6 ? '1' : '2'}`;
+                  })();
+                  setForm((f) => ({
+                    ...f,
+                    data_vestibular: data,
+                    ano_ingresso: !f.ano_ingresso && semestreSugerido ? semestreSugerido : f.ano_ingresso,
+                  }));
+                }}
+              />
+            </div>
+            <div className="form-row">
               <label>Data de Formação</label>
               <input
                 type="date"
