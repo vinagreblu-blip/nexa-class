@@ -331,7 +331,7 @@ describe('cenário multiusuário: Aluno João e Aluno Maria', () => {
   const pushDe = (de: MiniAdapter): Array<Record<string, any>> =>
     linhasParaPush(de, 'alunos', lerWatermarkPush(de, 'alunos')).map(linhaParaRemoto);
 
-  it('cadastro, edição, segundo cadastro e exclusão propagam entre máquinas', () => {
+  it('cadastro, edição, segundo cadastro e exclusão propagam entre máquinas', async () => {
     // --- U1 cadastra "Aluno João" na máquina A ---
     inserirAlunoLocal(dbA, 1, 'Aluno João', '2026joao');
 
@@ -343,6 +343,12 @@ describe('cenário multiusuário: Aluno João e Aluno Maria', () => {
     // U2..U5 veem "Aluno João" sem atualizar nada manualmente
     const emB = dbB.prepare("SELECT nome FROM alunos WHERE matricula = '2026joao'").get() as any;
     expect(emB.nome).toBe('Aluno João');
+
+    // LWW exige updated_at ESTRITAMENTE mais novo — no runner do CI o
+    // INSERT e a edição abaixo podem cair no mesmo milissegundo
+    // (timestamps têm granularidade de ms) e a edição seria suprimida.
+    // Separação de 5ms simula a latência de rede real entre máquinas.
+    await new Promise((r) => setTimeout(r, 5));
 
     // --- U3 (máquina B) edita "Aluno João" ---
     dbB.prepare("UPDATE alunos SET nome = 'Aluno João Silva' WHERE id = 1").run();
