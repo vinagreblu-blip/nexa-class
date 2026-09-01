@@ -88,7 +88,7 @@ export interface ResultadoValidacaoArtefato {
   esqueletos: number;
   pendencias: string[];
   hashSha256: string;
-  veredito: 'APROVADO' | 'REJEITADO';
+  veredito: 'APROVADO' | 'AGUARDANDO_REGISTRADORA' | 'REJEITADO';
 }
 
 function forge() {
@@ -434,7 +434,13 @@ export async function validarArtefatoDiploma(
       }
       assinaturas.push(res);
     }
-    if (esqueletos > 0) pendencias.push(`${esqueletos} assinatura(s) da IES Registradora aguardando (competência dela)`);
+    if (esqueletos > 0) {
+      pendencias.push(
+        assinaturas.length === 0
+          ? `${esqueletos} posição(ões) de assinatura AINDA NÃO assinadas — use "Assinar c/ Certificado Digital" antes de enviar à registradora`
+          : `${esqueletos} assinatura(s) da IES Registradora aguardando (competência dela — não bloqueia a emissora)`
+      );
+    }
   }
 
   if (assinaturas.length === 0 && esqueletos === 0) pendencias.push('Nenhuma assinatura encontrada no documento');
@@ -464,8 +470,15 @@ export async function validarArtefatoDiploma(
     }
   }
 
-  const veredito: 'APROVADO' | 'REJEITADO' =
-    bemFormado && xsd.ok && rejeitadas.length === 0 && assinaturas.length > 0 ? 'APROVADO' : 'REJEITADO';
+  // Veredito de 3 estados (v1.4.7): documento íntegro e assinado pela
+  // emissora, restando SÓ as assinaturas da registradora = estado NORMAL
+  // do meio do fluxo — antes vinha "REJEITADO" e assustava o operador.
+  const veredito: 'APROVADO' | 'AGUARDANDO_REGISTRADORA' | 'REJEITADO' =
+    bemFormado && xsd.ok && rejeitadas.length === 0 && assinaturas.length > 0
+      ? esqueletos > 0
+        ? 'AGUARDANDO_REGISTRADORA'
+        : 'APROVADO'
+      : 'REJEITADO';
 
   return {
     versaoPadrao: '1.05',

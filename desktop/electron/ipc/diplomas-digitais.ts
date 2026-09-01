@@ -714,7 +714,9 @@ function gerarXmlHandler(
 
 // ---------- M4: ASSINAR / REGISTRAR / PUBLICAR / ANULAR ----------
 
-/** Lê o XML mais recente do artefato (arquivo local do processo). */
+/** Lê o XML mais recente do artefato (arquivo local do processo).
+ *  Diagnóstico específico (v1.4.7): a mensagem genérica "gere antes de
+ *  assinar" escondia as causas reais e confundia o operador. */
 function lerXmlArquivo(diplomaId: number, tipo: string): { id: number; xml: string } | null {
   const db = getDb();
   const row = db
@@ -730,6 +732,53 @@ function lerXmlArquivo(diplomaId: number, tipo: string): { id: number; xml: stri
     return { id: row.id, xml };
   } catch {
     return null;
+  }
+}
+
+/** Motivo pelo qual o XML do artefato não está disponível para assinar —
+ *  distingue: nunca gerado / gerado inválido / arquivo físico sumido. */
+async function diagnosticarXmlAusente(diplomaId: number, tipo: string): Promise<string> {
+  const db = getDb();
+  const ultima = db
+    .prepare(
+      `SELECT id, valido_xsd, caminho_storage FROM diploma_arquivos
+       WHERE diploma_id = ? AND tipo_arquivo = ? ORDER BY id DESC LIMIT 1`
+    )
+    .get(diplomaId, tipo) as any;
+  if (!ultima) return `Nenhum XML deste artefato foi gerado ainda — clique em "Gerar XML" antes de assinar.`;
+  if (!ultima.valido_xsd) {
+    return `O último XML gerado está INVÁLIDO contra o XSD (gere novamente e corrija os erros antes de assinar).`;
+  }
+  // Existe válido, mas o arquivo físico sumiu — tenta restaurar da nuvem
+  const restaurado = await baixarXmlStorage(diplomaId, tipo, ultima.caminho_storage);
+  if (restaurado) {
+    return ''; // restaurado — o chamador deve tentar ler de novo
+  }
+  return (
+    `O XML válido existe (registro #${ultima.id}) mas o ARQUIVO físico não foi encontrado em disco ` +
+    `("${ultima.caminho_storage}") nem na nuvem — provavelmente outra máquina o gerou ou o disco mudou. ` +
+    `Gere o XML novamente nesta máquina (o conteúdo é idêntico; o processo não é afetado).`
+  );
+}
+
+/** Baixa o XML do storage da nuvem de volta para o caminho local.
+ *  Retorna true se restaurou o arquivo. */
+async function baixarXmlStorage(diplomaId: number, _tipo: string, caminhoLocal: string): Promise<boolean> {
+  try {
+    const client = getClient();
+    if (!client) return false;
+    const nome = path.basename(caminhoLocal);
+    const { data, error } = await client.storage
+      .from('diplomas-digitais')
+      .download(`${diplomaId}/${nome}`);
+    if (error || !data) return false;
+    fs.mkdirSync(path.dirname(caminhoLocal), { recursive: true });
+    fs.writeFileSync(caminhoLocal, Buffer.from(await data.arrayBuffer()), 'utf8');
+    logger.info({ diplomaId, arquivo: nome }, 'XML restaurado do storage da nuvem');
+    return true;
+  } catch (e: any) {
+    logger.warn({ err: e?.message, diplomaId }, 'Restauração do XML do storage falhou');
+    return false;
   }
 }
 
@@ -842,8 +891,15 @@ function assinarHandler(
     if (!['aguardando_assinatura', 'xml_gerado', 'xml_invalido'].includes(proc.status)) {
       return { ok: false, error: `Status atual "${labelStatus(proc.status)}" não permite assinar (gere/valide o XML antes).` };
     }
-    const lido = lerXmlArquivo(diplomaId, artefato);
-    if (!lido) return { ok: false, error: 'Nenhum XML válido gerado para este artefato — gere antes de assinar.' };
+    let lido = lerXmlArquivo(diplomaId, artefato);
+    if (!lido) {
+      // v1.4.7: tenta restaurar da nuvem e explica a causa real em vez
+      // do genérico "gere antes de assinar" (que escondia arquivo sumido
+      // e XML inválido, confundindo o operador).
+      const motivo = await diagnosticarXmlAusente(diplomaId, artefato);
+      if (motivo === '') lido = lerXmlArquivo(diplomaId, artefato);
+      if (!lido) return { ok: false, error: motivo || 'Nenhum XML válido disponível — gere antes de assinar.' };
+    }
     if (contarEsqueletos(lido.xml) === 0) return { ok: false, error: 'Artefato já assinado.' };
 
     const assinatura = db

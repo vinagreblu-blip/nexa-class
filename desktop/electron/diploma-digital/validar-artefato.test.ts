@@ -222,6 +222,22 @@ describe('Validar Diploma Digital (consolidado)', () => {
     }
   }, 60000);
 
+  it('DA NÃO assinada → REJEITADO com orientação de ASSINAR (caso real: validação antes de assinar)', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-val-'));
+    const pdf = path.join(tmp, 'rg.pdf');
+    fs.writeFileSync(pdf, '%PDF-1.4 fixture');
+    try {
+      const da = gerarDocumentacaoAcademicaXml(snapshot, [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }])!;
+      const r = await validarArtefatoDiploma(da, 'documentacaoAcademica', { exigirCarimbo: false });
+      // v1.4.7: antes a pendência falava só "competência da registradora"
+      // e o operador achava que o documento estava errado.
+      expect(r.veredito).toBe('REJEITADO');
+      expect(r.pendencias.join(' ').includes('Assinar')).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }, 60000);
+
   it('erros XSD estruturados (elemento/linha) — não só "XML inválido"', async () => {
     const xml = '<?xml version="1.0" encoding="UTF-8"?><Diploma xmlns="https://portal.mec.gov.br/diplomadigital/arquivos-em-xsd" xmlns:ds="http://www.w3.org/2000/09/xmldsig#"/>';
     const r = await validarArtefatoDiploma(xml, 'diploma', { exigirCarimbo: false });

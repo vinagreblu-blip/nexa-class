@@ -713,6 +713,15 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
         <button className="btn-accent btn-sm" disabled={gerando !== null} onClick={() => void gerarXml('documentacao_academica')}>
           {gerando === 'historico_escolar' ? 'Gerando e validando…' : 'Gerar XML — Documentação Acadêmica (Registro)'}
         </button>
+        {!['registrado', 'publicado'].includes(dados.status) && (
+          <button
+            className="btn-ghost btn-sm"
+            disabled
+            title="O Diploma final (XML com DadosRegistro) só é montado após o retorno da IES Registradora (ex.: UCSAL): assine a DA → envie → cole o retorno em 'Registrar'. Nunca é simulado."
+          >
+            Diploma final (XML) — desbloqueia após o registro da UCSAL
+          </button>
+        )}
         <button className="btn-ghost btn-sm" onClick={() => void verPendencias()}>
           Ver pendências
         </button>
@@ -1685,15 +1694,23 @@ function LinhaDiag({ rotulo, ok, detalhe, neutro }: { rotulo: string; ok?: boole
 }
 
 function ModalDiagnostico({ resultado, onClose }: { resultado: any; onClose: () => void }) {
-  const aprovado = resultado.veredito === 'APROVADO';
+  const v = String(resultado.veredito ?? '');
+  const corVeredito = v === 'APROVADO' ? '#16A34A' : v === 'AGUARDANDO_REGISTRADORA' ? '#D97706' : '#DC2626';
+  const rotuloVeredito = v === 'AGUARDANDO_REGISTRADORA' ? 'AGUARDANDO REGISTRADORA' : v === 'APROVADO' ? 'APROVADO' : 'REJEITADO';
   return (
-    <Modal title="Validar Diploma Digital � Diagn�stico" onClose={onClose} width={760}>
+    <Modal title="Validar Diploma Digital — Diagnóstico" onClose={onClose} width={760}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Veredito final</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: aprovado ? '#16A34A' : '#DC2626' }}>
-            {aprovado ? 'APROVADO' : 'REJEITADO'}
+          <div style={{ fontSize: 22, fontWeight: 800, color: corVeredito }}>
+            {rotuloVeredito}
           </div>
+          {v === 'AGUARDANDO_REGISTRADORA' && (
+            <div style={{ fontSize: 12, color: '#D97706', marginTop: 4, maxWidth: 420 }}>
+              Documento íntegro e assinado pela emissora — as assinaturas restantes são da IES Registradora
+              (ex.: UCSAL). É o estado esperado antes do registro.
+            </div>
+          )}
         </div>
         <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
           <div>Padr�o MEC: <strong>{resultado.versaoPadrao}</strong> (IN Sesu 1/2020)</div>
