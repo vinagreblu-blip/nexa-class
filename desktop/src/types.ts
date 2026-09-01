@@ -47,6 +47,10 @@ export interface Aluno {
   ano_ingresso: string | null;
   ano_conclusao: string | null;
   data_nascimento: string | null;
+  mae_nome: string | null;
+  mae_sexo: string | null;
+  pai_nome: string | null;
+  pai_sexo: string | null;
   created_by_nome?: string | null;
   created_by_codigo?: string | null;
   created_at: string;
@@ -74,6 +78,10 @@ export interface AlunoInput {
   ano_ingresso?: string;
   ano_conclusao?: string;
   data_nascimento?: string;
+  mae_nome?: string;
+  mae_sexo?: string;
+  pai_nome?: string;
+  pai_sexo?: string;
   origem?: string;
 }
 

@@ -357,6 +357,10 @@ function ModalPendencias({
     naturalidadeUf: '',
     naturalidadeEstrangeira: '',
     dataColacao: '',
+    maeNome: '',
+    maeSexo: '',
+    paiNome: '',
+    paiSexo: '',
   });
 
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -375,6 +379,10 @@ function ModalPendencias({
     if (form.naturalidadeUf) input.naturalidadeUf = form.naturalidadeUf;
     if (form.naturalidadeEstrangeira) input.naturalidadeEstrangeira = form.naturalidadeEstrangeira;
     if (form.dataColacao) input.dataColacao = form.dataColacao;
+    if (form.maeNome) input.maeNome = form.maeNome;
+    if (form.maeSexo) input.maeSexo = form.maeSexo;
+    if (form.paiNome) input.paiNome = form.paiNome;
+    if (form.paiSexo) input.paiSexo = form.paiSexo;
     const r = await api.diplomasDigitais.completarAluno(input);
     setSalvando(false);
     if (!r.ok) {
@@ -387,6 +395,7 @@ function ModalPendencias({
     setForm({
       cpf: '', sexo: '', nacionalidade: '', rg: '', rgUf: '', dataNascimento: '',
       naturalidadeCodigoIbge: '', naturalidadeUf: '', naturalidadeEstrangeira: '', dataColacao: '',
+      maeNome: '', maeSexo: '', paiNome: '', paiSexo: '',
     });
     if (novas.length === 0) onResolvido();
     else setMsg('Dados salvos. Pendências restantes abaixo.');
@@ -464,6 +473,30 @@ function ModalPendencias({
         <div>
           <label style={labelStyle}>Data de colação de grau</label>
           <input value={form.dataColacao} onChange={(e) => set('dataColacao', e.target.value)} placeholder="DD/MM/AAAA" />
+        </div>
+        <div>
+          <label style={labelStyle}>Nome da mãe (filiação)</label>
+          <input value={form.maeNome} onChange={(e) => set('maeNome', e.target.value)} placeholder="Exigência da DA" />
+        </div>
+        <div>
+          <label style={labelStyle}>Sexo da mãe</label>
+          <select value={form.maeSexo} onChange={(e) => set('maeSexo', e.target.value)}>
+            <option value="">—</option>
+            <option value="F">F</option>
+            <option value="M">M</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Nome do pai (filiação)</label>
+          <input value={form.paiNome} onChange={(e) => set('paiNome', e.target.value)} placeholder="Exigência da DA" />
+        </div>
+        <div>
+          <label style={labelStyle}>Sexo do pai</label>
+          <select value={form.paiSexo} onChange={(e) => set('paiSexo', e.target.value)}>
+            <option value="">—</option>
+            <option value="M">M</option>
+            <option value="F">F</option>
+          </select>
         </div>
       </div>
       {msg && <div className="alert alert-error" style={{ marginTop: 12 }}>{msg}</div>}

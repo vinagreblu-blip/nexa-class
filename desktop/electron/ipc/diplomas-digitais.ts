@@ -17,7 +17,7 @@ import type { ApiResult } from '../types';
 import { getSessao, requerAuth, requerAdmin } from './auth';
 import { verificarPendenciasDiploma, type PendenciaDiploma } from '../diploma-digital/pendencias';
 import { encontrarCursoPorNome } from '../diploma-digital/match-curso';
-import { normalizarCnpj, normalizarCep, normalizarUf, normalizarCpf, normalizarData } from '../diploma-digital/normalizadores';
+import { normalizarCnpj, normalizarCep, normalizarUf, normalizarCpf, normalizarData, normalizarSexo } from '../diploma-digital/normalizadores';
 import { logger } from '../utils/logger';
 import { coletarSnapshot, pendenciasHistorico, pendenciasDA } from '../diploma-digital/coletor';
 import { gerarHistoricoXml } from '../diploma-digital/gerar-historico-xml';
@@ -227,6 +227,11 @@ function completarAluno(
     naturalidadeUf?: string;
     naturalidadeEstrangeira?: string;
     dataColacao?: string;
+    /** Filiação (XSD da DA exige ≥1 genitor com nome+sexo). */
+    maeNome?: string;
+    maeSexo?: string;
+    paiNome?: string;
+    paiSexo?: string;
   }
 ): ApiResult<true> {
   const db = getDb();
@@ -253,6 +258,15 @@ function completarAluno(
   if (input.dataNascimento !== undefined && input.dataNascimento && !normalizarData(input.dataNascimento)) {
     return { ok: false, error: 'Data de nascimento em formato não reconhecido (use DD/MM/AAAA).' };
   }
+  if (input.maeSexo && !normalizarSexo(input.maeSexo)) {
+    return { ok: false, error: 'Sexo da mãe deve ser M ou F.' };
+  }
+  if (input.paiSexo && !normalizarSexo(input.paiSexo)) {
+    return { ok: false, error: 'Sexo do pai deve ser M ou F.' };
+  }
+  if ((input.maeSexo && !input.maeNome?.trim()) || (input.paiSexo && !input.paiNome?.trim())) {
+    return { ok: false, error: 'Informe o nome junto com o sexo do genitor.' };
+  }
   add('cpf', input.cpf);
   add('sexo', input.sexo);
   add('nacionalidade', input.nacionalidade);
@@ -263,6 +277,16 @@ function completarAluno(
   add('naturalidade_uf', input.naturalidadeUf);
   add('naturalidade_estrangeira', input.naturalidadeEstrangeira);
   add('data_colacao', input.dataColacao);
+  add('mae_nome', input.maeNome);
+  if (input.maeSexo !== undefined) {
+    sets.push('mae_sexo = ?');
+    args.push(input.maeSexo.trim() ? normalizarSexo(input.maeSexo) : null);
+  }
+  add('pai_nome', input.paiNome);
+  if (input.paiSexo !== undefined) {
+    sets.push('pai_sexo = ?');
+    args.push(input.paiSexo.trim() ? normalizarSexo(input.paiSexo) : null);
+  }
   if (sets.length === 0) return { ok: false, error: 'Nada para atualizar' };
   db.prepare(`UPDATE alunos SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(...args, input.alunoId);
   auditar(null, 'completar_dados_aluno', 'sucesso', { alunoId: input.alunoId, campos: sets });

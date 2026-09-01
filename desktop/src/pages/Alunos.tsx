@@ -93,6 +93,10 @@ const VAZIO: AlunoInput = {
   ano_ingresso: '',
   ano_conclusao: '',
   data_nascimento: '',
+  mae_nome: '',
+  mae_sexo: '',
+  pai_nome: '',
+  pai_sexo: '',
 };
 
 function gerarMatriculaCliente(rg: string, anoIngresso: string): string {
@@ -207,6 +211,10 @@ export function Alunos() {
       ano_ingresso: a.ano_ingresso ?? '',
       ano_conclusao: a.ano_conclusao ?? '',
       data_nascimento: a.data_nascimento ?? '',
+      mae_nome: a.mae_nome ?? '',
+      mae_sexo: a.mae_sexo ?? '',
+      pai_nome: a.pai_nome ?? '',
+      pai_sexo: a.pai_sexo ?? '',
     });
     setErro(null);
     setMatriculaEditada(true);
@@ -578,6 +586,44 @@ export function Alunos() {
                 <option value="">Selecione…</option>
                 <option value="ENEM">ENEM</option>
                 <option value="Vestibular">Vestibular</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label>Nome da Mãe</label>
+              <input
+                value={form.mae_nome}
+                onChange={(e) => setForm({ ...form, mae_nome: e.target.value })}
+                placeholder="Filiação — exigida no Diploma Digital"
+              />
+            </div>
+            <div className="form-row">
+              <label>Sexo (M/F)</label>
+              <select
+                value={form.mae_sexo}
+                onChange={(e) => setForm({ ...form, mae_sexo: e.target.value })}
+              >
+                <option value="">—</option>
+                <option value="F">F</option>
+                <option value="M">M</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label>Nome do Pai</label>
+              <input
+                value={form.pai_nome}
+                onChange={(e) => setForm({ ...form, pai_nome: e.target.value })}
+                placeholder="Filiação — exigida no Diploma Digital"
+              />
+            </div>
+            <div className="form-row">
+              <label>Sexo (M/F)</label>
+              <select
+                value={form.pai_sexo}
+                onChange={(e) => setForm({ ...form, pai_sexo: e.target.value })}
+              >
+                <option value="">—</option>
+                <option value="M">M</option>
+                <option value="F">F</option>
               </select>
             </div>
           </div>

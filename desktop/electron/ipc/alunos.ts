@@ -121,7 +121,7 @@ function validarInput(input: AlunoInput): string | null {
 }
 
 const COLS_INSERT =
-  '(matricula, nome, cpf, rg, nacionalidade, naturalidade, cidade, sexo, orgao_emissor, turno, forma_ingresso, data_vestibular, data_colacao, email, telefone, curso, faculdade, ano_ingresso, ano_conclusao, data_nascimento, created_by, origem)';
+  '(matricula, nome, cpf, rg, nacionalidade, naturalidade, cidade, sexo, orgao_emissor, turno, forma_ingresso, data_vestibular, data_colacao, email, telefone, curso, faculdade, ano_ingresso, ano_conclusao, data_nascimento, mae_nome, mae_sexo, pai_nome, pai_sexo, created_by, origem)';
 
 function valoresInsert(input: AlunoInput, matricula: string): any[] {
   return [
@@ -145,6 +145,10 @@ function valoresInsert(input: AlunoInput, matricula: string): any[] {
     input.ano_ingresso?.trim() || null,
     input.ano_conclusao?.trim() || null,
     input.data_nascimento?.trim() || null,
+    input.mae_nome?.trim() || null,
+    input.mae_sexo?.trim() || null,
+    input.pai_nome?.trim() || null,
+    input.pai_sexo?.trim() || null,
   ];
 }
 
@@ -153,7 +157,7 @@ function criar(_event: IpcMainInvokeEvent, input: AlunoInput): ApiResult<Aluno> 
   if (erro) return { ok: false, error: erro };
 
   const db = getDb();
-  const placeholders = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  const placeholders = '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
 
   for (let tentativa = 0; tentativa < 12; tentativa++) {
@@ -243,6 +247,7 @@ function atualizar(
              cidade = ?, sexo = ?, orgao_emissor = ?, turno = ?, forma_ingresso = ?,
              data_vestibular = ?, data_colacao = ?, email = ?, telefone = ?, curso = ?,
              faculdade = ?, ano_ingresso = ?, ano_conclusao = ?, data_nascimento = ?,
+             mae_nome = ?, mae_sexo = ?, pai_nome = ?, pai_sexo = ?,
              updated_at = datetime('now')
          WHERE id = ?`
       )

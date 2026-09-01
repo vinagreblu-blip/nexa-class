@@ -71,6 +71,12 @@ export interface AlunoInput {
   ano_ingresso?: string;
   ano_conclusao?: string;
   data_nascimento?: string;
+  /** Filiação — exigida pelo XSD da Documentação Acadêmica (≥1 genitor
+   *  com nome e sexo) na emissão do Diploma Digital. */
+  mae_nome?: string;
+  mae_sexo?: string;
+  pai_nome?: string;
+  pai_sexo?: string;
   origem?: string;
 }
 
