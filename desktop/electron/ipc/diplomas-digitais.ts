@@ -961,7 +961,7 @@ function assinarHandler(
     // assinatura (a da raiz cobre o documento com o carimbo da interna).
     // Sem TSA configurado ou com falha, segue sem carimbo com AVISO
     // EXPLÍCITO (nunca fabricado).
-    const { obterTsaConfig, obterConfigBryHub } = await import('./tsa');
+    const { obterTsaConfig, obterConfigBryHub, diagnosticoCarimbo } = await import('./tsa');
     const { obterPoliticaAssinatura } = await import('./politica');
     const { carimbarDigest } = await import('../diploma-digital/tsa-cliente');
     const cfgTsa = obterTsaConfig(); // modo rfc3161 (BASIC/RFC 3161 direto)
@@ -980,7 +980,9 @@ function assinarHandler(
         }
       : undefined;
     if (!cfgTsa && !cfgBryHub) {
-      avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES) — a política do Diploma Digital exige carimbo (XAdES-T): configure o TSA da IES em Assinatura Digital → Carimbo do Tempo.';
+      // v1.4.10: motivo ESPECÍFICO (config BRy incompleta, TSA sem URL,
+      // nada salvo) em vez do genérico "configure o TSA".
+      avisoCarimbo = diagnosticoCarimbo() ?? 'Assinado SEM carimbo do tempo (XAdES-BES) — configure o carimbo em Assinatura Digital → Carimbo do Tempo.';
     }
 
     const ehA3 = assinatura.certificado_tipo === 'A3' && !!assinatura.certificado_a3_thumbprint;

@@ -90,6 +90,31 @@ export function obterConfigBryHub(): ConfigBryHub | null {
   };
 }
 
+/** Diagnóstico ESPECÍFICO do carimbo ausente (v1.4.10): distingue
+ *  "nada configurado" de "modo BRy HUB salvo incompleto" — antes a
+ *  mensagem genérica escondia um Client Secret faltando e o operador
+ *  não sabia onde mexer. Retorna null quando há carimbo válido. */
+export function diagnosticoCarimbo(): string | null {
+  const cfg = lerConfigCompleta();
+  if (!cfg) {
+    return 'Assinado SEM carimbo do tempo (XAdES-BES) — a política do Diploma Digital exige carimbo (XAdES-T): configure o modo (TSA RFC 3161 ou BRy HUB) em Assinatura Digital → Carimbo do Tempo e SALVE.';
+  }
+  if (cfg.modo === 'bry_hub') {
+    if (!cfg.clientId?.trim()) {
+      return 'Carimbo BRy HUB INCOMPLETO: Client ID ausente — complete em Assinatura Digital → Carimbo do Tempo (cartão BRy HUB) e clique em "Salvar Carimbo".';
+    }
+    if (!cfg.clientSecret?.trim()) {
+      return 'Carimbo BRy HUB INCOMPLETO: Client Secret ausente — cole o secret (BRy Cloud → Aplicações → Emitir client_secret) em Assinatura Digital → Carimbo do Tempo e clique em "Salvar Carimbo".';
+    }
+    return null; // completo — obterConfigBryHub devolveria config
+  }
+  // modo rfc3161
+  if (!cfg.url?.trim()) {
+    return 'Carimbo TSA INCOMPLETO: URL ausente — preencha em Assinatura Digital → Carimbo do Tempo e clique em "Salvar Carimbo" (ou troque para o cartão BRy HUB).';
+  }
+  return null;
+}
+
 function tsaObter(_event: IpcMainInvokeEvent): ApiResult<TsaConfigVisao | null> {
   const cfg = lerConfigCompleta();
   if (!cfg) return { ok: true, data: null };

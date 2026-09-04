@@ -526,6 +526,31 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
   const { usuario } = useAuth();
 
   const assinar = async (artefato: 'historico_escolar' | 'documentacao_academica', senhaPfx?: string) => {
+    // v1.4.10: pré-check do carimbo ANTES de assinar — sem carimbo
+    // configurado (ou BRy HUB incompleto), pergunta antes de produzir
+    // um XAdES-BES que precisaria ser refeito.
+    const t = await api.assinatura.tsaObter();
+    const cfg = t.ok ? t.data : null;
+    const semCarimbo =
+      !cfg ||
+      (cfg.modo === 'bry_hub' ? !cfg.clientId || !cfg.temClientSecret : !cfg.url);
+    if (semCarimbo) {
+      const detalhe = !cfg
+        ? 'nenhum modo salvo'
+        : cfg.modo === 'bry_hub'
+          ? !cfg.clientId
+            ? 'BRy HUB sem Client ID'
+            : 'BRy HUB sem Client Secret'
+          : 'TSA RFC 3161 sem URL';
+      const prosseguir = window.confirm(
+        `ATENÇÃO: carimbo do tempo NÃO configurado (${detalhe}).\n\n` +
+          'A assinatura sairá como XAdES-BES (SEM carimbo) — a política do Diploma Digital (IN Sesu 1/2020) ' +
+          'exige XAdES-T, e a DA pode ser recusada pela IES Registradora.\n\n' +
+          'Recomendado: Cancelar, configurar em Assinatura Digital → Carimbo do Tempo e salvar.\n\n' +
+          'OK = assinar mesmo assim (XAdES-BES).'
+      );
+      if (!prosseguir) return;
+    }
     setGerando(`assinar-${artefato}`);
     setMsg(null);
     const r = await api.diplomasDigitais.assinar(id, artefato, senhaPfx);
