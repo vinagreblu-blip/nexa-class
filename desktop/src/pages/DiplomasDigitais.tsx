@@ -1124,11 +1124,19 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
       return;
     }
     setSalvando(true);
-    const reconhecimentoEmecJson = reconhecimentoEmec.numeroProcesso && reconhecimentoEmec.dataCadastro
-      ? JSON.stringify(reconhecimentoEmec)
+    // v1.4.11: trim nos campos do processo e-MEC — espaço sobrante no
+    // tipoProcesso invalidava o XSD (padrão TString do MEC).
+    const emecTrim = {
+      numeroProcesso: reconhecimentoEmec.numeroProcesso.trim(),
+      tipoProcesso: reconhecimentoEmec.tipoProcesso.trim(),
+      dataCadastro: reconhecimentoEmec.dataCadastro.trim(),
+      dataProtocolo: reconhecimentoEmec.dataProtocolo.trim(),
+    };
+    const reconhecimentoEmecJson = emecTrim.numeroProcesso && emecTrim.dataCadastro
+      ? JSON.stringify(emecTrim)
       : undefined;
-    const habilitacaoJson = habilitacao.nome
-      ? JSON.stringify([{ nomeHabilitacao: habilitacao.nome, dataHabilitacao: habilitacao.data }])
+    const habilitacaoJson = habilitacao.nome.trim()
+      ? JSON.stringify([{ nomeHabilitacao: habilitacao.nome.trim(), dataHabilitacao: habilitacao.data.trim() }])
       : undefined;
     const r = await api.diplomasDigitais.cursoGraduacaoSalvar({
       id: curso.id,

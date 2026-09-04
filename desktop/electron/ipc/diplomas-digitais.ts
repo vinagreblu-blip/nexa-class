@@ -478,6 +478,36 @@ function cursoGraduacaoSalvar(
       error: `Já existe o curso "${duplicado.nome}" (id ${duplicado.id}) nesta IES — edite o existente em vez de cadastrar novamente.`,
     };
   }
+  // v1.4.11: JSONs estruturados ganham trim dos campos internos — valores
+  // digitados com espaço sobrante (ex.: tipoProcesso "RECONHECIMENTO DE
+  // CURSO ") invalidam o XSD do MEC (padrão TString proíbe espaço nas
+  // pontas). Defesa no armazenamento (o gerador também trima via el()).
+  const trimCamposJson = (json?: string): string | null => {
+    const t = json?.trim();
+    if (!t) return null;
+    try {
+      const obj = JSON.parse(t);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+        for (const k of Object.keys(obj)) {
+          if (typeof obj[k] === 'string') obj[k] = obj[k].trim();
+        }
+        return JSON.stringify(obj);
+      }
+      if (Array.isArray(obj)) {
+        return JSON.stringify(
+          obj.map((item) => {
+            if (item && typeof item === 'object') {
+              for (const k of Object.keys(item)) {
+                if (typeof item[k] === 'string') item[k] = item[k].trim();
+              }
+            }
+            return item;
+          })
+        );
+      }
+    } catch { /* JSON inválido persiste como veio — UI valida */ }
+    return t;
+  };
   const vals = [
     input.iesId,
     input.nome.trim(),
@@ -487,12 +517,12 @@ function cursoGraduacaoSalvar(
     input.outroTitulo?.trim() || null,
     input.grauConferido?.trim() || null,
     input.cargaHoraria?.trim() || null,
-    input.enderecoJson?.trim() || null,
-    input.autorizacaoJson?.trim() || null,
-    input.reconhecimentoJson?.trim() || null,
-    input.reconhecimentoEmecJson?.trim() || null,
-    input.habilitacaoJson?.trim() || null,
-    input.renovacaoReconhecimentoJson?.trim() || null,
+    trimCamposJson(input.enderecoJson),
+    trimCamposJson(input.autorizacaoJson),
+    trimCamposJson(input.reconhecimentoJson),
+    trimCamposJson(input.reconhecimentoEmecJson),
+    trimCamposJson(input.habilitacaoJson),
+    trimCamposJson(input.renovacaoReconhecimentoJson),
   ];
   if (input.id) {
     db.prepare(

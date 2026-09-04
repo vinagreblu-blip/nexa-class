@@ -37,9 +37,12 @@ export function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** Elemento simples: <tag>valor-escapado</tag> (sem filho). */
+/** Elemento simples: <tag>valor-escapado</tag> (sem filho).
+ *  v1.4.11: TRIM no conteúdo — o padrão TString do XSD do MEC proíbe
+ *  espaço no início/fim; um valor digitado com espaço sobrante (ex.:
+ *  "RECONHECIMENTO DE CURSO ") invalidava o documento inteiro no XSD. */
 export function el(tag: string, valor: string | number | null | undefined): string {
-  const v = valor == null ? '' : String(valor);
+  const v = valor == null ? '' : String(valor).trim();
   return `<${tag}>${escapeXml(v)}</${tag}>`;
 }
 
