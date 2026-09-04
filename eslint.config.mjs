@@ -61,6 +61,11 @@ export default [
         // DOM (xmldom) — comparador-estrutural (Element/Document)
         Element: 'readonly',
         Document: 'readonly',
+        // Fetch API (node/electron global) — bry-hub-cliente (Response/
+        // RequestInit/AbortSignal; FormData/Blob já listados acima)
+        Response: 'readonly',
+        RequestInit: 'readonly',
+        AbortSignal: 'readonly',
         React: 'readonly',
         confirm: 'readonly',
         alert: 'readonly',

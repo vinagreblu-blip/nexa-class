@@ -87,10 +87,17 @@ export function AssinaturaDigital() {
   const [xmlResultado, setXmlResultado] = useState<string | null>(null);
 
   // Carimbo do tempo (TSA) — XAdES-T do Diploma Digital
+  // Dois modos (v1.4.9): TSA RFC 3161 clássico OU BRy HUB (API + JWT).
+  const [tsaModo, setTsaModo] = useState<'rfc3161' | 'bry_hub'>('rfc3161');
   const [tsaUrl, setTsaUrl] = useState('');
   const [tsaUsuario, setTsaUsuario] = useState('');
   const [tsaSenha, setTsaSenha] = useState('');
   const [tsaTemSenha, setTsaTemSenha] = useState(false);
+  const [bryUrlAuth, setBryUrlAuth] = useState('https://cloud.bry.com.br/token-service/jwt');
+  const [bryClientId, setBryClientId] = useState('');
+  const [bryClientSecret, setBryClientSecret] = useState('');
+  const [bryTemSecret, setBryTemSecret] = useState(false);
+  const [bryUrlHub, setBryUrlHub] = useState('https://hub2.bry.com.br');
   const [tsaSalvando, setTsaSalvando] = useState(false);
   const [tsaTestando, setTsaTestando] = useState(false);
   const [tsaMsg, setTsaMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
@@ -109,9 +116,14 @@ export function AssinaturaDigital() {
     void (async () => {
       const r = await api.assinatura.tsaObter();
       if (r.ok && r.data) {
+        setTsaModo(r.data.modo ?? 'rfc3161');
         setTsaUrl(r.data.url);
         setTsaUsuario(r.data.usuario ?? '');
         setTsaTemSenha(r.data.temSenha);
+        if (r.data.urlAuth) setBryUrlAuth(r.data.urlAuth);
+        setBryClientId(r.data.clientId ?? '');
+        setBryTemSecret(r.data.temClientSecret);
+        if (r.data.urlHub) setBryUrlHub(r.data.urlHub);
       }
       const p = await api.assinatura.politicaObter();
       if (p.ok && p.data) {
@@ -132,16 +144,24 @@ export function AssinaturaDigital() {
     setTsaMsg(null);
     setTsaSalvando(true);
     const r = await api.assinatura.tsaSalvar({
+      modo: tsaModo,
       url: tsaUrl,
       usuario: tsaUsuario || undefined,
       senha: tsaSenha || undefined,
       manterSenhaAtual: !tsaSenha,
+      urlAuth: bryUrlAuth || undefined,
+      clientId: bryClientId || undefined,
+      clientSecret: bryClientSecret || undefined,
+      manterClientSecretAtual: !bryClientSecret,
+      urlHub: bryUrlHub || undefined,
     });
     setTsaSalvando(false);
     if (r.ok) {
       setTsaTemSenha(!!r.data?.temSenha);
       setTsaSenha('');
-      setTsaMsg({ tipo: 'ok', texto: 'TSA salvo. Use o "Testar carimbo" para confirmar que o serviço responde.' });
+      setBryTemSecret(!!r.data?.temClientSecret);
+      setBryClientSecret('');
+      setTsaMsg({ tipo: 'ok', texto: 'Configuração salva. Use o "Testar carimbo" para confirmar que o serviço responde.' });
     } else {
       setTsaMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao salvar' });
     }
@@ -153,7 +173,8 @@ export function AssinaturaDigital() {
     const r = await api.assinatura.tsaTestar();
     setTsaTestando(false);
     if (r.ok) {
-      setTsaMsg({ tipo: 'ok', texto: `Carimbo OK — TSA retornou ${r.data?.genTime} (token de ${r.data?.bytes} bytes).` });
+      const extra = r.data?.versaoHub ? ` — HUB BRy v${r.data.versaoHub}` : '';
+      setTsaMsg({ tipo: 'ok', texto: `Carimbo OK${extra} — serviço respondeu: ${r.data?.genTime} (token de ${r.data?.bytes} chars/bytes).` });
     } else {
       setTsaMsg({ tipo: 'erro', texto: r.error ?? 'Falha no teste' });
     }
@@ -652,31 +673,83 @@ export function AssinaturaDigital() {
         <h3 style={{ marginTop: 0 }}>Carimbo do Tempo (TSA) — XAdES-T</h3>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 10px' }}>
           A política de assinatura do Diploma Digital (IN Sesu 1/2020) exige carimbo do tempo criptográfico no
-          Histórico e no Diploma. Cadastre o serviço de carimbo (TSA) da IES — geralmente fornecido pela mesma
-          empresa do certificado digital (URL no formato https://tsa.fornecedor.com.br/tsp, protocolo RFC 3161).
-          Sem TSA configurado, as assinaturas saem como XAdES-BES com aviso de pendência.
+          Histórico e no Diploma. Escolha o modo conforme o produto contratado. Sem carimbo configurado, as
+          assinaturas saem como XAdES-BES com aviso de pendência.
         </p>
-        <div className="form-grid">
-          <div className="full">
-            <label>URL do TSA (RFC 3161) *</label>
-            <input value={tsaUrl} onChange={(e) => setTsaUrl(e.target.value)} placeholder="https://tsa.fornecedor.com.br/tsp" />
-          </div>
-          <div>
-            <label>Usuário (se o TSA exigir)</label>
-            <input value={tsaUsuario} onChange={(e) => setTsaUsuario(e.target.value)} autoComplete="off" />
-          </div>
-          <div>
-            <label>Senha {tsaTemSenha ? '(salva — deixe vazio para manter)' : '(se exigir)'}</label>
-            <input type="password" value={tsaSenha} onChange={(e) => setTsaSenha(e.target.value)} autoComplete="new-password" />
-          </div>
+        <div style={{ display: 'flex', gap: 16, marginBottom: 10, flexWrap: 'wrap' }}>
+          {([
+            { modo: 'rfc3161' as const, titulo: 'TSA padrão (RFC 3161)', desc: 'Ex.: Adobe Reader — URL + usuário/senha Basic' },
+            { modo: 'bry_hub' as const, titulo: 'BRy HUB (API + JWT)', desc: 'Carimbo do Tempo da BRy via HUB Signer — Client ID/Secret do BRy Cloud' },
+          ]).map((op) => (
+            <label
+              key={op.modo}
+              style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start', padding: 12, cursor: 'pointer',
+                border: `2px solid ${tsaModo === op.modo ? '#22C55E' : 'var(--border)'}`, borderRadius: 10, flex: 1, minWidth: 220,
+              }}
+            >
+              <input type="radio" name="tsaModo" checked={tsaModo === op.modo} onChange={() => setTsaModo(op.modo)} />
+              <span>
+                <strong style={{ fontSize: 13 }}>{op.titulo}</strong>
+                <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)' }}>{op.desc}</span>
+              </span>
+            </label>
+          ))}
         </div>
+
+        {tsaModo === 'rfc3161' ? (
+          <div className="form-grid">
+            <div className="full">
+              <label>URL do TSA (RFC 3161) *</label>
+              <input value={tsaUrl} onChange={(e) => setTsaUrl(e.target.value)} placeholder="https://tsa.fornecedor.com.br/tsp" />
+            </div>
+            <div>
+              <label>Usuário (se o TSA exigir)</label>
+              <input value={tsaUsuario} onChange={(e) => setTsaUsuario(e.target.value)} autoComplete="off" />
+            </div>
+            <div>
+              <label>Senha {tsaTemSenha ? '(salva — deixe vazio para manter)' : '(se exigir)'}</label>
+              <input type="password" value={tsaSenha} onChange={(e) => setTsaSenha(e.target.value)} autoComplete="new-password" />
+            </div>
+          </div>
+        ) : (
+          <div className="form-grid">
+            <div>
+              <label>URL de autenticação (OAuth2) *</label>
+              <input value={bryUrlAuth} onChange={(e) => setBryUrlAuth(e.target.value)} placeholder="https://cloud.bry.com.br/token-service/jwt" />
+            </div>
+            <div>
+              <label>Client ID (BRy Cloud → Aplicações) *</label>
+              <input value={bryClientId} onChange={(e) => setBryClientId(e.target.value)} placeholder="e03aaf83-…" autoComplete="off" />
+            </div>
+            <div>
+              <label>Client Secret {bryTemSecret ? '(salvo — deixe vazio para manter)' : '*'}</label>
+              <input type="password" value={bryClientSecret} onChange={(e) => setBryClientSecret(e.target.value)} autoComplete="new-password" />
+            </div>
+            <div>
+              <label>URL do HUB BRy *</label>
+              <select value={bryUrlHub} onChange={(e) => setBryUrlHub(e.target.value)}>
+                <option value="https://hub2.bry.com.br">Produção (hub2.bry.com.br)</option>
+                <option value="https://hub2.hom.bry.com.br">Homologação (hub2.hom.bry.com.br)</option>
+              </select>
+            </div>
+          </div>
+        )}
         {tsaMsg && <div className={tsaMsg.tipo === 'ok' ? 'alert alert-success' : 'alert alert-error'}>{tsaMsg.texto}</div>}
         <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-          <button className="btn-primary" disabled={tsaSalvando || !tsaUrl.trim()} onClick={() => void salvarTsa()}>
-            {tsaSalvando ? 'Salvando…' : 'Salvar TSA'}
+          <button
+            className="btn-primary"
+            disabled={tsaSalvando || (tsaModo === 'rfc3161' ? !tsaUrl.trim() : !bryClientId.trim())}
+            onClick={() => void salvarTsa()}
+          >
+            {tsaSalvando ? 'Salvando…' : 'Salvar Carimbo'}
           </button>
-          <button className="btn-ghost" disabled={tsaTestando || !tsaUrl.trim()} onClick={() => void testarTsa()}>
-            {tsaTestando ? 'Carimbando…' : 'Testar carimbo'}
+          <button
+            className="btn-ghost"
+            disabled={tsaTestando}
+            onClick={() => void testarTsa()}
+          >
+            {tsaTestando ? 'Testando…' : 'Testar carimbo'}
           </button>
         </div>
       </div>

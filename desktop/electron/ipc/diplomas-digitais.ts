@@ -961,10 +961,11 @@ function assinarHandler(
     // assinatura (a da raiz cobre o documento com o carimbo da interna).
     // Sem TSA configurado ou com falha, segue sem carimbo com AVISO
     // EXPLÍCITO (nunca fabricado).
-    const { obterTsaConfig } = await import('./tsa');
+    const { obterTsaConfig, obterConfigBryHub } = await import('./tsa');
     const { obterPoliticaAssinatura } = await import('./politica');
     const { carimbarDigest } = await import('../diploma-digital/tsa-cliente');
-    const cfgTsa = obterTsaConfig();
+    const cfgTsa = obterTsaConfig(); // modo rfc3161 (BASIC/RFC 3161 direto)
+    const cfgBryHub = obterConfigBryHub(); // modo bry_hub (carimbo PÓS-assinatura)
     const politica = obterPoliticaAssinatura();
     const carimbador: ((digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>) | undefined = cfgTsa
       ? async (digest) => {
@@ -978,7 +979,7 @@ function assinarHandler(
           }
         }
       : undefined;
-    if (!cfgTsa) {
+    if (!cfgTsa && !cfgBryHub) {
       avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES) — a política do Diploma Digital exige carimbo (XAdES-T): configure o TSA da IES em Assinatura Digital → Carimbo do Tempo.';
     }
 
@@ -1044,6 +1045,30 @@ function assinarHandler(
       } else {
         auditar(diplomaId, `assinatura_${artefato}`, 'erro', { err: e?.message });
         return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
+      }
+    }
+
+    // MODO BRy HUB (v1.4.9): o carimbo é aplicado DEPOIS da assinatura
+    // local (BES), pelo Completador da BRy — nunca durante. Falha no HUB
+    // NÃO perde a assinatura: persiste BES com aviso claro (mesma
+    // semântica de falha do TSA clássico).
+    if (cfgBryHub) {
+      try {
+        const { upgradeCarimboBry } = await import('../diploma-digital/bry-hub-cliente');
+        const r = await upgradeCarimboBry(cfgBryHub, xmlAssinado, 60000);
+        if (r.carimbosAdicionados > 0) {
+          carimbos.push(`BRy HUB (${new Date().toISOString()})`);
+        }
+        xmlAssinado = r.xml;
+        avisoCarimbo =
+          (avisoCarimbo ? avisoCarimbo + ' ' : '') +
+          `Carimbo do tempo aplicado via BRy HUB (${r.carimbosAdicionados} SignatureTimeStamp adicionado(s)) — XAdES-T.`;
+      } catch (e: any) {
+        avisoCarimbo =
+          (avisoCarimbo ? avisoCarimbo + ' ' : '') +
+          'Assinado SEM carimbo do tempo (XAdES-BES): falha no BRy HUB — ' +
+          (e?.message ?? String(e)) +
+          '. Confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar) e assine novamente.';
       }
     }
 

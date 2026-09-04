@@ -278,9 +278,45 @@ export interface DesktopApi {
     salvarCertA3: (thumbprint: string) => Promise<ApiResult<{ id: number; nome_signatario: string; cargo: string; imagem_path: string | null; certificado_path: string | null; certificado_tipo: 'A1' | 'A3' | null; certificado_a3_thumbprint: string | null; ativo: number }>>;
     assinarXml: (xmlContent: string, senhaPfx: string) => Promise<ApiResult<{ xml: string }>>;
     previewImagem: () => Promise<ApiResult<{ dataUrl: string | null }>>;
-    tsaObter: () => Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean } | null>>;
-    tsaSalvar: (input: { url: string; usuario?: string; senha?: string; manterSenhaAtual?: boolean }) => Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean }>>;
-    tsaTestar: () => Promise<ApiResult<{ genTime: string; bytes: number }>>;
+    tsaObter: () => Promise<
+      ApiResult<
+        | null
+        | {
+            modo: 'rfc3161' | 'bry_hub';
+            url: string;
+            usuario: string;
+            temSenha: boolean;
+            urlAuth: string;
+            clientId: string;
+            temClientSecret: boolean;
+            urlHub: string;
+          }
+      >
+    >;
+    tsaSalvar: (input: {
+      modo: 'rfc3161' | 'bry_hub';
+      url?: string;
+      usuario?: string;
+      senha?: string;
+      manterSenhaAtual?: boolean;
+      urlAuth?: string;
+      clientId?: string;
+      clientSecret?: string;
+      manterClientSecretAtual?: boolean;
+      urlHub?: string;
+    }) => Promise<
+      ApiResult<{
+        modo: 'rfc3161' | 'bry_hub';
+        url: string;
+        usuario: string;
+        temSenha: boolean;
+        urlAuth: string;
+        clientId: string;
+        temClientSecret: boolean;
+        urlHub: string;
+      }>
+    >;
+    tsaTestar: () => Promise<ApiResult<{ genTime: string; bytes: number; versaoHub?: string }>>;
     politicaObter: () => Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>>;
     politicaSalvar: (input: { modo: 'padrao' | 'custom' | 'bes'; identificador?: string; digestBase64?: string; spuri?: string }) => Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>>;
     politicaConfirmar: (input: { spuri: string; digestBase64: string }) => Promise<ApiResult<{ confere: boolean; calculado: string; spuriUsado: string }>>;

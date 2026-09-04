@@ -273,11 +273,45 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_ASSINAR_XML, xmlContent, senhaPfx),
     previewImagem: (): Promise<ApiResult<{ dataUrl: string | null }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_PREVIEW_IMAGEM),
-    tsaObter: (): Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean } | null>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_OBTER),
-    tsaSalvar: (input: { url: string; usuario?: string; senha?: string; manterSenhaAtual?: boolean }): Promise<ApiResult<{ url: string; usuario: string; temSenha: boolean }>> =>
-      ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_SALVAR, input),
-    tsaTestar: (): Promise<ApiResult<{ genTime: string; bytes: number }>> =>
+    tsaObter: (): Promise<
+      | ApiResult<
+          | null
+          | {
+              modo: 'rfc3161' | 'bry_hub';
+              url: string;
+              usuario: string;
+              temSenha: boolean;
+              urlAuth: string;
+              clientId: string;
+              temClientSecret: boolean;
+              urlHub: string;
+            }
+        >
+    > => ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_OBTER),
+    tsaSalvar: (input: {
+      modo: 'rfc3161' | 'bry_hub';
+      url?: string;
+      usuario?: string;
+      senha?: string;
+      manterSenhaAtual?: boolean;
+      urlAuth?: string;
+      clientId?: string;
+      clientSecret?: string;
+      manterClientSecretAtual?: boolean;
+      urlHub?: string;
+    }): Promise<
+      ApiResult<{
+        modo: 'rfc3161' | 'bry_hub';
+        url: string;
+        usuario: string;
+        temSenha: boolean;
+        urlAuth: string;
+        clientId: string;
+        temClientSecret: boolean;
+        urlHub: string;
+      }>
+    > => ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_SALVAR, input),
+    tsaTestar: (): Promise<ApiResult<{ genTime: string; bytes: number; versaoHub?: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_TSA_TESTAR),
     politicaObter: (): Promise<ApiResult<{ modo: 'padrao' | 'custom' | 'bes'; identificador: string; digestBase64: string; spuri: string; padraoIdentificador: string; padraoDigestBase64: string; padraoSpuri: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.ASSINATURA_POLITICA_OBTER),
