@@ -119,6 +119,13 @@ export async function validarXmlContraXsd(
     // Dependências (include/import) entram no FS em memória do xmllint,
     // resolvidas pelo schemaLocation com o nome exato do arquivo.
     preload: dependencias.map((nome) => ({ fileName: nome, contents: ler(nome) })),
+    // Heap do WASM: o default da lib (512 páginas = 32 MiB) estoura com
+    // "libxml2: out of memory" na DA — os PDFs do aluno vão embutidos em
+    // base64 (~1,37× o tamanho) e o heap comporta arquivo + DOM do libxml2.
+    // Teto de 2 GiB é o exemplo documentado pela lib para XMLs grandes
+    // (max 65536 páginas = 4 GiB); inicial 128 MiB mantém docs pequenos baratos.
+    initialMemoryPages: 2048,
+    maxMemoryPages: 32768,
   });
 
   return {
