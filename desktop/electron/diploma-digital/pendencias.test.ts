@@ -97,21 +97,34 @@ describe('normalizarNota (TNota 0-10 / TConceito)', () => {
 // ---------- pendências (cenários exigidos: 1-6 do item 28) ----------
 
 /** DB fake em memória com as tabelas/consultas usadas por verificarPendenciasDiploma. */
-function dbFake({ aluno, curso, ies }: { aluno: any; curso?: any; ies?: any }) {
-  const cursosAtivos = curso ? [curso] : [];
+function dbFake({ aluno, curso, ies, cursos, iesLista }: { aluno: any; curso?: any; ies?: any; cursos?: any[]; iesLista?: any[] }) {
+  const listaCursos = cursos ?? (curso ? [curso] : []);
+  const listaIes = iesLista ?? (ies ? [ies] : []);
   return {
     prepare(sql: string) {
       return {
         get: (...args: any[]) => {
           if (sql.startsWith('SELECT * FROM alunos')) return args[0] === aluno?.id ? aluno : undefined;
           if (sql.includes('SELECT * FROM ies WHERE id = ?')) {
-            return args[0] === ies?.id || (curso && args[0] === curso.ies_id) ? ies : undefined;
+            const achou = listaIes.find((i) => i.id === args[0]);
+            if (achou) return achou;
+            // curso legado sem ies_id explícito → resolve para a IES única informada
+            return !cursos && curso && args[0] == null ? ies : undefined;
           }
-          if (sql.includes("SELECT * FROM ies WHERE papel IN")) return ies;
+          if (sql.includes("SELECT * FROM ies WHERE papel IN")) {
+            return listaIes.find((i) => i.papel !== 'registradora') ?? ies;
+          }
           return undefined;
         },
-        all: (..._args: any[]) => {
-          if (sql.includes('SELECT * FROM cursos WHERE ativo')) return cursosAtivos;
+        all: (...args: any[]) => {
+          if (sql.includes('SELECT * FROM cursos WHERE ativo')) {
+            // SQL multi-IES (com filtro ies_id = ?) recebe o id como argumento;
+            // o SQL global histórico não recebe nada.
+            if (sql.includes('ies_id = ?') && args.length > 0) {
+              return listaCursos.filter((c) => c.ies_id === args[0]);
+            }
+            return listaCursos;
+          }
           return [];
         },
       };
@@ -287,5 +300,52 @@ describe('verificarPendenciasDiploma', () => {
   it('endereço da IES sem nome do município → pendência de endereço', () => {
     const db = dbFake({ aluno: ALUNO_COMPLETO, curso: CURSO_COMPLETO, ies: { ...IES_COMPLETA, nome_municipio: null } });
     expect(verificarPendenciasDiploma(db as any, 1).some((x) => x.elementoXml === 'IesEmissora.Endereco')).toBe(true);
+  });
+});
+
+// ============================================================
+// MULTI-IES: com iesId informado (IES emissora escolhida para o
+// processo), o match do curso é restrito aos cursos DAQUELA IES e as
+// validações institucionais apontam para ela. Sem iesId, o
+// comportamento histórico (match global + IES do curso) é mantido.
+// ============================================================
+
+describe('verificarPendenciasDiploma — MULTI-IES (iesId informado)', () => {
+  const IES_FACIIP = { ...IES_COMPLETA, id: 1, nome: 'FACIIP - FACULDADES INTEGRADAS IPITANGA' };
+  const IES_FATECE = { ...IES_COMPLETA, id: 3, nome: 'Faculdade Tecnologia de Ciências e Educação - FATECE', codigo_emec: 2163 };
+  const CURSO_ADM_FACIIP = { ...CURSO_COMPLETO, id: 1, ies_id: 1, codigo_emec: 20807 };
+  const CURSO_ADM_FATECE = { ...CURSO_COMPLETO, id: 22, ies_id: 3, codigo_emec: 1261187 };
+
+  it('iesId=FATECE com curso da FATECE → ZERO pendências (mesmo existindo "Administração" na FACIIP)', () => {
+    const db = dbFake({ aluno: ALUNO_COMPLETO, ies: IES_FATECE, cursos: [CURSO_ADM_FACIIP, CURSO_ADM_FATECE] });
+    expect(verificarPendenciasDiploma(db as any, 1, 3)).toEqual([]);
+  });
+
+  it('valida a IES ESCOLHIDA (iesId), não a outra: e-MEC ausente na escolhida → pendência', () => {
+    const fateceSemEmec = { ...IES_FATECE, codigo_emec: null };
+    const db = dbFake({ aluno: ALUNO_COMPLETO, ies: fateceSemEmec, cursos: [CURSO_ADM_FACIIP, CURSO_ADM_FATECE] });
+    const p = verificarPendenciasDiploma(db as any, 1, 3);
+    expect(p.some((x) => x.elementoXml === 'IesEmissora.CodigoMEC')).toBe(true);
+    // o curso da própria IES continuou válido (não é pendência de curso)
+    expect(p.some((x) => x.origem === 'cursos (cadastro institucional)')).toBe(false);
+  });
+
+  it('curso só existe em OUTRA IES → pendência de curso (match restrito à IES escolhida)', () => {
+    const db = dbFake({ aluno: ALUNO_COMPLETO, ies: IES_FACIIP, cursos: [CURSO_ADM_FATECE] });
+    const p = verificarPendenciasDiploma(db as any, 1, 1);
+    expect(p.some((x) => x.origem === 'cursos (cadastro institucional)')).toBe(true);
+  });
+
+  it('SEM iesId → regressão: match global e IES do curso (comportamento histórico intacto)', () => {
+    // Aluno "da FATECE" com processo antigo: sem iesId, o match global acha
+    // o primeiro curso por id (FACIIP) e a IES validada é a do curso —
+    // exatamente como antes do multi-IES.
+    const db = dbFake({
+      aluno: ALUNO_COMPLETO,
+      ies: IES_FATECE,
+      iesLista: [IES_FACIIP, IES_FATECE],
+      cursos: [CURSO_ADM_FACIIP, CURSO_ADM_FATECE],
+    });
+    expect(verificarPendenciasDiploma(db as any, 1)).toEqual([]);
   });
 });

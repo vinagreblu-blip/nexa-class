@@ -182,9 +182,10 @@ export interface DesktopApi {
   diplomasDigitais: {
     listar: (busca?: string) => Promise<ApiResult<any[]>>;
     listarAptos: (busca?: string) => Promise<ApiResult<any[]>>;
-    criar: (alunoId: number) => Promise<ApiResult<any>>;
+    criar: (alunoId: number, iesId?: number) => Promise<ApiResult<any>>;
     obter: (id: number) => Promise<ApiResult<any>>;
     pendencias: (alunoId: number) => Promise<ApiResult<any[]>>;
+    alterarIes: (id: number, iesId: number) => Promise<ApiResult<true>>;
     completarAluno: (input: {
       alunoId: number;
       cpf?: string;
@@ -216,7 +217,7 @@ export interface DesktopApi {
     anular: (id: number, motivo: string, senhaMaster: string, anotacao?: string) => Promise<ApiResult<true>>;
     gerarListaAnulados: (input: { numeroSequencia: number; dataMaximaProximaAtualizacao: string }) => Promise<ApiResult<{ salvoPath: string; anulados: number }>>;
     gerarRvdd: (id: number) => Promise<ApiResult<{ salvoPath: string; pdfaAuto: boolean; veraPdfConforme: boolean | null }>>;
-    gerarFiscalizacao: (input: { dataInicio: string; dataFim: string }) => Promise<ApiResult<{ salvoPath: string; diplomas: number }>>;
+    gerarFiscalizacao: (input: { dataInicio: string; dataFim: string; iesId?: number }) => Promise<ApiResult<{ salvoPath: string; diplomas: number }>>;
     abrirValidadorMec: () => Promise<ApiResult<true>>;
     baixarArquivo: (arquivoId: number) => Promise<ApiResult<{ salvoPath: string }>>;
     validarArtefato: (arquivoId: number) => Promise<ApiResult<any>>;

@@ -46,11 +46,19 @@ export function coletarSnapshot(db: AdapterDb, diplomaId: number): SnapshotDiplo
   // LIMIT" no SQLite real, quebrando coletarSnapshot na geração do XML
   // (bug pego em dry-run com o código compilado; testes com DB fake
   // não executavam esse SQL e não pegavam).
+  // Prioriza os cursos da IES emissora DO PROCESSO (cada IES tem cadastro
+  // próprio — "Administração" existe em várias IES com e-MEC distintos);
+  // se não houver na IES, cai no match global histórico (processos legados
+  // anteriores ao vínculo por IES continuam resolvendo como antes).
   const curso = aluno?.curso
-    ? encontrarCursoPorNome(
+    ? (encontrarCursoPorNome(
+        db.prepare('SELECT * FROM cursos WHERE ativo = 1 AND ies_id = ? ORDER BY id').all(processo.ies_emissora_id) as any[],
+        aluno.curso
+      ) ??
+      encontrarCursoPorNome(
         db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
         aluno.curso
-      )
+      ))
     : undefined;
   const ies = db.prepare('SELECT * FROM ies WHERE id = ?').get(processo.ies_emissora_id) as any;
   const disciplinas = db

@@ -47,6 +47,7 @@ export interface DiplomaDigitalRow {
   versao_schema: string;
   chave_acesso: string | null;
   created_at: string;
+  ies_emissora_nome?: string | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -97,8 +98,11 @@ function listar(_event: IpcMainInvokeEvent, busca?: string): ApiResult<DiplomaDi
     .prepare(
       `SELECT dd.id, dd.aluno_id, a.nome AS aluno_nome, a.cpf AS aluno_cpf, a.matricula,
               a.curso, a.ano_conclusao AS conclusao, a.data_colacao AS colacao,
-              dd.status, dd.versao_schema, dd.chave_acesso, dd.created_at
-       FROM diplomas_digitais dd JOIN alunos a ON a.id = dd.aluno_id
+              dd.status, dd.versao_schema, dd.chave_acesso, dd.created_at,
+              i.nome AS ies_emissora_nome
+       FROM diplomas_digitais dd
+       JOIN alunos a ON a.id = dd.aluno_id
+       LEFT JOIN ies i ON i.id = dd.ies_emissora_id
        ${filtro} ORDER BY dd.id DESC`
     )
     .all(...args) as DiplomaDigitalRow[];
@@ -112,7 +116,7 @@ function listarAptos(_event: IpcMainInvokeEvent, busca?: string): ApiResult<any[
   const args = busca ? [`%${busca}%`, `%${busca}%`] : [];
   const rows = db
     .prepare(
-      `SELECT a.id, a.nome, a.cpf, a.matricula, a.curso, a.ano_conclusao, a.data_colacao
+      `SELECT a.id, a.nome, a.cpf, a.matricula, a.curso, a.faculdade, a.ano_conclusao, a.data_colacao
        FROM alunos a
        WHERE a.ano_conclusao IS NOT NULL AND a.ano_conclusao != 'Cursando'
          AND NOT EXISTS (SELECT 1 FROM diplomas_digitais dd WHERE dd.aluno_id = a.id)
@@ -138,7 +142,9 @@ function pendencias(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<Pend
   return { ok: true, data: pendsCriacao };
 }
 
-function criar(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<DiplomaDigitalRow> {
+// iesId (opcional): IES emissora escolhida na abertura do processo. Sem ele,
+// preservado o comportamento histórico — primeira IES emissora ativa (FACIIP).
+function criar(_event: IpcMainInvokeEvent, alunoId: number, iesId?: number): ApiResult<DiplomaDigitalRow> {
   const sessao = getSessao();
   if (!sessao) return { ok: false, error: 'Não autenticado' };
   const db = getDb();
@@ -149,7 +155,7 @@ function criar(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<DiplomaDi
   const existe = db.prepare('SELECT id FROM diplomas_digitais WHERE aluno_id = ?').get(alunoId) as any;
   if (existe) return { ok: false, error: 'Este aluno já possui processo de Diploma Digital aberto.' };
 
-  const pends = verificarPendenciasDiploma(db, alunoId);
+  const pends = verificarPendenciasDiploma(db, alunoId, iesId ?? undefined);
   if (pends.length > 0) {
     auditar(null, 'criacao', 'bloqueado', { alunoId, pendencias: pends.length });
     return {
@@ -158,14 +164,32 @@ function criar(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<DiplomaDi
     };
   }
 
-  const ies = db.prepare("SELECT id FROM ies WHERE papel = 'emissora' AND ativo = 1 ORDER BY id LIMIT 1").get() as any;
-  if (!ies) return { ok: false, error: 'Nenhuma IES emissora cadastrada. Configure o Cadastro Institucional primeiro.' };
+  let ies: any;
+  if (iesId != null) {
+    ies = db
+      .prepare("SELECT id, nome FROM ies WHERE id = ? AND papel IN ('emissora','emissora_registradora') AND ativo = 1")
+      .get(iesId) as any;
+    if (!ies) {
+      return { ok: false, error: 'IES emissora informada não encontrada ou inativa. Configure o Cadastro Institucional primeiro.' };
+    }
+  } else {
+    ies = db.prepare("SELECT id, nome FROM ies WHERE papel = 'emissora' AND ativo = 1 ORDER BY id LIMIT 1").get() as any;
+    if (!ies) return { ok: false, error: 'Nenhuma IES emissora cadastrada. Configure o Cadastro Institucional primeiro.' };
+  }
 
+  // Match do curso por nome normalizado: com IES escolhida, restrito aos
+  // cursos DAQUELA IES (códigos e-MEC distintos por IES); sem IES informada,
+  // match global histórico (comportamento anterior).
   const curso = aluno.curso
-    ? encontrarCursoPorNome(
-        db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
-        aluno.curso
-      )
+    ? iesId != null
+      ? encontrarCursoPorNome(
+          db.prepare('SELECT * FROM cursos WHERE ativo = 1 AND ies_id = ? ORDER BY id').all(ies.id) as any[],
+          aluno.curso
+        )
+      : encontrarCursoPorNome(
+          db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
+          aluno.curso
+        )
     : undefined;
 
   const info = db
@@ -175,7 +199,7 @@ function criar(_event: IpcMainInvokeEvent, alunoId: number): ApiResult<DiplomaDi
     )
     .run(alunoId, curso?.id ?? null, ies.id, sessao.usuario.id);
   const id = info.lastInsertRowid as number;
-  auditar(id, 'criacao', 'sucesso', { alunoId });
+  auditar(id, 'criacao', 'sucesso', { alunoId, iesEmissoraId: ies.id });
   const row = db
     .prepare(
       `SELECT dd.id, dd.aluno_id, a.nome AS aluno_nome, a.cpf AS aluno_cpf, a.matricula,
@@ -290,6 +314,40 @@ function completarAluno(
   if (sets.length === 0) return { ok: false, error: 'Nada para atualizar' };
   db.prepare(`UPDATE alunos SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(...args, input.alunoId);
   auditar(null, 'completar_dados_aluno', 'sucesso', { alunoId: input.alunoId, campos: sets });
+  return { ok: true, data: true };
+}
+
+/**
+ * Troca a IES emissora de um processo JÁ criado — permitido apenas nos
+ * status iniciais (apto/em_preparacao), antes do primeiro XML gerado.
+ * Artefatos assinados/registrados não podem mudar de instituição.
+ */
+function alterarIes(_event: IpcMainInvokeEvent, diplomaId: number, iesId: number): ApiResult<true> {
+  const sessao = getSessao();
+  if (!sessao) return { ok: false, error: 'Não autenticado' };
+  const db = getDb();
+  const processo = db.prepare('SELECT id, status, aluno_id FROM diplomas_digitais WHERE id = ?').get(diplomaId) as any;
+  if (!processo) return { ok: false, error: 'Processo de diploma não encontrado.' };
+  if (processo.status !== 'apto' && processo.status !== 'em_preparacao') {
+    return { ok: false, error: 'A IES emissora só pode ser alterada antes de gerar o primeiro XML (status Apto ou Em preparação).' };
+  }
+  const ies = db
+    .prepare("SELECT id, nome FROM ies WHERE id = ? AND papel IN ('emissora','emissora_registradora') AND ativo = 1")
+    .get(iesId) as any;
+  if (!ies) return { ok: false, error: 'IES emissora não encontrada ou inativa. Configure o Cadastro Institucional.' };
+  const aluno = db.prepare('SELECT curso FROM alunos WHERE id = ?').get(processo.aluno_id) as any;
+  // Re-vincula o curso dentro da nova IES (match por nome; código e-MEC é
+  // específico de cada instituição). Sem curso correspondente → pendência
+  // apontará o cadastro faltante (nunca usa curso de outra IES).
+  const curso = aluno?.curso
+    ? encontrarCursoPorNome(
+        db.prepare('SELECT * FROM cursos WHERE ativo = 1 AND ies_id = ? ORDER BY id').all(ies.id) as any[],
+        aluno.curso
+      )
+    : undefined;
+  db.prepare('UPDATE diplomas_digitais SET ies_emissora_id = ?, curso_id = ?, updated_at = datetime(\'now\') WHERE id = ?')
+    .run(ies.id, curso?.id ?? null, diplomaId);
+  auditar(diplomaId, 'alteracao_ies_emissora', 'sucesso', { iesId: ies.id, iesNome: ies.nome, cursoId: curso?.id ?? null });
   return { ok: true, data: true };
 }
 
@@ -1452,7 +1510,7 @@ function dbLikeParaVeraPdf(): { preparar: (sql: string) => { get: (k: string) =>
 /** Gera o Arquivo de Fiscalização (emissora) para o período informado. */
 function gerarFiscalizacaoHandler(
   _event: IpcMainInvokeEvent,
-  input: { dataInicio: string; dataFim: string }
+  input: { dataInicio: string; dataFim: string; iesId?: number }
 ): Promise<ApiResult<{ salvoPath: string; diplomas: number }>> {
   return (async () => {
     const db = getDb();
@@ -1460,20 +1518,25 @@ function gerarFiscalizacaoHandler(
     if (!sessao || sessao.usuario.role !== 'admin') {
       return { ok: false, error: 'Somente administrador gera o Arquivo de Fiscalização.' };
     }
-    const emissora = db
-      .prepare("SELECT id FROM ies WHERE papel IN ('emissora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1")
-      .get() as any;
+    // IES emissora do arquivo: a selecionada no relatório ou a primeira ativa
+    // (comportamento histórico). O XSD admite um ÚNICO bloco IESEmissora por
+    // arquivo — diplomas de outras IES não entram neste arquivo.
+    const emissora =
+      input.iesId != null
+        ? (db.prepare("SELECT id, nome FROM ies WHERE id = ? AND papel IN ('emissora','emissora_registradora') AND ativo = 1").get(input.iesId) as any)
+        : (db.prepare("SELECT id, nome FROM ies WHERE papel IN ('emissora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1").get() as any);
     if (!emissora) return { ok: false, error: 'IES emissora não cadastrada.' };
 
     const rows = db
       .prepare(
         `SELECT dd.*, a.cpf AS aluno_cpf, a.curso AS aluno_curso FROM diplomas_digitais dd
          JOIN alunos a ON a.id = dd.aluno_id
-         WHERE dd.status IN ('registrado','publicado') AND dd.dados_registro_json IS NOT NULL`
+         WHERE dd.status IN ('registrado','publicado') AND dd.dados_registro_json IS NOT NULL
+           AND dd.ies_emissora_id = ?`
       )
-      .all() as any[];
+      .all(emissora.id) as any[];
     if (rows.length === 0) {
-      return { ok: false, error: 'Nenhum diploma registrado no período — o arquivo exige ao menos 1.' };
+      return { ok: false, error: `Nenhum diploma registrado para ${emissora.nome ?? 'a IES selecionada'} — o arquivo exige ao menos 1.` };
     }
 
     const semRvdd: number[] = [];
@@ -1488,11 +1551,17 @@ function gerarFiscalizacaoHandler(
       const urlXml = await signedUrlStorage(`${r.id}/diploma-digital-final.xml`);
       const urlRvdd = await signedUrlStorage(`${r.id}/rvdd.pdf`);
       if (!urlXml || !urlRvdd) { semUrl.push(r.id); continue; }
+      // Curso da IES emissora do arquivo (e-MEC específico por IES); fallback
+      // global preserva o match histórico para registros legados.
       const curso = r.aluno_curso
-        ? encontrarCursoPorNome(
+        ? (encontrarCursoPorNome(
+            db.prepare('SELECT * FROM cursos WHERE ativo = 1 AND ies_id = ? ORDER BY id').all(emissora.id) as any[],
+            r.aluno_curso
+          ) ??
+          encontrarCursoPorNome(
             db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all() as any[],
             r.aluno_curso
-          )
+          ))
         : null;
       diplomas.push({
         codigoValidacao: reg.codigoValidacao,
@@ -1696,6 +1765,7 @@ export function registrarDiplomasDigitaisHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_OBTER, requerAuth(obter));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_PENDENCIAS, requerAuth(pendencias));
   ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_COMPLETAR_ALUNO, requerAuth(completarAluno));
+  ipcMain.handle(IPC_CHANNELS.DIPLOMAS_DIGITAIS_ALTERAR_IES, requerAuth(alterarIes));
   ipcMain.handle(IPC_CHANNELS.IES_LISTAR, requerAuth(iesListar));
   ipcMain.handle(IPC_CHANNELS.IES_SALVAR, requerAdmin(iesSalvar));
   ipcMain.handle(IPC_CHANNELS.CURSO_GRADUACAO_LISTAR, requerAuth(cursoGraduacaoListar));

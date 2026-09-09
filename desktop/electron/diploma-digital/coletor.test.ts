@@ -103,3 +103,75 @@ describe('coletarSnapshot — match de curso com SQL real (regressão do REPLACE
     expect(pends.some((p) => p.elementoXml === 'HistoricoEscolar.IngressoCurso.Data')).toBe(false);
   });
 });
+
+// ============================================================
+// MULTI-IES: cada processo tem IES emissora própria e o match do
+// curso é restrito aos cursos DA IES do processo (mesmo nome de
+// curso em IES diferentes = códigos e-MEC distintos). Processos
+// legados cujo curso só existe em outra IES caem no match global
+// anterior (fallback de retrocompatibilidade).
+// ============================================================
+
+let dbMulti: any;
+
+function criarDbMulti(): void {
+  dbMulti.exec(`
+    CREATE TABLE alunos (id INTEGER PRIMARY KEY, nome TEXT, curso TEXT, ano_ingresso TEXT, data_vestibular TEXT);
+    CREATE TABLE ies (id INTEGER PRIMARY KEY, nome TEXT, papel TEXT, ativo INTEGER DEFAULT 1);
+    CREATE TABLE cursos (id INTEGER PRIMARY KEY, ies_id INTEGER, nome TEXT, codigo_emec INTEGER, ativo INTEGER DEFAULT 1);
+    CREATE TABLE historico_disciplinas (id INTEGER PRIMARY KEY, aluno_id INTEGER, periodo TEXT, disciplina TEXT, ordem INTEGER DEFAULT 0);
+    CREATE TABLE diplomas_digitais (id INTEGER PRIMARY KEY, aluno_id INTEGER, ies_emissora_id INTEGER, status TEXT);
+    INSERT INTO ies (id, nome, papel) VALUES
+      (1, 'FACIIP - FACULDADES INTEGRADAS IPITANGA', 'emissora'),
+      (3, 'Faculdade Tecnologia de Ciências e Educação - FATECE', 'emissora');
+    -- "Administração" existe nas DUAS IES com e-MEC distintos (como no pré-cadastro)
+    INSERT INTO cursos (id, ies_id, nome, codigo_emec) VALUES
+      (1, 1, 'Administração', 20807),
+      (22, 3, 'Administração', 1261187),
+      (24, 3, 'Teologia', 1180229);
+    INSERT INTO alunos (id, nome, curso) VALUES
+      (10, 'Maria', 'ADMINISTRACAO'),
+      (20, 'Rita', 'ADMINISTRAÇÃO'),
+      (21, 'Tereza', 'Teologia');
+    INSERT INTO diplomas_digitais (id, aluno_id, ies_emissora_id, status) VALUES
+      (100, 10, 1, 'apto'),
+      (300, 20, 3, 'apto'),
+      (301, 21, 1, 'apto');
+  `);
+}
+
+describe('coletarSnapshot — MULTI-IES (curso da IES emissora do processo)', () => {
+  beforeEach(async () => {
+    const SQL = await initSqlJs();
+    dbMulti = new SQL.Database();
+    criarDbMulti();
+  });
+
+  it('processo FACIIP: match continua no curso da FACIIP (regressão)', () => {
+    const s = coletarSnapshot(wrap(dbMulti), 100);
+    expect(s?.curso?.id).toBe(1);
+    expect(s?.curso?.codigo_emec).toBe(20807);
+    expect(s?.ies?.nome).toBe('FACIIP - FACULDADES INTEGRADAS IPITANGA');
+  });
+
+  it('processo FATECE: pega o curso da FATECE (e-MEC 1261187), NÃO o da FACIIP', () => {
+    const s = coletarSnapshot(wrap(dbMulti), 300);
+    expect(s?.curso?.id).toBe(22);
+    expect(s?.curso?.codigo_emec).toBe(1261187);
+    expect(s?.ies?.nome).toBe('Faculdade Tecnologia de Ciências e Educação - FATECE');
+  });
+
+  it('fallback global preservado: processo legado com curso que só existe em outra IES continua casando', () => {
+    // Processo da FACIIP com aluno de Teologia (curso só cadastrado na
+    // FATECE) — comportamento anterior ao multi-IES, mantido.
+    const s = coletarSnapshot(wrap(dbMulti), 301);
+    expect(s?.curso?.id).toBe(24);
+  });
+
+  it('IES do snapshot vem do ies_emissora_id do processo (cada processo independente)', () => {
+    const faciip = coletarSnapshot(wrap(dbMulti), 100);
+    const fatece = coletarSnapshot(wrap(dbMulti), 300);
+    expect(faciip?.ies?.id).toBe(1);
+    expect(fatece?.ies?.id).toBe(3);
+  });
+});

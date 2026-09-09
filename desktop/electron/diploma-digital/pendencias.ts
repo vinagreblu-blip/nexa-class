@@ -41,7 +41,12 @@ function atoRegulatorioOk(json: unknown): boolean {
   }
 }
 
-export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): PendenciaDiploma[] {
+// iesId (opcional): IES emissora escolhida para o processo. Quando informado,
+// o match do curso e as validações institucionais (e-MEC/CNPJ/credenciamento/
+// endereço) apontam para os cadastros DAQUELA IES — cada instituição tem
+// cadastro próprio (mesmo nome de curso em IES diferentes = códigos e-MEC
+// distintos). Sem iesId, comportamento histórico preservado.
+export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number, iesId?: number): PendenciaDiploma[] {
   const pend: PendenciaDiploma[] = [];
   const aluno = db.prepare('SELECT * FROM alunos WHERE id = ?').get(alunoId) as any;
   if (!aluno) {
@@ -144,9 +149,12 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
   }
 
   // --- DadosCurso (TDadosCurso): precisa de curso cadastrado e completo ---
-  // Match por nome normalizado (helper único — ver match-curso.ts)
+  // Match por nome normalizado (helper único — ver match-curso.ts), restrito
+  // aos cursos da IES escolhida quando iesId informado
   const cursosAtivos: any[] = aluno.curso
-    ? ((db.prepare('SELECT * FROM cursos WHERE ativo = 1 ORDER BY id').all?.() ?? []) as any[])
+    ? ((db.prepare(
+        iesId != null ? 'SELECT * FROM cursos WHERE ativo = 1 AND ies_id = ? ORDER BY id' : 'SELECT * FROM cursos WHERE ativo = 1 ORDER BY id'
+      ).all?.(...(iesId != null ? [iesId] : [])) ?? []) as any[])
     : [];
   const curso = aluno.curso ? encontrarCursoPorNome(cursosAtivos, aluno.curso) : undefined;
   if (!aluno.curso) {
@@ -234,8 +242,11 @@ export function verificarPendenciasDiploma(db: AdapterDb, alunoId: number): Pend
     }
   }
 
-  // Busca a IES do curso (ou a IES emissora ativa se o curso não estiver vinculado)
-  const iesDoCurso: any = curso
+  // Busca a IES do curso (ou a IES emissora ativa se o curso não estiver vinculado).
+  // Com iesId informado, valida sempre a IES escolhida para o processo.
+  const iesDoCurso: any = iesId != null
+    ? (db.prepare('SELECT * FROM ies WHERE id = ?').get(iesId) as any)
+    : curso
     ? (db.prepare('SELECT * FROM ies WHERE id = ?').get(curso.ies_id) as any)
     : (db.prepare("SELECT * FROM ies WHERE papel IN ('emissora','emissora_registradora') AND ativo = 1 ORDER BY id LIMIT 1").get() as any);
 

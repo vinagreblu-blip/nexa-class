@@ -28,6 +28,7 @@ interface Row {
   versao_schema: string;
   chave_acesso: string | null;
   created_at: string;
+  ies_emissora_nome?: string | null;
 }
 
 const STATUS_INFO: Record<string, { label: string; cor: string; fundo: string }> = {
@@ -57,6 +58,35 @@ function StatusBadge({ status }: { status: string }) {
 const inputStyle: React.CSSProperties = { flex: 1, minWidth: 120 };
 const labelStyle: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4, display: 'block' };
 const secaoStyle: React.CSSProperties = { fontSize: 13, fontWeight: 700, marginTop: 14, marginBottom: 6, color: 'var(--text)' };
+
+// ============================================================
+// MULTI-IES: cada processo tem IES emissora própria (ies_emissora_id).
+// O default do dropdown vem da "faculdade" do cadastro do aluno
+// (ex.: 'FACIIP', 'Hélio Rocha', 'FATECE') → linha correspondente da
+// tabela ies (match por nome normalizado, sem acento). Sem
+// correspondência → primeira IES emissora ativa (comportamento
+// histórico: FACIIP). O nome NUNCA é escrito fixo na tela.
+// ============================================================
+function normalizarNomeIes(t: unknown): string {
+  return String(t ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+}
+
+function iesDaFaculdade(lista: any[], faculdade?: string | null): any | undefined {
+  const alvo = normalizarNomeIes(faculdade);
+  if (!alvo) return undefined;
+  return lista.find((i) => {
+    const nome = normalizarNomeIes(i.nome);
+    return nome.includes(alvo) || alvo.includes(nome);
+  });
+}
+
+function emissorasAtivas(lista: any[]): any[] {
+  return lista.filter((i) => i.ativo === 1 && (i.papel === 'emissora' || i.papel === 'emissora_registradora'));
+}
 
 export function DiplomasDigitais() {
   const { usuario } = useAuth();
@@ -139,6 +169,7 @@ export function DiplomasDigitais() {
               <th>CPF</th>
               <th>Matrícula</th>
               <th>Curso</th>
+              <th>IES Emissora</th>
               <th>Conclusão</th>
               <th>Colação</th>
               <th>Status</th>
@@ -149,7 +180,7 @@ export function DiplomasDigitais() {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                <td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                   Nenhum processo de diploma digital aberto. Clique em “Abrir Processo” para um aluno concluído.
                 </td>
               </tr>
@@ -165,6 +196,7 @@ export function DiplomasDigitais() {
                 <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{r.aluno_cpf ?? '—'}</td>
                 <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{r.matricula}</td>
                 <td>{r.curso ?? '—'}</td>
+                <td style={{ fontSize: 12 }}>{r.ies_emissora_nome ?? '—'}</td>
                 <td>{r.conclusao ?? '—'}</td>
                 <td>{r.colacao ?? '—'}</td>
                 <td><StatusBadge status={r.status} /></td>
@@ -239,6 +271,20 @@ function ModalAbrirProcesso({
   const [carregando, setCarregando] = useState(false);
   const [abrindoId, setAbrindoId] = useState<number | null>(null);
   const [pendenciasAluno, setPendenciasAluno] = useState<{ aluno: any; pendencias: any[] } | null>(null);
+  // MULTI-IES: emissoras ativas (tabela ies) + escolha por aluno. Default =
+  // IES da faculdade do aluno; sem correspondência, primeira emissora ativa.
+  const [iesLista, setIesLista] = useState<any[]>([]);
+  const [iesPorAluno, setIesPorAluno] = useState<Record<number, number>>({});
+
+  useEffect(() => {
+    void (async () => {
+      const r = await api.diplomasDigitais.iesListar();
+      if (r.ok && r.data) setIesLista(emissorasAtivas(r.data as any[]));
+    })();
+  }, []);
+
+  const iesAluno = (a: any): number | undefined =>
+    iesPorAluno[a.id] ?? iesDaFaculdade(iesLista, a.faculdade)?.id ?? (iesLista.length > 0 ? iesLista[0].id : undefined);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -252,8 +298,10 @@ function ModalAbrirProcesso({
   }, [carregar]);
 
   const abrirProcesso = async (alunoId: number, nome: string) => {
+    const aluno = aptos.find((a) => a.id === alunoId);
+    const iesId = aluno ? iesAluno(aluno) : undefined;
     setAbrindoId(alunoId);
-    const r = await api.diplomasDigitais.criar(alunoId);
+    const r = await api.diplomasDigitais.criar(alunoId, iesId);
     setAbrindoId(null);
     if (r.ok) {
       onAberto(nome);
@@ -295,20 +343,32 @@ function ModalAbrirProcesso({
       <div style={{ maxHeight: 360, overflow: 'auto' }}>
         <table>
           <thead>
-            <tr><th>Aluno</th><th>Matrícula</th><th>Curso</th><th>Conclusão</th><th /></tr>
+            <tr><th>Aluno</th><th>Matrícula</th><th>Curso</th><th>IES Emissora</th><th>Conclusão</th><th /></tr>
           </thead>
           <tbody>
             {carregando && (
-              <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Carregando…</td></tr>
+              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Carregando…</td></tr>
             )}
             {!carregando && aptos.length === 0 && (
-              <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Nenhum aluno concluído sem processo.</td></tr>
+              <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Nenhum aluno concluído sem processo.</td></tr>
             )}
             {aptos.map((a) => (
               <tr key={a.id}>
                 <td>{a.nome}</td>
                 <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{a.matricula}</td>
                 <td>{a.curso ?? '—'}</td>
+                <td>
+                  <select
+                    value={iesAluno(a) ?? ''}
+                    onChange={(e) => setIesPorAluno((m) => ({ ...m, [a.id]: Number(e.target.value) }))}
+                    style={{ minWidth: 170, maxWidth: 230 }}
+                    disabled={abrindoId !== null}
+                  >
+                    {iesLista.map((i) => (
+                      <option key={i.id} value={i.id}>{i.nome}</option>
+                    ))}
+                  </select>
+                </td>
                 <td>{a.ano_conclusao}</td>
                 <td>
                   <button
@@ -671,6 +731,34 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
   };
 
   const [pendenciasDetalhe, setPendenciasDetalhe] = useState<any[] | null>(null);
+  // MULTI-IES: troca de IES emissora permitida apenas nos status iniciais
+  // (antes do primeiro XML — artefatos assinados não mudam de instituição).
+  const [iesListaDetalhe, setIesListaDetalhe] = useState<any[]>([]);
+  const [iesSel, setIesSel] = useState<number | ''>('');
+  const [salvandoIes, setSalvandoIes] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await api.diplomasDigitais.iesListar();
+      if (r.ok && r.data) setIesListaDetalhe(emissorasAtivas(r.data as any[]));
+    })();
+  }, []);
+
+  const salvarIes = async () => {
+    if (iesSel === '' || iesSel === dados?.ies_emissora_id) return;
+    setSalvandoIes(true);
+    setMsg(null);
+    const r = await api.diplomasDigitais.alterarIes(id, iesSel);
+    setSalvandoIes(false);
+    if (r.ok) {
+      setIesSel('');
+      setMsg({ tipo: 'ok', texto: 'IES emissora alterada — o processo passou a usar os dados institucionais (XML, histórico, diploma) da IES selecionada.' });
+    } else {
+      setMsg({ tipo: 'erro', texto: r.error ?? 'Falha ao alterar IES emissora' });
+    }
+    await carregar();
+  };
+
   const verPendencias = async () => {
     const alunoId = dados?.processo?.aluno_id ?? id;
     const r = await api.diplomasDigitais.pendencias(alunoId);
@@ -691,7 +779,32 @@ function ModalDetalhe({ id, onClose }: { id: number; onClose: () => void }) {
       <div className="form-grid">
         <div><label style={labelStyle}>Status</label><StatusBadge status={dados.status} /></div>
         <div><label style={labelStyle}>Versão do schema</label><span style={{ fontFamily: 'monospace' }}>{dados.versao_schema}</span></div>
-        <div><label style={labelStyle}>IES emissora</label>{dados.ies_emissora_nome ?? '—'}</div>
+        <div style={{ gridColumn: 'span 2' }}>
+          <label style={labelStyle}>IES emissora</label>
+          {(dados.status === 'apto' || dados.status === 'em_preparacao') && iesListaDetalhe.length > 0 ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <select
+                value={iesSel !== '' ? iesSel : dados.ies_emissora_id ?? ''}
+                onChange={(e) => setIesSel(Number(e.target.value))}
+                disabled={salvandoIes}
+                style={{ flex: 1, minWidth: 0 }}
+              >
+                {iesListaDetalhe.map((i) => (
+                  <option key={i.id} value={i.id}>{i.nome}</option>
+                ))}
+              </select>
+              <button
+                className="btn-ghost btn-sm"
+                disabled={salvandoIes || iesSel === '' || iesSel === dados.ies_emissora_id}
+                onClick={() => void salvarIes()}
+              >
+                {salvandoIes ? 'Salvando…' : 'Trocar'}
+              </button>
+            </div>
+          ) : (
+            dados.ies_emissora_nome ?? '—'
+          )}
+        </div>
         <div><label style={labelStyle}>Curso</label>{dados.curso ?? '—'}</div>
         <div><label style={labelStyle}>Matrícula</label><span style={{ fontFamily: 'monospace' }}>{dados.matricula}</span></div>
         <div><label style={labelStyle}>Colação</label>{dados.data_colacao ?? '—'}</div>
@@ -1011,41 +1124,43 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
   const [reconhecimentoEmec, setReconhecimentoEmec] = useState({ numeroProcesso: '', tipoProcesso: '', dataCadastro: '', dataProtocolo: '' });
   const [habilitacao, setHabilitacao] = useState({ nome: '', data: '' });
 
+  // Carrega uma IES da tabela no formulário (edição individual — MULTI-IES).
+  const selecionarIes = (reg: any) => {
+    setIes({
+      id: reg.id, nome: reg.nome ?? '', codigoEmec: reg.codigo_emec?.toString() ?? '',
+      cnpj: reg.cnpj ?? '', papel: reg.papel ?? 'emissora',
+      logradouro: reg.logradouro ?? '', numero: reg.numero ?? '',
+      complemento: reg.complemento ?? '', bairro: reg.bairro ?? '',
+      codigoMunicipio: reg.codigo_municipio ?? '', nomeMunicipio: reg.nome_municipio ?? '',
+      uf: reg.uf ?? '', cep: reg.cep ?? '',
+    });
+    setCredenciamento(reg.credenciamento_json ? (() => { try { return JSON.parse(reg.credenciamento_json); } catch { return { tipo: '', numero: '', data: '' }; } })() : { tipo: '', numero: '', data: '' });
+    setRecredenciamento(reg.recredenciamento_json ? (() => { try { return JSON.parse(reg.recredenciamento_json); } catch { return { tipo: '', numero: '', data: '' }; } })() : { tipo: '', numero: '', data: '' });
+    setRenovacaoRecred(reg.renovacao_recredenciamento_json ? (() => { try { return JSON.parse(reg.renovacao_recredenciamento_json); } catch { return { tipo: '', numero: '', data: '' }; } })() : { tipo: '', numero: '', data: '' });
+    if (reg.mantenedora_json) {
+      try {
+        const m = JSON.parse(reg.mantenedora_json);
+        const e = m.endereco ?? {};
+        setMantenedora({
+          razaoSocial: m.razaoSocial ?? '', cnpj: m.cnpj ?? '',
+          logradouro: e.logradouro ?? '', numero: e.numero ?? '', complemento: e.complemento ?? '',
+          bairro: e.bairro ?? '', codigoMunicipio: e.codigoMunicipio ?? '',
+          nomeMunicipio: e.nomeMunicipio ?? '', uf: e.uf ?? '', cep: e.cep ?? '',
+        });
+      } catch { /* ignora */ }
+    } else {
+      setMantenedora({ razaoSocial: '', cnpj: '', logradouro: '', numero: '', complemento: '', bairro: '', codigoMunicipio: '', nomeMunicipio: '', uf: '', cep: '' });
+    }
+  };
+
   const carregar = useCallback(async () => {
     const r = await api.diplomasDigitais.iesListar();
     if (r.ok && r.data) {
       setIesLista(r.data);
+      // Default histórico: pré-carrega a primeira emissora ativa
       const emissora = (r.data as any[]).find((i) => i.papel === 'emissora' && i.ativo === 1);
       if (emissora && !ies.id) {
-        setIes({
-          id: emissora.id, nome: emissora.nome ?? '', codigoEmec: emissora.codigo_emec?.toString() ?? '',
-          cnpj: emissora.cnpj ?? '', papel: emissora.papel ?? 'emissora',
-          logradouro: emissora.logradouro ?? '', numero: emissora.numero ?? '',
-          complemento: emissora.complemento ?? '', bairro: emissora.bairro ?? '',
-          codigoMunicipio: emissora.codigo_municipio ?? '', nomeMunicipio: emissora.nome_municipio ?? '',
-          uf: emissora.uf ?? '', cep: emissora.cep ?? '',
-        });
-        if (emissora.credenciamento_json) {
-          try { setCredenciamento(JSON.parse(emissora.credenciamento_json)); } catch { /* ignora */ }
-        }
-        if (emissora.recredenciamento_json) {
-          try { setRecredenciamento(JSON.parse(emissora.recredenciamento_json)); } catch { /* ignora */ }
-        }
-        if (emissora.renovacao_recredenciamento_json) {
-          try { setRenovacaoRecred(JSON.parse(emissora.renovacao_recredenciamento_json)); } catch { /* ignora */ }
-        }
-        if (emissora.mantenedora_json) {
-          try {
-            const m = JSON.parse(emissora.mantenedora_json);
-            const e = m.endereco ?? {};
-            setMantenedora({
-              razaoSocial: m.razaoSocial ?? '', cnpj: m.cnpj ?? '',
-              logradouro: e.logradouro ?? '', numero: e.numero ?? '', complemento: e.complemento ?? '',
-              bairro: e.bairro ?? '', codigoMunicipio: e.codigoMunicipio ?? '',
-              nomeMunicipio: e.nomeMunicipio ?? '', uf: e.uf ?? '', cep: e.cep ?? '',
-            });
-          } catch { /* ignora */ }
-        }
+        selecionarIes(emissora);
       }
     }
     const c = await api.diplomasDigitais.cursoGraduacaoListar();
@@ -1205,11 +1320,41 @@ function ModalCadastroInstitucional({ onClose, onErro }: { onClose: () => void; 
 
       {vista === 'ies' && (
         <>
-          {iesLista.length > 1 && (
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
-              {iesLista.length} IES cadastradas — editando: <strong>{ies.nome || '—'}</strong>
-            </p>
-          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>IES em edição ({iesLista.filter((i) => i.ativo === 1).length} ativas)</label>
+              <select
+                value={ies.id ?? ''}
+                onChange={(e) => {
+                  const reg = iesLista.find((i) => i.id === Number(e.target.value));
+                  if (reg) selecionarIes(reg);
+                }}
+                style={{ width: '100%' }}
+              >
+                {!ies.id && <option value="">— Nova IES (preencha abaixo) —</option>}
+                {iesLista.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.nome}
+                    {i.ativo === 0 ? ' (inativa)' : i.papel === 'registradora' ? ' (registradora)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {ies.id != null && (
+              <button
+                className="btn-ghost btn-sm"
+                onClick={() => {
+                  setIes({ id: undefined, nome: '', codigoEmec: '', cnpj: '', papel: 'emissora', logradouro: '', numero: '', complemento: '', bairro: '', codigoMunicipio: '', nomeMunicipio: '', uf: '', cep: '' });
+                  setCredenciamento({ tipo: '', numero: '', data: '' });
+                  setRecredenciamento({ tipo: '', numero: '', data: '' });
+                  setRenovacaoRecred({ tipo: '', numero: '', data: '' });
+                  setMantenedora({ razaoSocial: '', cnpj: '', logradouro: '', numero: '', complemento: '', bairro: '', codigoMunicipio: '', nomeMunicipio: '', uf: '', cep: '' });
+                }}
+              >
+                Nova IES
+              </button>
+            )}
+          </div>
           <div className="form-grid">
             <div className="full">
               <label style={labelStyle}>Nome da IES *</label>
@@ -1646,6 +1791,21 @@ function ModalRelatoriosOficiais({
   const [inicio, setInicio] = useState('');
   const [fim, setFim] = useState('');
   const [gerandoFisc, setGerandoFisc] = useState(false);
+  // MULTI-IES: o XSD admite um único bloco IESEmissora por arquivo de
+  // fiscalização — o relatório é gerado por IES (default: primeira ativa).
+  const [iesLista, setIesLista] = useState<any[]>([]);
+  const [iesId, setIesId] = useState<number | ''>('');
+
+  useEffect(() => {
+    void (async () => {
+      const r = await api.diplomasDigitais.iesListar();
+      if (r.ok && r.data) {
+        const ativas = emissorasAtivas(r.data as any[]);
+        setIesLista(ativas);
+        if (ativas.length > 0) setIesId(ativas[0].id);
+      }
+    })();
+  }, []);
 
   const gerarLista = async () => {
     setGerandoLista(true);
@@ -1657,10 +1817,16 @@ function ModalRelatoriosOficiais({
 
   const gerarFisc = async () => {
     setGerandoFisc(true);
-    const r = await api.diplomasDigitais.gerarFiscalizacao({ dataInicio: inicio, dataFim: fim });
+    const r = await api.diplomasDigitais.gerarFiscalizacao({
+      dataInicio: inicio,
+      dataFim: fim,
+      iesId: iesId === '' ? undefined : iesId,
+    });
     setGerandoFisc(false);
-    if (r.ok) onOk(`Arquivo de Fiscalização gerado e VÁLIDO (XSD 1.05): ${r.data?.diplomas} diplomas — ${r.data?.salvoPath}. URLs assinadas do Storage expiram em 7 dias (documentado).`);
-    else onErro(r.error ?? 'Falha');
+    if (r.ok) {
+      const ies = iesLista.find((i) => i.id === iesId);
+      onOk(`Arquivo de Fiscalização${ies ? ` — ${ies.nome}` : ''} — gerado e VÁLIDO (XSD 1.05): ${r.data?.diplomas} diplomas — ${r.data?.salvoPath}. URLs assinadas do Storage expiram em 7 dias (documentado).`);
+    } else onErro(r.error ?? 'Falha');
   };
 
   return (
@@ -1689,9 +1855,17 @@ function ModalRelatoriosOficiais({
       <div style={secaoStyle}>Arquivo de Fiscalização (emissora)</div>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
         Exportação para fiscalização do MEC: exige diplomas REGISTRADOS com RVDD gerada e nuvem ativa (URLs https do
-        Storage — expiram em 7 dias).
+        Storage — expiram em 7 dias). Gerado POR IES — entram apenas os diplomas registrados da IES selecionada.
       </p>
       <div className="form-grid">
+        <div className="full">
+          <label style={labelStyle}>IES emissora *</label>
+          <select value={iesId} onChange={(e) => setIesId(Number(e.target.value))}>
+            {iesLista.map((i) => (
+              <option key={i.id} value={i.id}>{i.nome}</option>
+            ))}
+          </select>
+        </div>
         <div>
           <label style={labelStyle}>Início do período (AAAA-MM-DD) *</label>
           <input value={inicio} onChange={(e) => setInicio(e.target.value)} placeholder="2026-01-01" />
@@ -1702,7 +1876,7 @@ function ModalRelatoriosOficiais({
         </div>
       </div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-        <button className="btn-accent btn-sm" disabled={gerandoFisc || !inicio || !fim} onClick={() => void gerarFisc()}>
+        <button className="btn-accent btn-sm" disabled={gerandoFisc || !inicio || !fim || iesId === ''} onClick={() => void gerarFisc()}>
           {gerandoFisc ? 'Gerando…' : 'Gerar Arquivo de Fiscalização'}
         </button>
       </div>
