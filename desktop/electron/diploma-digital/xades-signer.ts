@@ -4,8 +4,23 @@
 // Assinatura REAL (RSA-SHA256 + C14N) no padrão do MEC:
 //  - Reference #1: elemento ANCESTRAL da assinatura com @id
 //    (DadosDiploma→#Dip{44}, RegistroReq→#ReqDip{44}; sem id→URI="")
+//    • COM @id (co-assinaturas de DadosDiploma): digest sobre o
+//      elemento MENOS TODAS as ds:Signature (co-assinaturas
+//      independentes — impossível minus-self p/ 2 sigs do mesmo
+//      nível: cada digest precisaria conter a outra, regressão
+//      infinita). É a semântica do transform XPath do padrão
+//      (not(ancestor-or-self::ds:Signature)).
+//    • SEM @id (assinatura de ARQUIVAMENTO na raiz): digest sobre o
+//      documento MENOS APENAS a própria assinatura — as assinaturas
+//      internas FAZEM PARTE do conteúdo arquivado (semântica
+//      enveloped XMLDSig + perfil AD-RA). Confirmado contra o motor
+//      .NET SignedXml (mesmo motor do validador oficial do MEC).
+//    • Transforms declarados: enveloped-signature + c14n-20010315.
+//      O transform XPath NÃO é mais emitido: no pipeline .NET ele
+//      corrompe o node-set da referência (digest diverge →
+//      "assinatura inválida" no validador).
 //  - Reference #2: xades:SignedProperties (SigningTime +
-//    SigningCertificate digest SHA-256 + EPES PA-AD-RC v2.4)
+//    SigningCertificate digest SHA-256 + EPES conforme política)
 //  - KeyInfo: X509SubjectName + X509Certificate completo
 //  - Conformidade X509: serial DECIMAL, IssuerSerial .NET
 //  - A1: node-forge. A3: SignHash bruto no token.
@@ -17,12 +32,9 @@ import { NS_DS, NS_XADES, escapeXml } from './xml-utils';
 
 const ALGO_C14N_EXC = 'http://www.w3.org/2001/10/xml-exc-c14n#';
 const ALGO_ENV = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
-const ALGO_XPATH = 'http://www.w3.org/TR/1999/REC-xpath-19991116';
 const ALGO_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
 const ALGO_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
 const TYPE_SIGNED_PROPERTIES = 'http://uri.etsi.org/01903#SignedProperties';
-const XPATH_SEM_ASSINATURAS =
-  'not(ancestor-or-self::*[namespace-uri()=&quot;http://www.w3.org/2000/09/xmldsig#&quot; and local-name()=&quot;Signature&quot;])';
 
 // ---- Política de assinatura (EPES): PA_AD_RC_v2_4 (ICP-Brasil) ----
 // digestBase64 = SHA-256 sobre a forma EXCLUSIVE-C14N do documento oficial
@@ -39,6 +51,20 @@ export const POLITICA_ASSINATURA: PoliticaXades = {
   identificador: 'urn:oid:2.16.76.1.7.1.9.2.4',
   digestBase64: 'U3FUu2OA+aOscqiTstbYyxLRWnLLE+x6nVX8WiZjUAw=',
   spuri: 'http://politicas.icpbrasil.gov.br/PA_AD_RC_v2_4.xml',
+};
+
+// ---- Política de ARQUIVAMENTO (assinatura da RAIZ da Documentação
+// Acadêmica): PA-AD-RA v2.1 (ICP-Brasil) — o validador do MEC exige
+// que a "assinatura de arquivamento" seja EPES com ESTA política.
+// digestBase64 = SHA-256 sobre a forma EXCLUSIVE-C14N do documento
+// oficial (o próprio PA declara <ds:Transform Algorithm="exc-c14n#"/>
+// no cabeçalho) — mesmo cálculo do PA-AD-RC acima.
+// CONFIRMADO em 11/09/2026 contra http://politicas.icpbrasil.gov.br/PA_AD_RA_v2_1.xml
+// (84.482 bytes; Identifier OIDAsURN 2.16.76.1.7.1.10.2.1 no próprio doc).
+export const POLITICA_ARQUIVAMENTO: PoliticaXades = {
+  identificador: 'urn:oid:2.16.76.1.7.1.10.2.1',
+  digestBase64: 'WnQ1VxHAhIXfS0u8f/tej7LU/vNQ/f5lCMpTg0ZNuDw=',
+  spuri: 'http://politicas.icpbrasil.gov.br/PA_AD_RA_v2_1.xml',
 };
 
 export interface PoliticaXades {
@@ -65,8 +91,23 @@ export interface OpcoesAssinaturaXades {
   politica?: PoliticaXades | null;
 }
 
-export interface OpcoesAssinarTodos extends Omit<OpcoesAssinaturaXades, 'signatureId'> {
+/** Credencial (certificado + política) de UMA posição de assinatura. */
+export type CredencialPosicao = Omit<OpcoesAssinaturaXades, 'signatureId'>;
+
+export interface OpcoesAssinarTodos {
+  /** Credencial comum a todas as posições (usada quando `posicoes` omite
+   *  um campo). Sozinha, assina tudo com o MESMO certificado (histórico,
+   *  testes e compatibilidade). */
+  chavePem?: string;
+  certPem?: string;
+  thumbprintA3?: string;
+  politica?: PoliticaXades | null;
   carimbador?: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>;
+  /** Credencial específica por posição de assinatura (ordem de
+   *  assinatura = ordem no documento). Índice 0 = 1º esqueleto.
+   *  Campos omitidos herdam as opções comuns. Ex.: Documentação
+   *  Acadêmica → [e-CNPJ IES, e-CPF responsável, e-CNPJ IES + AD-RA]. */
+  posicoes?: CredencialPosicao[];
 }
 
 function b64(buf: Buffer | Uint8Array): string {
@@ -220,15 +261,18 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
     opts.politica === null ? null : (opts.politica ?? POLITICA_ASSINATURA);
   const qp = qualifyingProperties(certDer, { issuerName, serialNumber: serial }, signatureId, agora, politicaFinal);
 
-  // ---- digest #1: elemento alvo SEM assinaturas (computado no DOM do
-  // documento COMPLETO para preservar o namespace herdado da raiz)
+  // ---- digest #1 (computado no DOM do documento COMPLETO para
+  // preservar o namespace herdado da raiz):
+  //  • COM @id → elemento alvo MENOS TODAS as ds:Signature (co-assinatura);
+  //  • SEM @id → documento MENOS A PRÓPRIA assinatura (arquivamento).
   const docBase = parseDoc(xml);
   let nodeAlvo: any;
   if (refId) {
     // acha o ancestral com @id no DOM completo
     const ancestralDom = acharElementoPorId(docBase, ancestral.tagName, refId);
     if (!ancestralDom) throw new Error(`Elemento com id="${refId}" não encontrado`);
-    // CLONA e remove TODAS as Signature do clone (semântica do XPath)
+    // CLONA e remove TODAS as Signature do clone (co-assinaturas:
+    // cada assinatura de DadosDiploma é independente das demais)
     const clone = ancestralDom.cloneNode(true);
     const removerSigs = (el: any) => {
       for (let i = 0; i < el.childNodes?.length; i++) {
@@ -243,19 +287,28 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
     removerSigs(clone);
     nodeAlvo = clone;
   } else {
-    // sem @id: documento inteiro sem assinaturas
+    // sem @id (assinatura na RAIZ do documento — arquivamento da DA):
+    // digest sobre o documento MENOS APENAS a própria assinatura (o
+    // esqueleto atual, SignatureValue ainda vazio). As assinaturas
+    // reais internas (DadosDiploma) FAZEM PARTE do conteúdo assinado —
+    // é o que a assinatura de arquivamento AD-RA atesta, e é a
+    // semântica enveloped do XMLDSig que o validador (.NET SignedXml)
+    // computa para URI="". Remover TODAS quebrava a validação.
     const clone = docBase.documentElement.cloneNode(true);
-    const removerSigs = (el: any) => {
-      for (let i = 0; i < el.childNodes?.length; i++) {
-        const c = el.childNodes[i];
-        if (c.localName === 'Signature' && (c.namespaceURI === NS_DS || c.namespaceURI === 'https://www.w3.org/2000/09/xmldsig#')) {
-          el.removeChild(c); i--;
-        } else if (c.nodeType === 1) {
-          removerSigs(c);
-        }
+    const temSignatureValue = (sg: any): boolean => {
+      for (let j = 0; j < sg.childNodes?.length; j++) {
+        const cc = sg.childNodes[j];
+        if (cc.localName === 'SignatureValue' && (cc.textContent ?? '') !== '') return true;
       }
+      return false;
     };
-    removerSigs(clone);
+    for (let i = 0; i < clone.childNodes.length; i++) {
+      const c = clone.childNodes[i];
+      if (c.localName === 'Signature' && !temSignatureValue(c)) {
+        clone.removeChild(c);
+        i--;
+      }
+    }
     nodeAlvo = clone;
   }
   const c14nAlvo = new C14nCanonicalization().process(nodeAlvo, {} as any);
@@ -268,7 +321,6 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
     `<ds:Reference URI="${refId ? '#' + refId : ''}">` +
     `<ds:Transforms>` +
     `<ds:Transform Algorithm="${ALGO_ENV}"></ds:Transform>` +
-    `<ds:Transform Algorithm="${ALGO_XPATH}"><ds:XPath>${XPATH_SEM_ASSINATURAS}</ds:XPath></ds:Transform>` +
     `<ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></ds:Transform>` +
     `</ds:Transforms>` +
     `<ds:DigestMethod Algorithm="${ALGO_SHA256}"></ds:DigestMethod>` +
@@ -354,16 +406,21 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
 
 export async function assinarTodosEsqueletos(xml: string, opts: OpcoesAssinarTodos): Promise<string> {
   let out = xml;
+  let indice = 0;
   while (contarEsqueletos(out) > 0) {
+    const esp = opts.posicoes?.[indice];
+    const certPem = esp?.certPem ?? opts.certPem;
+    if (!certPem) throw new Error('Credencial de assinatura sem certificado (certPem) na posição ' + (indice + 1));
     out = await assinarProximoEsqueleto(out, {
-      chavePem: opts.chavePem,
-      certPem: opts.certPem,
-      thumbprintA3: opts.thumbprintA3,
-      politica: opts.politica,
+      chavePem: esp?.chavePem ?? opts.chavePem,
+      certPem,
+      thumbprintA3: esp?.thumbprintA3 ?? opts.thumbprintA3,
+      politica: esp && esp.politica !== undefined ? esp.politica : opts.politica,
     });
     if (opts.carimbador) {
       out = (await carimbarAssinaturas(out, opts.carimbador)).xml;
     }
+    indice++;
   }
   return out;
 }

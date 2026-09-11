@@ -75,7 +75,7 @@ function gerarCertTeste(): { certPem: string; chavePem: string } {
 }
 
 describe('M4: Diploma final pós-registro × XSD oficial', () => {
-  it('DA com DUAS assinaturas da emissora: ambas verificáveis (Reference por @id)', async () => {
+  it('DA com TRÊS assinaturas da emissora: todas verificáveis (Reference por @id + raiz menos-self)', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const snapshot = { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any;
 
@@ -93,18 +93,19 @@ describe('M4: Diploma final pós-registro × XSD oficial', () => {
       const daAssinada = await assinarTodosEsqueletos(da!, { signatureIdBase: 'Sign-DD42', chavePem, certPem });
       expect(contarEsqueletos(daAssinada)).toBe(0);
 
-      // Reference interna aponta para o elemento com @id (DadosDiploma),
-      // não para o documento inteiro — sobrevive à assinatura da raiz.
+      // References internas apontam para o elemento com @id (DadosDiploma),
+      // não para o documento inteiro — sobrevivem às demais assinaturas.
       const mInterna = /<ds:Reference URI="#(Dip[0-9]{44})">/.exec(daAssinada);
       expect(mInterna).toBeTruthy();
       expect(mInterna![1]).toBe(PROCESSO.chave_acesso);
       expect(daAssinada).toContain('URI=""'); // assinatura da raiz cobre o doc todo
+      expect((daAssinada.match(/<ds:Reference URI="#Dip[0-9]{44}">/g) ?? []).length).toBe(2); // 2 em DadosDiploma
 
-      // AS DUAS assinaturas verificam criptograficamente (motor independente)
+      // AS TRÊS assinaturas verificam criptograficamente (motor independente)
       const doc = new DOMParser().parseFromString(daAssinada, 'text/xml');
       const assinaturas = doc.getElementsByTagName('ds:Signature');
-      expect(assinaturas.length).toBe(2);
-      for (let i = 0; i < 2; i++) {
+      expect(assinaturas.length).toBe(3);
+      for (let i = 0; i < 3; i++) {
         const sig = novoVerificador(certPem, assinaturas[i]);
         const ok = sig.checkSignature(daAssinada);
         if (!ok) for (const r of sig.getReferences()) console.error(`SIG${i} REF`, r.uri, '→', r.validationError);
@@ -129,7 +130,7 @@ describe('M4: Diploma final pós-registro × XSD oficial', () => {
     try {
       const da = gerarDocumentacaoAcademicaXml(snapshot, [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }]);
       expect(da).toBeTruthy();
-      expect(contarEsqueletos(da!)).toBe(2); // DadosDiploma + nível doc
+      expect(contarEsqueletos(da!)).toBe(3); // 2 em DadosDiploma + 1 arquivamento (raiz)
 
       const daAssinada = await assinarTodosEsqueletos(da!, { signatureIdBase: 'Sign-DD42', chavePem, certPem });
       expect(contarEsqueletos(daAssinada)).toBe(0);
@@ -154,18 +155,20 @@ describe('M4: Diploma final pós-registro × XSD oficial', () => {
       if (!r.valido) console.error('ERROS XSD:', r.erros);
       expect(r.valido).toBe(true);
 
-      // TRANSPLANTE: a assinatura da EMISSORA (Reference #Dip{44} sobre o
-      // DadosDiploma extraído byte-idêntito da DA) continua verificável
+      // TRANSPLANTE: as assinaturas da EMISSORA (Reference #Dip{44} sobre o
+      // DadosDiploma extraído byte-idêntito da DA) continuam verificáveis
       // dentro do Diploma final — é o requisito do fluxo oficial.
       const { DOMParser } = await import('@xmldom/xmldom');
       const docFinal = new DOMParser().parseFromString(final!, 'text/xml');
       const assinaturas = docFinal.getElementsByTagName('ds:Signature');
-      // [0] emissora (real, dentro de DadosDiploma); [1]/[2] registradora (esqueleto)
-      expect(assinaturas.length).toBe(3);
-      const sigEmissora = novoVerificador(certPem, assinaturas[0]);
-      const okTransplante = sigEmissora.checkSignature(final!);
-      if (!okTransplante) for (const r2 of sigEmissora.getReferences()) console.error('TRANSPLANTE REF', r2.uri, '→', r2.validationError);
-      expect(okTransplante).toBe(true);
+      // [0]/[1] emissora (reais, dentro de DadosDiploma); [2]/[3] registradora (esqueleto)
+      expect(assinaturas.length).toBe(4);
+      const okTransplante0 = novoVerificador(certPem, assinaturas[0]).checkSignature(final!);
+      if (!okTransplante0) for (const r2 of novoVerificador(certPem, assinaturas[0]).getReferences()) console.error('TRANSPLANTE0 REF', r2.uri, '→', r2.validationError);
+      expect(okTransplante0).toBe(true);
+      const okTransplante1 = novoVerificador(certPem, assinaturas[1]).checkSignature(final!);
+      if (!okTransplante1) for (const r2 of novoVerificador(certPem, assinaturas[1]).getReferences()) console.error('TRANSPLANTE1 REF', r2.uri, '→', r2.validationError);
+      expect(okTransplante1).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

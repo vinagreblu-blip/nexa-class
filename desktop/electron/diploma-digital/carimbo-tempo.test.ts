@@ -5,7 +5,7 @@
 //  - tsa-cliente: requisição DER montada e resposta validada
 //    (status granted + nonce confere + genTime extraído)
 //  - carimbarAssinaturas: carimba CADA assinatura real (histórico 1×,
-//    DA 2×), não mexe nos esqueletos, NÃO invalida as assinaturas
+//    DA 3×), não mexe nos esqueletos, NÃO invalida as assinaturas
 //    (checkSignature continua OK), mantém o XSD válido e o carimbo
 //    sobrevive ao transplante da DA para o Diploma final.
 import { describe, expect, it } from 'vitest';
@@ -164,7 +164,7 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
     expect(r.valido).toBe(true);
   }, 60000);
 
-  it('DA: carimba cada assinatura NA ORDEM certa (raiz cobre a interna carimbada) e o carimbo sobrevive ao Diploma final', async () => {
+  it('DA: carimba cada assinatura NA ORDEM certa (raiz cobre as internas carimbadas) e o carimbo sobrevive ao Diploma final', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const snapshot = { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-tst-'));
@@ -173,9 +173,9 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
     try {
       const da = gerarDocumentacaoAcademicaXml(snapshot, [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }])!;
       const daCarimbada = await assinarTodosEsqueletos(da, { chavePem, certPem, carimbador: tsaFake() });
-      expect((daCarimbada.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(2);
+      expect((daCarimbada.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(3);
 
-      // As duas continuam verificáveis (a raiz assinou SOBRE a interna carimbada)
+      // As TRÊS continuam verificáveis (a raiz assinou SOBRE as internas carimbadas)
       const { DOMParser } = await import('@xmldom/xmldom');
       const doc = new DOMParser().parseFromString(daCarimbada, 'text/xml');
       const assinaturas = doc.getElementsByTagNameNS('*', 'Signature');
@@ -187,9 +187,9 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
         expect(ok).toBe(true);
       }
 
-      // Diploma final: só a assinatura INTERNA da DA é transplantada (com
-      // seu carimbo); a assinatura raiz da DA fica na DA. Esqueletos da
-      // registradora NÃO são carimbados → 1 carimbo no Diploma final.
+      // Diploma final: só as assinaturas INTERNAS da DA são transplantadas
+      // (com seus carimbos); a assinatura raiz da DA fica na DA. Esqueletos
+      // da registradora NÃO são carimbados → 2 carimbos no Diploma final.
       const final = gerarDiplomaFinalXml(
         snapshot, daCarimbada,
         {
@@ -201,13 +201,14 @@ describe('XAdES-T — carimbo no fluxo de assinatura', () => {
         REGISTRADORA,
         'VDip' + '1'.repeat(44), 'RDip' + '1'.repeat(44)
       )!;
-      expect((final.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(1); // a interna da emissora
+      expect((final.match(/<xades:SignatureTimeStamp/g) ?? []).length).toBe(2); // as internas da emissora
 
-      // A assinatura carimbada da emissora AINDA verifica dentro do Diploma final
+      // As assinaturas carimbadas da emissora AINDA verificam dentro do Diploma final
       const docFinal = new DOMParser().parseFromString(final, 'text/xml');
       const sigsFinal = docFinal.getElementsByTagNameNS('*', 'Signature');
-      expect(sigsFinal.length).toBe(3);
+      expect(sigsFinal.length).toBe(4); // 2 emissora (reais) + 2 registradora (esqueleto)
       expect(novoVerificador(certPem, sigsFinal[0]).checkSignature(final)).toBe(true);
+      expect(novoVerificador(certPem, sigsFinal[1]).checkSignature(final)).toBe(true);
 
       const r = await validarXmlContraXsd(final, 'diploma');
       if (!r.valido) console.error('ERROS XSD:', r.erros);

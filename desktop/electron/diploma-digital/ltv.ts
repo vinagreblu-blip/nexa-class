@@ -287,10 +287,19 @@ export async function aplicarLtv(
     '</xades:CRLValues></xades:RevocationValues>';
 
   let out = xml;
+  // LTV por SIGNATÁRIO: os blocos XL (CertRefs/CRLRefs/values) de cada
+  // assinatura devem derivar da cadeia do certificado DELA. Com a DA
+  // multi-assinador (e-CNPJ IES + e-CPF responsável), o chamador invoca
+  // uma vez por certificado — aqui filtramos pela assinatura cujo
+  // X509Certificate do KeyInfo é o leaf informado (mesmo certificado =
+  // comportamento anterior: todas as assinaturas dele).
+  const leafB64 = certPemLeaf.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
   // ordem REVERSA (offsets)
   for (const trecho of [...trechosAssinatura(xml)].reverse()) {
     if (trecho.esqueleto) continue;
     if (trecho.texto.includes('<xades:SigAndRefsTimeStamp')) continue; // já aplicado
+    const mCert = /<(?:ds:)?X509Certificate>([^<]+)<\/(?:ds:)?X509Certificate>/.exec(trecho.texto);
+    if (mCert && mCert[1].trim() !== leafB64) continue; // outro signatário
     const mFim = trecho.texto.indexOf('</SignatureTimeStamp>');
     if (mFim < 0) continue; // sem 1º carimbo — LTV exige carimbo antes
     const inserirApos = mFim + '</SignatureTimeStamp>'.length;

@@ -231,6 +231,7 @@ function createSchema(): void {
       certificado_path TEXT,
       certificado_tipo TEXT,
       certificado_a3_thumbprint TEXT,
+      uso_diploma TEXT,
       ativo INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -541,6 +542,11 @@ function migrateDiplomasDigitais(): void {
   // {numeroProcesso, tipoProcesso, dataCadastro, dataProtocolo}
   addCol('cursos', 'habilitacao_json', 'habilitacao_json TEXT');
   addCol('cursos', 'reconhecimento_emec_json', 'reconhecimento_emec_json TEXT');
+  // Diploma Digital: papel do certificado no fluxo de assinatura da DA —
+  // 'ies_ecnpj' (e-CNPJ da IES: assinatura 1 de DadosDiploma + raiz/AD-RA)
+  // ou 'responsavel_ecpf' (e-CPF do responsável: assinatura 2 de
+  // DadosDiploma — exigência do validador do MEC). NULL = sem papel.
+  addCol('assinaturas', 'uso_diploma', 'uso_diploma TEXT');
 }
 
 function migrateAlunos(): void {

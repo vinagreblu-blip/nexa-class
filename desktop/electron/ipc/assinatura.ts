@@ -25,6 +25,8 @@ export interface Assinatura {
   certificado_path: string | null;
   certificado_tipo: 'A1' | 'A3' | null;
   certificado_a3_thumbprint: string | null;
+  /** Papel no fluxo do Diploma Digital: 'ies_ecnpj' | 'responsavel_ecpf' | NULL. */
+  uso_diploma: string | null;
   ativo: number;
 }
 
@@ -151,6 +153,127 @@ async function uploadCert(
 
   const row = db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(ass.id) as Assinatura;
   return { ok: true, data: row };
+}
+
+// ---------------------------------------------------------------------------
+// Certificados do DIPLOMA DIGITAL (Documentação Acadêmica)
+//
+// O validador do MEC exige 3 assinaturas na DA: 2 em DadosDiploma (1 com
+// e-CNPJ da IES + 1 com e-CPF do responsável) e 1 de ARQUIVAMENTO na raiz
+// (política AD-RA). São DOIS certificados distintos — slots dedicados por
+// papel (uso_diploma), em linhas SEPARADAS (ativo=0: não participam da
+// seleção de imagem de assinatura nem da linha ativa histórica).
+// ---------------------------------------------------------------------------
+
+export type UsoDiploma = 'ies_ecnpj' | 'responsavel_ecpf';
+
+const ROTULO_USO_DIPLOMA: Record<UsoDiploma, string> = {
+  ies_ecnpj: 'e-CNPJ da IES',
+  responsavel_ecpf: 'e-CPF do Responsável',
+};
+
+export interface CertificadosDiploma {
+  /** e-CNPJ da IES — assinatura 1 de DadosDiploma + arquivamento (AD-RA). */
+  ies: Assinatura | null;
+  /** e-CPF do responsável — assinatura 2 de DadosDiploma. */
+  responsavel: Assinatura | null;
+  /** true = IES usando o certificado da linha ativa (instalações antigas,
+   *  antes do slot dedicado — retrocompatibilidade preservada). */
+  iesDaLinhaAtiva: boolean;
+}
+
+function temCertificado(a: Assinatura | null | undefined): boolean {
+  return !!a && (!!a.certificado_a3_thumbprint || !!a.certificado_path);
+}
+
+function linhaPorUso(uso: UsoDiploma): Assinatura | null {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT * FROM assinaturas WHERE uso_diploma = ? ORDER BY id DESC LIMIT 1')
+    .get(uso) as Assinatura | undefined;
+  return temCertificado(row) ? (row as Assinatura) : null;
+}
+
+/** Certificados configurados para o fluxo do Diploma Digital (DA). */
+export function obterCertificadosDiploma(): CertificadosDiploma {
+  const iesDedicada = linhaPorUso('ies_ecnpj');
+  if (iesDedicada) {
+    return { ies: iesDedicada, responsavel: linhaPorUso('responsavel_ecpf'), iesDaLinhaAtiva: false };
+  }
+  const ativa = getAssinaturaAtiva();
+  if (temCertificado(ativa)) {
+    return { ies: ativa, responsavel: linhaPorUso('responsavel_ecpf'), iesDaLinhaAtiva: true };
+  }
+  return { ies: null, responsavel: linhaPorUso('responsavel_ecpf'), iesDaLinhaAtiva: false };
+}
+
+function certificadosDiplomaObter(_event: IpcMainInvokeEvent): ApiResult<CertificadosDiploma> {
+  return { ok: true, data: obterCertificadosDiploma() };
+}
+
+/** Linha dedicada ao papel (cria se não existir; NUNCA fica ativa). */
+function linhaDedicada(uso: UsoDiploma): Assinatura {
+  const db = getDb();
+  const existente = db
+    .prepare('SELECT * FROM assinaturas WHERE uso_diploma = ? ORDER BY id DESC LIMIT 1')
+    .get(uso) as Assinatura | undefined;
+  if (existente) return existente;
+  const info = db
+    .prepare('INSERT INTO assinaturas (nome_signatario, cargo, uso_diploma, ativo) VALUES (?, ?, ?, 0)')
+    .run(ROTULO_USO_DIPLOMA[uso], uso === 'ies_ecnpj' ? 'IES (Diploma Digital)' : 'Responsável (Diploma Digital)', uso);
+  return db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(info.lastInsertRowid) as Assinatura;
+}
+
+/** Importa A1 (.pfx) para o slot do Diploma Digital indicado. */
+async function uploadCertDiploma(
+  event: IpcMainInvokeEvent,
+  tipo: string,
+  uso: string
+): Promise<ApiResult<Assinatura>> {
+  if (uso !== 'ies_ecnpj' && uso !== 'responsavel_ecpf') {
+    return { ok: false, error: 'Uso inválido (ies_ecnpj | responsavel_ecpf).' };
+  }
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return { ok: false, error: 'Janela não disponível' };
+  const tipoCert = tipo === 'A3' ? 'A3' : 'A1';
+  const res = await dialog.showOpenDialog(win, {
+    title: `Selecionar Certificado ${tipoCert} — ${ROTULO_USO_DIPLOMA[uso as UsoDiploma]} (.pfx/.p12)`,
+    properties: ['openFile'],
+    filters: [{ name: 'Certificado', extensions: ['pfx', 'p12'] }],
+  });
+  if (res.canceled || res.filePaths.length === 0) {
+    return { ok: false, error: 'Nenhum arquivo selecionado' };
+  }
+  const origem = res.filePaths[0];
+  const ext = path.extname(origem).toLowerCase() || '.pfx';
+  const certsDir = path.join(app.getPath('userData'), 'assinaturas');
+  if (!fs.existsSync(certsDir)) fs.mkdirSync(certsDir, { recursive: true });
+  const db = getDb();
+  const ass = linhaDedicada(uso as UsoDiploma);
+  const destino = path.join(certsDir, `certificado_${tipoCert}_${ass.id}${ext}`);
+  fs.copyFileSync(origem, destino);
+  db.prepare(
+    "UPDATE assinaturas SET certificado_path = ?, certificado_tipo = ?, certificado_a3_thumbprint = NULL, updated_at = datetime('now') WHERE id = ?"
+  ).run(destino, tipoCert, ass.id);
+  return { ok: true, data: db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(ass.id) as Assinatura };
+}
+
+/** Vincula certificado A3 (token) do Windows Store ao slot do Diploma Digital. */
+async function salvarCertA3Diploma(
+  _event: IpcMainInvokeEvent,
+  thumbprint: string,
+  uso: string
+): Promise<ApiResult<Assinatura>> {
+  if (!thumbprint?.trim()) return { ok: false, error: 'Thumbprint obrigatório.' };
+  if (uso !== 'ies_ecnpj' && uso !== 'responsavel_ecpf') {
+    return { ok: false, error: 'Uso inválido (ies_ecnpj | responsavel_ecpf).' };
+  }
+  const db = getDb();
+  const ass = linhaDedicada(uso as UsoDiploma);
+  db.prepare(
+    "UPDATE assinaturas SET certificado_path = NULL, certificado_tipo = 'A3', certificado_a3_thumbprint = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(thumbprint.toUpperCase(), ass.id);
+  return { ok: true, data: db.prepare('SELECT * FROM assinaturas WHERE id = ?').get(ass.id) as Assinatura };
 }
 
 // ---------------------------------------------------------------------------
@@ -1033,6 +1156,9 @@ export function registrarAssinaturaHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_OBTER, requerAuth(obter));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_SALVAR, requerAuth(salvar));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_UPLOAD_CERT, requerAuth(uploadCert));
+  ipcMain.handle(IPC_CHANNELS.ASSINATURA_DIPLOMA_CERTS_OBTER, requerAuth(certificadosDiplomaObter));
+  ipcMain.handle(IPC_CHANNELS.ASSINATURA_DIPLOMA_UPLOAD_CERT, requerAuth(uploadCertDiploma));
+  ipcMain.handle(IPC_CHANNELS.ASSINATURA_DIPLOMA_SALVAR_CERT_A3, requerAuth(salvarCertA3Diploma));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_LISTAR_CERTS_A3, requerAuth(listarCertsA3));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_SALVAR_CERT_A3, requerAuth(salvarCertA3));
   ipcMain.handle(IPC_CHANNELS.ASSINATURA_TESTAR_A3, requerAuth(testarA3));

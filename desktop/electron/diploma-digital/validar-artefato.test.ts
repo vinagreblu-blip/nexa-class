@@ -204,7 +204,7 @@ describe('Validar Diploma Digital (consolidado)', () => {
     expect(r.assinaturas[0].criptografiaOk).toBe(false);
   }, 60000);
 
-  it('DA com DUAS assinaturas carimbadas → APROVADO (validação independente do fluxo)', async () => {
+  it('DA com TRÊS assinaturas carimbadas → APROVADO (validação independente do fluxo)', async () => {
     const { certPem, chavePem } = gerarCertTeste();
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-val-'));
     const pdf = path.join(tmp, 'rg.pdf');
@@ -215,7 +215,7 @@ describe('Validar Diploma Digital (consolidado)', () => {
       const assinada = await assinarTodosEsqueletos(da, { signatureIdBase: 'Sign-DD42', chavePem, certPem, carimbador });
       const r = await validarArtefatoDiploma(assinada, 'documentacaoAcademica');
       expect(r.veredito).toBe('APROVADO');
-      expect(r.assinaturas).toHaveLength(2);
+      expect(r.assinaturas).toHaveLength(3);
       expect(r.assinaturas.every((a) => a.carimbo?.tokenOk)).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

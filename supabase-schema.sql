@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS assinaturas (
   certificado_path TEXT,
   certificado_tipo TEXT,
   certificado_a3_thumbprint TEXT,
+  uso_diploma TEXT,
   ativo INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -141,6 +142,7 @@ CREATE TABLE IF NOT EXISTS assinaturas (
 -- Migração para installs já existentes (rode uma vez no SQL Editor):
 -- ALTER TABLE assinaturas ADD COLUMN IF NOT EXISTS certificado_tipo TEXT;
 -- ALTER TABLE assinaturas ADD COLUMN IF NOT EXISTS certificado_a3_thumbprint TEXT;
+-- ALTER TABLE assinaturas ADD COLUMN IF NOT EXISTS uso_diploma TEXT;
 
 -- Tabela: diplomas
 CREATE TABLE IF NOT EXISTS diplomas (

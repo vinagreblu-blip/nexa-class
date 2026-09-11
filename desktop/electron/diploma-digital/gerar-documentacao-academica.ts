@@ -3,10 +3,15 @@
 // ============================================================
 // Root: DocumentacaoAcademicaRegistro (TDocumentacaoAcademicaRegistro)
 // → RegistroReq (TRegistroReq): o que a IES EMISSORA envia à IES
-// REGISTRADORA para obter o registro. Contém:
+//   REGISTRADORA para obter o registro. Contém:
 //   DadosDiploma (com @id Dip+44) + DadosPrivadosDiplomado
 //   (Filiacao + HistoricoEscolar embutido) + TermoResponsabilidade*
 //   + DocumentacaoComprobatoria (PDFs em base64).
+// ASSINATURAS (3 posições de esqueleto, padrão do validador MEC):
+//   1+2) dentro de DadosDiploma: e-CNPJ da IES + e-CPF do responsável
+//        (Reference #Dip{44}, co-assinaturas independentes);
+//   3) na RAIZ do documento: assinatura de ARQUIVAMENTO com política
+//        AD-RA (Reference URI="", cobre o doc incluindo as internas).
 // A montagem do DIPLOMA FINAL (DadosDiploma + DadosRegistro) só
 // ocorre APÓS o retorno da registradora (M4) — nunca antes.
 //
@@ -128,8 +133,12 @@ function dadosDiplomaCompleto(s: SnapshotDiploma, chaveDip: string): string | nu
       dadosCurso +
       iesEmissora +
       // Assinantes (opcional no XSD): só entra quando houver CPF+cargo
-      // reais cadastrados — elemento vazio é INVÁLIDO no schema
-      assinaturaEstrutural()
+      // reais cadastrados — elemento vazio é INVÁLIDO no schema.
+      // DUAS posições de assinatura da EMISSORA dentro de DadosDiploma
+      // (exigência do validador do MEC: ≥2 assinaturas, sendo ≥1 com
+      // certificado e-CPF — posição 1: e-CNPJ da IES; posição 2: e-CPF
+      // do responsável). O XSD permite ds:Signature 1..n aqui.
+      assinaturaEstrutural() + assinaturaEstrutural()
     )
   );
 }

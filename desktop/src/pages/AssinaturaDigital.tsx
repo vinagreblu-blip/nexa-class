@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
+import { api, type CertDiplomaApi } from '../api';
 import { Modal } from '../components/Modal';
 import { useSyncTempoReal } from '../utils/useSyncTempoReal';
 
@@ -50,6 +50,9 @@ interface TesteA3Resultado {
   assinou: boolean;
   erro?: string;
 }
+
+/** Papel do certificado no fluxo de assinatura da Documentação Acadêmica. */
+type UsoDiploma = 'ies_ecnpj' | 'responsavel_ecpf';
 
 export function AssinaturaDigital() {
   const [assinatura, setAssinatura] = useState<AssinaturaData | null>(null);
@@ -111,6 +114,12 @@ export function AssinaturaDigital() {
   const [polSalvando, setPolSalvando] = useState(false);
   const [polConfirmando, setPolConfirmando] = useState(false);
   const [polMsg, setPolMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+
+  // Certificados do Diploma Digital (DA): e-CNPJ IES + e-CPF responsável
+  const [dipCerts, setDipCerts] = useState<{ ies: CertDiplomaApi | null; responsavel: CertDiplomaApi | null; iesDaLinhaAtiva: boolean } | null>(null);
+  const [dipUpload, setDipUpload] = useState<string | false>(false);
+  /** Uso do slot quando o modal A3 foi aberto por um slot do Diploma (null = fluxo normal). */
+  const [modalA3Uso, setModalA3Uso] = useState<UsoDiploma | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -269,7 +278,7 @@ export function AssinaturaDigital() {
     setCarregando(false);
   }
 
-  useEffect(() => { carregar(); }, []);
+  useEffect(() => { carregar(); void carregarDipCerts(); }, []);
 
   // Tempo real: recarrega quando outra máquina atualiza a assinatura digital.
   useSyncTempoReal(carregar, ['assinaturas']);
@@ -307,6 +316,26 @@ export function AssinaturaDigital() {
     }
   }
 
+  async function carregarDipCerts() {
+    const r = await api.assinatura.diplomaCerts();
+    if (r.ok && r.data) setDipCerts(r.data);
+  }
+
+  async function enviarCertDiplomaA1(uso: UsoDiploma) {
+    setErro(null);
+    setSucesso(null);
+    setDipUpload(`A1-${uso}`);
+    const res = await api.assinatura.diplomaUploadCert('A1', uso);
+    setDipUpload(false);
+    if (res.ok) {
+      setSucesso(`Certificado A1 (${uso === 'ies_ecnpj' ? 'e-CNPJ da IES' : 'e-CPF do responsável'}) carregado com sucesso!`);
+      await carregarDipCerts();
+      setTimeout(() => setSucesso(null), 4000);
+    } else if (res.error !== 'Nenhum arquivo selecionado') {
+      setErro(res.error ?? 'Erro ao carregar certificado do Diploma Digital');
+    }
+  }
+
   async function assinarXml() {
     setErro(null);
     if (!xmlInput.trim()) { setErro('Cole o conteúdo XML a ser assinado'); return; }
@@ -321,9 +350,10 @@ export function AssinaturaDigital() {
     }
   }
 
-  async function abrirModalA3() {
+  async function abrirModalA3(uso?: UsoDiploma) {
     setErro(null);
     setSucesso(null);
+    setModalA3Uso(uso ?? null);
     setModalA3(true);
     setCertA3Sel(null);
     setErroA3(null);
@@ -355,11 +385,18 @@ export function AssinaturaDigital() {
   async function confirmarA3() {
     if (!certA3Sel) { setErroA3('Selecione um certificado'); return; }
     setErro(null);
-    const res = await api.assinatura.salvarCertA3(certA3Sel);
+    const uso = modalA3Uso;
+    const res = uso
+      ? await api.assinatura.diplomaSalvarCertA3(certA3Sel, uso)
+      : await api.assinatura.salvarCertA3(certA3Sel);
     if (res.ok) {
       setModalA3(false);
-      setSucesso('Certificado A3 vinculado com sucesso! O PIN será solicitado pelo driver do token ao assinar.');
+      setModalA3Uso(null);
+      setSucesso(uso
+        ? `Certificado A3 do Diploma Digital (${uso === 'ies_ecnpj' ? 'e-CNPJ da IES' : 'e-CPF do responsável'}) vinculado! O PIN será solicitado pelo driver do token ao assinar.`
+        : 'Certificado A3 vinculado com sucesso! O PIN será solicitado pelo driver do token ao assinar.');
       await carregar();
+      if (uso) await carregarDipCerts();
       setTimeout(() => setSucesso(null), 5000);
     } else {
       setErro(res.error ?? 'Erro ao vincular certificado A3');
@@ -450,10 +487,15 @@ export function AssinaturaDigital() {
 
       {/* Certificado Digital */}
       <div className="card" style={{ padding: 22, marginBottom: 18 }}>
-        <h3 style={{ margin: '0 0 8px', fontSize: 14 }}>Certificado Digital ICP-Brasil</h3>
-        <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text-muted)' }}>
-          Importe seu certificado para assinar documentos XML com padrão XMLDSig (W3C).
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 14 }}>Certificado Digital ICP-Brasil</h3>
+          <span className="badge" style={{ background: 'var(--surface-tint)', color: 'var(--text-muted)', fontSize: 10 }}>Certificado 1 de 3 · Uso geral</span>
+        </div>
+        <p style={{ margin: '0 0 16px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          Importe seu certificado para assinar documentos XML com padrão XMLDSig (W3C) e o Histórico Escolar Digital.
           A senha não é armazenada — é solicitada apenas no momento da assinatura.
+          Enquanto o <strong>certificado 2</strong> (abaixo) não for configurado, este também assina como
+          <strong> e-CNPJ da IES</strong> no Diploma Digital.
         </p>
 
         {/* Tipo do certificado atual */}
@@ -499,7 +541,7 @@ export function AssinaturaDigital() {
             </p>
             <button
               className="btn-primary"
-              onClick={abrirModalA3}
+              onClick={() => void abrirModalA3()}
               disabled={!!uploadCert}
               style={{ width: '100%', fontSize: 13, padding: '8px 14px', background: '#22C55E' }}
             >
@@ -557,6 +599,99 @@ export function AssinaturaDigital() {
                 )}
               </div>
             )}
+          </div>
+        )}
+      </div>
+
+      {/* Certificados do Diploma Digital (DA — 3 assinaturas do padrão MEC) */}
+      <div className="card" style={{ padding: 22, marginBottom: 18 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <h3 style={{ margin: 0, fontSize: 14 }}>Certificados do Diploma Digital (MEC)</h3>
+          <span className="badge" style={{ background: 'var(--surface-tint)', color: 'var(--text-muted)', fontSize: 10 }}>Certificados 2 e 3 de 3</span>
+        </div>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+          A Documentação Acadêmica exige <strong>3 assinaturas</strong> (validador do MEC): 2 em DadosDiploma —{' '}
+          <strong>e-CNPJ da IES</strong> + <strong>e-CPF do responsável</strong> — e 1 de arquivamento na raiz
+          (política AD-RA, assinada com o e-CNPJ da IES). Configure os dois certificados abaixo; nada é simulado
+          nem inventado — sem o e-CPF, a assinatura da DA fica bloqueada com instrução.
+        </p>
+
+        {/* Resumo dos 3 certificados/tokens cadastráveis */}
+        {(() => {
+          const iesConfigurado = !!(dipCerts?.ies?.certificado_path || dipCerts?.ies?.certificado_a3_thumbprint);
+          const respConfigurado = !!(dipCerts?.responsavel?.certificado_path || dipCerts?.responsavel?.certificado_a3_thumbprint);
+          const total = [temCert, iesConfigurado, respConfigurado].filter(Boolean).length;
+          const tipoTexto = (c: CertDiplomaApi | null | undefined) =>
+            c?.certificado_a3_thumbprint ? 'A3 (Token)' : c?.certificado_path ? 'A1 (Arquivo)' : '';
+          const linha = (num: number, titulo: string, detalhe: string | null, configurado: boolean, tipo: string) => (
+            <div key={num} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+              <strong style={{ minWidth: 84, color: 'var(--text-muted)' }}>{num} · {titulo}</strong>
+              {configurado ? (
+                <span className="badge badge-ok">✅ {tipo || 'configurado'}</span>
+              ) : (
+                <span className="badge" style={{ background: 'var(--surface-tint)', color: 'var(--text-muted)' }}>não configurado</span>
+              )}
+              {detalhe && <span style={{ color: 'var(--text-muted)' }}>{detalhe}</span>}
+            </div>
+          );
+          return (
+            <div style={{ marginBottom: 16, padding: '10px 14px', background: 'var(--surface-tint)', borderRadius: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+                Certificados cadastrados: {total} de 3 {total < 3 && <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(cada um pode ser A1 ou A3/token)</span>}
+              </div>
+              <div style={{ display: 'grid', gap: 4 }}>
+                {linha(1, 'Uso geral', temCert ? 'documentos XML e Histórico Escolar' : null, temCert, tipoCert === 'A3' ? 'A3 (Token)' : temCert ? 'A1 (Arquivo)' : '')}
+                {linha(2, 'e-CNPJ da IES', dipCerts?.iesDaLinhaAtiva ? 'herdado do certificado 1' : iesConfigurado ? 'DadosDiploma #1 + arquivamento (AD-RA)' : 'DadosDiploma #1 + arquivamento (AD-RA)', iesConfigurado, tipoTexto(dipCerts?.ies))}
+                {linha(3, 'e-CPF do Resp.', respConfigurado ? 'DadosDiploma #2' : 'DadosDiploma #2', respConfigurado, tipoTexto(dipCerts?.responsavel))}
+              </div>
+            </div>
+          );
+        })()}
+
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          {([
+            { uso: 'ies_ecnpj' as UsoDiploma, titulo: '2 de 3 — e-CNPJ da IES', descricao: 'Assina DadosDiploma (#1) e a assinatura de arquivamento (AD-RA).' },
+            { uso: 'responsavel_ecpf' as UsoDiploma, titulo: '3 de 3 — e-CPF do Responsável', descricao: 'Assina DadosDiploma (#2) — pessoa física com e-CPF ICP-Brasil.' },
+          ]).map((slot) => {
+            const cert = slot.uso === 'ies_ecnpj' ? dipCerts?.ies : dipCerts?.responsavel;
+            const configurado = !!(cert?.certificado_path || cert?.certificado_a3_thumbprint);
+            return (
+              <div key={slot.uso} style={{ flex: 1, minWidth: 220, border: '2px solid var(--border)', borderRadius: 12, padding: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <h4 style={{ margin: 0, fontSize: 13, color: '#0F172A' }}>{slot.titulo}</h4>
+                  {configurado ? (
+                    <span className="badge badge-ok">✅ {cert?.certificado_tipo === 'A3' ? 'A3 (Token)' : 'A1 (Arquivo)'}</span>
+                  ) : (
+                    <span className="badge" style={{ background: 'var(--surface-tint)', color: 'var(--text-muted)' }}>não configurado</span>
+                  )}
+                </div>
+                <p style={{ margin: '0 0 12px', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>{slot.descricao}</p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    className="btn-primary"
+                    onClick={() => void enviarCertDiplomaA1(slot.uso)}
+                    disabled={!!dipUpload}
+                    style={{ flex: 1, fontSize: 12, padding: '7px 10px' }}
+                  >
+                    {dipUpload === `A1-${slot.uso}` ? 'Selecione…' : configurado && cert?.certificado_path ? 'Trocar A1' : 'Importar A1'}
+                  </button>
+                  <button
+                    className="btn-primary"
+                    onClick={() => void abrirModalA3(slot.uso)}
+                    disabled={!!dipUpload}
+                    style={{ flex: 1, fontSize: 12, padding: '7px 10px', background: '#22C55E' }}
+                  >
+                    {configurado && cert?.certificado_a3_thumbprint ? 'Trocar A3' : 'Importar A3'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {dipCerts?.iesDaLinhaAtiva && (
+          <div className="alert alert-info" style={{ marginTop: 12, marginBottom: 0, fontSize: 12 }}>
+            O e-CNPJ da IES está usando o certificado da seção <strong>“Certificado Digital ICP-Brasil”</strong> acima
+            (retrocompatível). Para usar um certificado dedicado no Diploma Digital, importe um neste slot.
           </div>
         )}
       </div>
@@ -837,18 +972,27 @@ export function AssinaturaDigital() {
       {/* Modal Selecionar A3 (Windows Certificate Store) */}
       {modalA3 && (
         <Modal
-          title="Selecionar Certificado A3 (Windows Certificate Store)"
+          title={
+            modalA3Uso
+              ? `Selecionar Certificado A3 — ${modalA3Uso === 'ies_ecnpj' ? 'e-CNPJ da IES (certificado 2 de 3)' : 'e-CPF do Responsável (certificado 3 de 3)'}`
+              : 'Selecionar Certificado A3 (Windows Certificate Store)'
+          }
           width={680}
-          onClose={() => setModalA3(false)}
+          onClose={() => { setModalA3(false); setModalA3Uso(null); }}
           footer={
             <>
-              <button className="btn-ghost" onClick={() => setModalA3(false)}>Cancelar</button>
+              <button className="btn-ghost" onClick={() => { setModalA3(false); setModalA3Uso(null); }}>Cancelar</button>
               <button className="btn-primary" onClick={confirmarA3} disabled={!certA3Sel}>
                 Vincular certificado
               </button>
             </>
           }
         >
+          {modalA3Uso && (
+            <div className="alert alert-info" style={{ marginBottom: 12 }}>
+              O certificado selecionado será vinculado ao slot <strong>{modalA3Uso === 'ies_ecnpj' ? 'e-CNPJ da IES' : 'e-CPF do Responsável'}</strong> do Diploma Digital — escolha o token correto (com {modalA3Uso === 'ies_ecnpj' ? 'CNPJ' : 'CPF'} no assunto).
+            </div>
+          )}
           {erroA3 && <div className="alert alert-error">{erroA3}</div>}
           {carregandoCerts ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>Lendo repositório do Windows…</div>

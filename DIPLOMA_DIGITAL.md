@@ -102,11 +102,13 @@ aguardando_conclusao → apto → em_preparacao → xml_gerado → (xml_invalido
 
 | Item | Quem fornece | Uso |
 |---|---|---|
-| Certificado A1/A3 ICP-Brasil da IES | AC (ex.: FENACON/SESCAP) | Assinatura XAdES (M4) |
+| Certificado A1/A3 **e-CNPJ** ICP-Brasil da IES | AC (ex.: FENACON/SESCAP) | Assinatura XAdES (M4): DadosDiploma #1 + assinatura de arquivamento (AD-RA) |
+| Certificado A1/A3 **e-CPF** ICP-Brasil do responsável | AC (pessoa física) | Assinatura XAdES (M4): DadosDiploma #2 — o validador do MEC exige ≥1 assinatura com e-CPF; slot dedicado em Assinatura Digital → Certificados do Diploma Digital |
 | IES Registradora habilitada | Contrato institucional | Registro (M4) |
 | e-MEC da IES/cursos, atos regulatórios | Secretaria da IES | Cadastro institucional (M2) |
 | Carimbo do tempo (TSA RFC 3161) | Fornecedor do certificado/ACT (configurável em Assinatura Digital → Carimbo do Tempo) | XAdES-T: carimba cada assinatura real (Histórico e DA) logo após criada — o token em `EncapsulatedTimeStamp` atesta a hora por terceiro auditado (nunca fabricado pelo app); sem TSA/falha → XAdES-BES com aviso de pendência |
-| Política de assinatura (XAdES-EPES) | ICP-Brasil (padrão PA-AD-RC v2.4 embutido, digest confirmado; customizável em Assinatura Digital → Política de Assinatura com "Confirmar digest") | Identifica a política no SignedProperties (identificador + digest SHA-256 exc-c14n + SPURI) |
+| Política de assinatura (XAdES-EPES) | ICP-Brasil (padrão PA-AD-RC v2.4 embutido, digest confirmado; customizável em Assinatura Digital → Política de Assinatura com "Confirmar digest") | Identifica a política no SignedProperties (identificador + digest SHA-256 exc-c14n + SPURI) das assinaturas de DadosDiploma |
+| Política de ARQUIVAMENTO (AD-RA) | ICP-Brasil (PA-AD-RA v2.1 embutido, digest confirmado) | Assinatura da RAIZ da Documentação Acadêmica — o validador do MEC exige que a assinatura de arquivamento seja EPES com AD-RA (OID 2.16.76.1.7.1.10.2.1) |
 | veraPDF CLI (opcional) | PDF Association (pdfa.org) — config `verapdf` `{caminho}` ou env `NEXA_VERAPDF` | Validação oficial da RVDD em PDF/A-1b (`--flavour 1b`); sem ele vale a autochecagem estrutural + pendência explícita |
 
 ## 8. Atualização dos schemas
@@ -132,7 +134,7 @@ já emitidos (`versao_schema` por diploma/arquivo).
 - **M1** ✅ XSDs oficiais + validação comprovada + tabelas + SQL nuvem + Storage + docs
 - **M2** ✅ Cadastro institucional (IES/cursos/atos), página "Diplomas Digitais", pendências, sync ativo
 - **M3** ✅ Geradores XML oficiais + validação XSD obrigatória no fluxo + auditoria + Storage
-- **M4** ✅ Assinatura XAdES-BES real em A1 e A3 (digest assinado DENTRO do token via SignHash; ds canônico `http://`, como o validador oficial compila), registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
+- **M4** ✅ Assinatura XAdES real em A1 e A3 (digest assinado DENTRO do token via SignHash; ds canônico `http://`, como o validador oficial compila), **DA com 3 assinaturas (padrão do validador MEC): e-CNPJ IES + e-CPF responsável em DadosDiploma (co-assinaturas, digest "menos todas") + assinatura de ARQUIVAMENTO na raiz com política PA-AD-RA v2.1 (digest "menos a própria" — cobre as internas, validada contra o motor .NET SignedXml)**, registro assistido (Diploma final XSD-válido), consulta pública `/d/:codigo`, anulação soft
 - **M5** ✅ ListaDiplomasAnulados (XML oficial, XSD-válido), ArquivoFiscalização (signed URLs https), RVDD (PDF+QR), validação manual no validador oficial MEC
 
 ### Detalhe do M3 (implementado)

@@ -9,8 +9,9 @@
 // RFC2253) e o caminho A3 (assinarHashA3 mockado com node:crypto —
 // mesma semântica do SignHash do token: PKCS#1 v1.5 sobre o digest).
 import { describe, expect, it, vi } from 'vitest';
-import { assinarProximoEsqueleto, POLITICA_ASSINATURA } from './xades-signer';
+import { assinarProximoEsqueleto, assinarTodosEsqueletos, contarEsqueletos, POLITICA_ASSINATURA, POLITICA_ARQUIVAMENTO } from './xades-signer';
 import { gerarHistoricoXml } from './gerar-historico-xml';
+import { gerarDocumentacaoAcademicaXml } from './gerar-documentacao-academica';
 import { validarXmlContraXsd } from './xsd-validator';
 import { novoVerificador } from './verificador-teste';
 
@@ -234,5 +235,113 @@ describe('F1: política de assinatura configurável (XAdES-EPES)', () => {
     const sigNode = docFinal.getElementsByTagNameNS('*', 'Signature')[0];
     const sig = novoVerificador(certPem, sigNode);
     expect(sig.checkSignature(assinado)).toBe(true);
+  }, 60000);
+});
+
+describe('M6: leiaute de assinaturas do validador MEC (DA com 3 assinaturas)', () => {
+  function gerarDaComPdf(): string {
+    // PDF fixture real em tmp (o gerador lê e embute em base64)
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-xades-'));
+    const pdf = path.join(tmp, 'rg.pdf');
+    fs.writeFileSync(pdf, '%PDF-1.4 fixture');
+    return gerarDocumentacaoAcademicaXml(
+      { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any,
+      [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }]
+    )!;
+  }
+
+  it('Reference #1 SEM transform XPath — apenas enveloped + c14n (pipeline .NET íntegra)', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const xml = gerarHistoricoXml({ processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any);
+    const assinado = await assinarProximoEsqueleto(xml!, { signatureId: 'xmldsig-tx', chavePem, certPem });
+    // O transform XPath corrompia o node-set no pipeline do SignedXml .NET
+    // (validador oficial) — NÃO deve mais ser declarado.
+    expect(assinado).not.toContain('REC-xpath-19991116');
+    expect(assinado).not.toContain('<ds:XPath');
+    // Transforms declarados: enveloped-signature + c14n inclusivo
+    expect(assinado).toContain('xmldsig#enveloped-signature');
+    expect(assinado).toContain('REC-xml-c14n-20010315');
+  }, 60000);
+
+  it('DA: 3 esqueletos → 3 assinaturas; digest da RAIZ cobre o documento MENOS ela mesma (inclui as internas)', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const da = gerarDaComPdf();
+    expect(contarEsqueletos(da)).toBe(3);
+    const assinada = await assinarTodosEsqueletos(da, { chavePem, certPem });
+    expect(assinada).not.toContain('<ds:SignatureValue></ds:SignatureValue>');
+
+    // Assinatura raiz (arquivamento): Reference URI=""
+    const mRefRaiz = /<ds:Reference URI="">[\s\S]*?<ds:DigestValue>([^<]+)<\/ds:DigestValue>/.exec(assinada);
+    expect(mRefRaiz).toBeTruthy();
+    const declaradoRaiz = mRefRaiz![1];
+
+    // Computa c14n do documentElement MENOS APENAS a assinatura raiz
+    // (identificada por conter a Reference URI="") — semântica enveloped
+    // padrão que o validador (.NET SignedXml) aplica para URI="".
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const { C14nCanonicalization } = require('xml-crypto');
+    const { createHash } = require('node:crypto');
+    const doc = new DOMParser().parseFromString(assinada, 'text/xml');
+    const clone = doc.documentElement.cloneNode(true);
+    for (let i = 0; i < clone.childNodes.length; i++) {
+      const c = clone.childNodes[i];
+      if (c.localName === 'Signature' && /<ds:Reference URI="">/.test(c.toString())) {
+        clone.removeChild(c);
+        i--;
+      }
+    }
+    const c14nMenosSelf = new C14nCanonicalization().process(clone, {});
+    const digestMenosSelf = createHash('sha256').update(Buffer.from(c14nMenosSelf, 'utf8')).digest('base64');
+    expect(digestMenosSelf).toBe(declaradoRaiz);
+
+    // E NÃO é o digest do documento sem TODAS as assinaturas (era o bug):
+    const clone2 = doc.documentElement.cloneNode(true);
+    const removerTodas = (el: any) => {
+      for (let i = 0; i < el.childNodes.length; i++) {
+        const c = el.childNodes[i];
+        if (c.localName === 'Signature') { el.removeChild(c); i--; }
+        else if (c.nodeType === 1) removerTodas(c);
+      }
+    };
+    removerTodas(clone2);
+    const c14nMenosTodas = new C14nCanonicalization().process(clone2, {});
+    const digestMenosTodas = createHash('sha256').update(Buffer.from(c14nMenosTodas, 'utf8')).digest('base64');
+    expect(digestMenosTodas).not.toBe(declaradoRaiz);
+  }, 60000);
+
+  it('posicoes: 3ª assinatura (raiz) com política AD-RA; as internas com a política comum', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const da = gerarDaComPdf();
+    const assinada = await assinarTodosEsqueletos(da, {
+      chavePem,
+      certPem,
+      posicoes: [
+        { chavePem, certPem }, // herda política padrão (AD-RC)
+        { chavePem, certPem }, // herda política padrão (AD-RC)
+        { chavePem, certPem, politica: POLITICA_ARQUIVAMENTO }, // AD-RA
+      ],
+    });
+    expect((assinada.split(POLITICA_ASSINATURA.digestBase64).length - 1)).toBe(2);
+    expect(assinada).toContain(POLITICA_ARQUIVAMENTO.identificador);
+    expect(assinada).toContain(POLITICA_ARQUIVAMENTO.digestBase64);
+    expect(assinada).toContain(POLITICA_ARQUIVAMENTO.spuri!);
+    // As 3 continuam verificáveis
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const doc = new DOMParser().parseFromString(assinada, 'text/xml');
+    const sigs = doc.getElementsByTagNameNS('*', 'Signature');
+    expect(sigs.length).toBe(3);
+    for (let i = 0; i < sigs.length; i++) {
+      const sig = novoVerificador(certPem, sigs[i]);
+      const ok = sig.checkSignature(assinada);
+      if (!ok) for (const r of sig.getReferences()) console.error(`POSICOES SIG${i} REF`, r.uri, '→', r.validationError);
+      expect(ok).toBe(true);
+    }
+    // XSD oficial continua válido
+    const r = await validarXmlContraXsd(assinada, 'documentacaoAcademica');
+    if (!r.valido) console.error('ERROS XSD:', r.erros);
+    expect(r.valido).toBe(true);
   }, 60000);
 });

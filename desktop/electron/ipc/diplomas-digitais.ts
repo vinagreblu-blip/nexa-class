@@ -26,7 +26,8 @@ import { gerarDiplomaFinalXml, type DadosRegistroRetorno } from '../diploma-digi
 import { gerarListaDiplomasAnuladosXml } from '../diploma-digital/gerar-lista-anulados';
 import { gerarArquivoFiscalizacaoXml, type DiplomaFiscalizadoEntrada } from '../diploma-digital/gerar-arquivo-fiscalizacao';
 import { gerarRvddPdf } from '../diploma-digital/gerar-rvdd';
-import { assinarTodosEsqueletos, contarEsqueletos } from '../diploma-digital/xades-signer';
+import { assinarTodosEsqueletos, contarEsqueletos, POLITICA_ARQUIVAMENTO } from '../diploma-digital/xades-signer';
+import { obterCertificadosDiploma, type CertificadosDiploma } from './assinatura';
 import { validarArtefatoDiploma, type ResultadoValidacaoArtefato } from '../diploma-digital/validar-artefato';
 import { validarXmlContraXsd, type ArtefatoXsd, type ResultadoValidacao } from '../diploma-digital/xsd-validator';
 import { getClient } from '../cloud';
@@ -1007,10 +1008,16 @@ throw 'Certificado nao encontrado'
 
 /**
  * Assina TODAS as posições da emissora no artefato indicado.
- * A1 e A3 produzem o MESMO XAdES-BES real (ds canônico http://, como o
+ * A1 e A3 produzem o MESMO XAdES real (ds canônico http://, como o
  * validador oficial compila): no A3 o digest do SignedInfo é assinado
  * DENTRO do token via SignHash bruto (assinarHashA3) — a chave nunca sai
  * do hardware.
+ *
+ * Documentação Acadêmica (3 assinaturas — exigência do validador MEC):
+ *   1) DadosDiploma #1 → e-CNPJ da IES (política configurada, padrão AD-RC)
+ *   2) DadosDiploma #2 → e-CPF do responsável (mesma política)
+ *   3) RAIZ (arquivamento) → e-CNPJ da IES + política AD-RA (PA-AD-RA v2.1)
+ * Histórico Escolar: 1 assinatura (certificado da IES).
  */
 function assinarHandler(
   _event: IpcMainInvokeEvent,
@@ -1029,16 +1036,37 @@ function assinarHandler(
     if (!lido) return { ok: false, error: motivo || 'Nenhum XML válido disponível — gere antes de assinar.' };
     if (contarEsqueletos(lido.xml) === 0) return { ok: false, error: 'Artefato já assinado.' };
 
-    const assinatura = db
-      .prepare('SELECT * FROM assinaturas WHERE ativo = 1 ORDER BY id DESC LIMIT 1')
-      .get() as any;
-    if (!assinatura) {
+    const ehDa = artefato === 'documentacao_academica';
+    // Certificados do Diploma Digital: IES (e-CNPJ) + responsável (e-CPF).
+    // Retrocompatível: sem slot dedicado, usa o certificado da linha ativa.
+    const certs: CertificadosDiploma = obterCertificadosDiploma();
+    if (!certs.ies) {
       return {
         ok: false,
         error:
           'CONFIGURAÇÃO NECESSÁRIA: nenhum certificado digital vinculado. ' +
           'Vá em Assinatura Digital e cadastre o certificado A1 (.pfx) ou A3 (token) da IES.',
       };
+    }
+    if (ehDa) {
+      // Leiaute novo: 3 esqueletos (2 em DadosDiploma + 1 arquivamento).
+      if (contarEsqueletos(lido.xml) !== 3) {
+        return {
+          ok: false,
+          error:
+            `XML da DA gerado em versão antiga do leiaute de assinaturas (${contarEsqueletos(lido.xml)} posições — ` +
+            'o padrão do validador MEC exige 3: 2 em DadosDiploma + 1 de arquivamento). Gere o XML novamente antes de assinar.',
+        };
+      }
+      if (!certs.responsavel) {
+        return {
+          ok: false,
+          error:
+            'CONFIGURAÇÃO NECESSÁRIA: certificado e-CPF DO RESPONSÁVEL não vinculado. ' +
+            'A Documentação Acadêmica exige 2 assinaturas em DadosDiploma (e-CNPJ da IES + e-CPF do responsável) ' +
+            'e 1 assinatura de arquivamento — cadastre o e-CPF em Assinatura Digital → Certificados do Diploma Digital.',
+        };
+      }
     }
 
     let xmlAssinado: string;
@@ -1073,31 +1101,110 @@ function assinarHandler(
       avisoCarimbo = diagnosticoCarimbo() ?? 'Assinado SEM carimbo do tempo (XAdES-BES) — configure o carimbo em Assinatura Digital → Carimbo do Tempo.';
     }
 
-    const ehA3 = assinatura.certificado_tipo === 'A3' && !!assinatura.certificado_a3_thumbprint;
-    if (!ehA3) {
-      if (!assinatura.certificado_path || !fs.existsSync(assinatura.certificado_path)) {
-        return { ok: false, error: 'CONFIGURAÇÃO NECESSÁRIA: certificado A1 (.pfx) não encontrado — reimporte em Assinatura Digital.' };
+    // ---- Credencial por certificado (A1 usa a MESMA senha informada;
+    // A3 pede o PIN no driver a cada assinatura). Erros identificam o
+    // certificado exato que falhou.
+    interface Credencial {
+      rotulo: string;
+      certPem: string;
+      chavePem?: string;
+      thumbprintA3?: string;
+    }
+    const montarCredencial = async (
+      row: { certificado_tipo: string | null; certificado_a3_thumbprint: string | null; certificado_path: string | null },
+      rotulo: string
+    ): Promise<Credencial> => {
+      if (row.certificado_tipo === 'A3' && row.certificado_a3_thumbprint) {
+        // A3: digest assinado DENTRO do token (SignHash bruto);
+        // certificado público PEM do Windows Store.
+        const certPem = await extrairCertPublicoPem(row.certificado_a3_thumbprint);
+        return { rotulo, certPem, thumbprintA3: row.certificado_a3_thumbprint };
       }
-      if (!senhaPfx) return { ok: false, error: 'Senha do certificado A1 é obrigatória.' };
+      if (!row.certificado_path || !fs.existsSync(row.certificado_path)) {
+        throw new Error(`CONFIGURAÇÃO NECESSÁRIA: certificado A1 (.pfx) de "${rotulo}" não encontrado — reimporte em Assinatura Digital → Certificados do Diploma Digital.`);
+      }
+      if (!senhaPfx) throw new Error('Senha do certificado A1 é obrigatória.');
+      try {
+        const { chavePem, certPem } = extrairPfxA1(row.certificado_path, senhaPfx!);
+        return { rotulo, certPem, chavePem };
+      } catch (e: any) {
+        throw new Error(`Senha do certificado A1 de "${rotulo}" não confere (ou arquivo corrompido): ${e?.message ?? String(e)}`);
+      }
+    };
+
+    let credIes: Credencial;
+    let credResp: Credencial | null = null;
+    const iesRow = certs.ies;
+    const respRow = certs.responsavel;
+    try {
+      credIes = await montarCredencial(iesRow, 'e-CNPJ da IES');
+      if (ehDa && respRow) {
+        credResp = await montarCredencial(respRow, 'e-CPF do responsável');
+      }
+    } catch (e: any) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+
+    // Tipo de pessoa do certificado (ICP-Brasil declara no OU do subject:
+    // "CNPJ: …" / "CPF: …"). e-CNPJ contém AMBOS (o CPF do representante
+    // vem num 2º OU) — CNPJ tem precedência no teste.
+    const tipoPessoaCert = (certPem: string): 'ecnpj' | 'ecpf' | 'desconhecido' => {
+      const forge = require('node-forge');
+      const cert = forge.pki.certificateFromPem(certPem);
+      const ous = ((cert.subject as any).attributes ?? [])
+        .filter((a: any) => a.name === 'organizationalUnitName' || a.shortName === 'OU')
+        .map((a: any) => String(a.value).toUpperCase())
+        .join(' | ');
+      if (/CNPJ\s*:/.test(ous)) return 'ecnpj';
+      if (/CPF\s*:/.test(ous)) return 'ecpf';
+      return 'desconhecido';
+    };
+    if (ehDa && credResp) {
+      const tipoIes = tipoPessoaCert(credIes.certPem);
+      const tipoResp = tipoPessoaCert(credResp.certPem);
+      if (tipoIes === 'ecpf') {
+        return {
+          ok: false,
+          error:
+            'CONFIGURAÇÃO NECESSÁRIA: o certificado cadastrado para a IES é e-CPF (pessoa física). ' +
+            'A assinatura institucional da DA exige o e-CNPJ da IES — corrija em Assinatura Digital → Certificados do Diploma Digital.',
+        };
+      }
+      if (tipoResp === 'ecnpj') {
+        return {
+          ok: false,
+          error:
+            'CONFIGURAÇÃO NECESSÁRIA: o certificado cadastrado para o responsável é e-CNPJ (pessoa jurídica). ' +
+            'A 2ª assinatura de DadosDiploma exige certificado e-CPF (validador MEC) — corrija em Assinatura Digital → Certificados do Diploma Digital.',
+        };
+      }
+      if (tipoIes === 'desconhecido' || tipoResp === 'desconhecido') {
+        avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
+          'Aviso: certificado sem identificação ICP-Brasil de e-CPF/e-CNPJ no subject (OU) — o validador do MEC pode rejeitar por não ser e-CPF/e-CNPJ.';
+      }
     }
 
     const assinarCom = async (comCarimbo: boolean): Promise<string> => {
       const carimb = comCarimbo && carimbador ? { carimbador } : {};
-      if (ehA3) {
-        // A3: digest assinado DENTRO do token (SignHash bruto);
-        // certificado público PEM do Windows Store.
-        const certPem = await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint!);
+      if (ehDa && credResp) {
+        // DA — 3 posições na ordem do documento: e-CNPJ IES → e-CPF
+        // responsável (DadosDiploma) → e-CNPJ IES com política AD-RA (raiz,
+        // assinatura de ARQUIVAMENTO — cobre o documento INTEIRO incluindo
+        // as assinaturas internas).
         return assinarTodosEsqueletos(lido.xml, {
-          certPem,
-          thumbprintA3: assinatura.certificado_a3_thumbprint,
-          politica,
           ...carimb,
+          posicoes: [
+            { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica },
+            { certPem: credResp.certPem, chavePem: credResp.chavePem, thumbprintA3: credResp.thumbprintA3, politica },
+            { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica: POLITICA_ARQUIVAMENTO },
+          ],
         });
       }
-      const { chavePem, certPem } = extrairPfxA1(assinatura.certificado_path!, senhaPfx!);
+      // Histórico (1 assinatura) e fallback da DA sem 2º certificado
       return assinarTodosEsqueletos(lido.xml, {
-        chavePem,
-        certPem,
+        certPem: credIes.certPem,
+        chavePem: credIes.chavePem,
+        thumbprintA3: credIes.thumbprintA3,
         politica,
         ...carimb,
       });
@@ -1105,18 +1212,18 @@ function assinarHandler(
 
     try {
       xmlAssinado = await assinarCom(true);
-      // LTV (perfil XL da PA-AD-RC v2.4): cadeia + CRLs reais + SigAndRefs
-      // (2º carimbo). Best-effort: falha (offline/AIA) → segue sem LTV com
+      // LTV (perfil XL): cadeia + CRLs reais + SigAndRefs (2º carimbo),
+      // POR SIGNATÁRIO (blocos XL apenas nas assinaturas de cada
+      // certificado). Best-effort: falha (offline/AIA) → segue sem LTV com
       // aviso — nunca valores fictícios.
       if (carimbador) {
         try {
-          const certPemLeaf = ehA3
-            ? await extrairCertPublicoPem(assinatura.certificado_a3_thumbprint!)
-            : extrairPfxA1(assinatura.certificado_path!, senhaPfx!).certPem;
           const { aplicarLtv } = await import('../diploma-digital/ltv');
-          const rLtv = await aplicarLtv(xmlAssinado, certPemLeaf, async (d) => carimbador(d));
-          xmlAssinado = rLtv.xml;
-          if (rLtv.avisos.length) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + rLtv.avisos.join(' ');
+          for (const cred of credResp ? [credIes, credResp] : [credIes]) {
+            const rLtv = await aplicarLtv(xmlAssinado, cred.certPem, async (d) => carimbador(d));
+            xmlAssinado = rLtv.xml;
+            if (rLtv.avisos.length) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + rLtv.avisos.join(' ');
+          }
         } catch (e: any) {
           avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
             'Sem LTV (CompleteCertificateRefs/RevocationValues): ' + (e?.message ?? String(e)) + ' — assinatura válida, perfil reduzido.';
@@ -1199,7 +1306,8 @@ function assinarHandler(
 
     db.prepare("UPDATE diplomas_digitais SET status = 'assinado', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
     auditar(diplomaId, `assinatura_${artefato}`, 'sucesso', {
-      tipo: assinatura.certificado_tipo,
+      certificados: credResp ? ['ies_ecnpj', 'responsavel_ecpf'] : ['ies_ecnpj'],
+      posicoes: ehDa ? 3 : 1,
       carimbado: carimbos.length > 0,
       carimbos: carimbos.filter(Boolean),
       avisoCarimbo,
