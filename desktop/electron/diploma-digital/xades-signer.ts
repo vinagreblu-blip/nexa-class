@@ -108,6 +108,12 @@ export interface OpcoesAssinarTodos {
    *  Campos omitidos herdam as opções comuns. Ex.: Documentação
    *  Acadêmica → [e-CNPJ IES, e-CPF responsável, e-CNPJ IES + AD-RA]. */
   posicoes?: CredencialPosicao[];
+  /** Assina no máximo N esqueletos e PARA (os demais ficam esqueleto
+   *  para fases seguintes). Necessário p/ o fluxo da DA: as assinaturas
+   *  internas de DadosDiploma devem ser FINALIZADAS (carimbo + LTV)
+   *  ANTES de a raiz (arquivamento, digest menos-self) cobri-las —
+   *  modificá-las depois invalidaria o digest da raiz. */
+  quantidade?: number;
 }
 
 function b64(buf: Buffer | Uint8Array): string {
@@ -407,7 +413,7 @@ export async function assinarProximoEsqueleto(xml: string, opts: OpcoesAssinatur
 export async function assinarTodosEsqueletos(xml: string, opts: OpcoesAssinarTodos): Promise<string> {
   let out = xml;
   let indice = 0;
-  while (contarEsqueletos(out) > 0) {
+  while (contarEsqueletos(out) > 0 && (opts.quantidade == null || indice < opts.quantidade)) {
     const esp = opts.posicoes?.[indice];
     const certPem = esp?.certPem ?? opts.certPem;
     if (!certPem) throw new Error('Credencial de assinatura sem certificado (certPem) na posição ' + (indice + 1));

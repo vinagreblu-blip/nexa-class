@@ -1069,7 +1069,7 @@ function assinarHandler(
       }
     }
 
-    let xmlAssinado: string;
+    let xmlAssinado = '';
     let avisoCarimbo: string | undefined;
     const carimbos: string[] = [];
     // XAdES-T: carimbo do tempo (exigência da política de assinatura da
@@ -1184,72 +1184,32 @@ function assinarHandler(
       }
     }
 
-    const assinarCom = async (comCarimbo: boolean): Promise<string> => {
-      const carimb = comCarimbo && carimbador ? { carimbador } : {};
-      if (ehDa && credResp) {
-        // DA — 3 posições na ordem do documento: e-CNPJ IES → e-CPF
-        // responsável (DadosDiploma) → e-CNPJ IES com política AD-RA (raiz,
-        // assinatura de ARQUIVAMENTO — cobre o documento INTEIRO incluindo
-        // as assinaturas internas).
-        return assinarTodosEsqueletos(lido.xml, {
-          ...carimb,
-          posicoes: [
-            { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica },
-            { certPem: credResp.certPem, chavePem: credResp.chavePem, thumbprintA3: credResp.thumbprintA3, politica },
-            { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica: POLITICA_ARQUIVAMENTO },
-          ],
-        });
+    // LTV (perfil XL): cadeia + CRLs reais + SigAndRefs (2º carimbo),
+    // POR SIGNATÁRIO (blocos XL apenas nas assinaturas de cada
+    // certificado). Best-effort: falha (offline/AIA) → segue sem LTV com
+    // aviso — nunca valores fictícios.
+    const aplicarLtvSePossivel = async (creds: Credencial[]): Promise<void> => {
+      if (!carimbador) return;
+      try {
+        const { aplicarLtv } = await import('../diploma-digital/ltv');
+        for (const cred of creds) {
+          const rLtv = await aplicarLtv(xmlAssinado, cred.certPem, async (d) => carimbador(d));
+          xmlAssinado = rLtv.xml;
+          if (rLtv.avisos.length) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + rLtv.avisos.join(' ');
+        }
+      } catch (e: any) {
+        avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
+          'Sem LTV (CompleteCertificateRefs/RevocationValues): ' + (e?.message ?? String(e)) + ' — assinatura válida, perfil reduzido.';
       }
-      // Histórico (1 assinatura) e fallback da DA sem 2º certificado
-      return assinarTodosEsqueletos(lido.xml, {
-        certPem: credIes.certPem,
-        chavePem: credIes.chavePem,
-        thumbprintA3: credIes.thumbprintA3,
-        politica,
-        ...carimb,
-      });
     };
-
-    try {
-      xmlAssinado = await assinarCom(true);
-      // LTV (perfil XL): cadeia + CRLs reais + SigAndRefs (2º carimbo),
-      // POR SIGNATÁRIO (blocos XL apenas nas assinaturas de cada
-      // certificado). Best-effort: falha (offline/AIA) → segue sem LTV com
-      // aviso — nunca valores fictícios.
-      if (carimbador) {
-        try {
-          const { aplicarLtv } = await import('../diploma-digital/ltv');
-          for (const cred of credResp ? [credIes, credResp] : [credIes]) {
-            const rLtv = await aplicarLtv(xmlAssinado, cred.certPem, async (d) => carimbador(d));
-            xmlAssinado = rLtv.xml;
-            if (rLtv.avisos.length) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + rLtv.avisos.join(' ');
-          }
-        } catch (e: any) {
-          avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
-            'Sem LTV (CompleteCertificateRefs/RevocationValues): ' + (e?.message ?? String(e)) + ' — assinatura válida, perfil reduzido.';
-        }
-      }
-    } catch (e: any) {
-      if ((e as any)?.erroTsa) {
-        // TSA fora do ar: assina XAdES-BES (sem carimbo) + aviso claro
-        carimbos.length = 0;
-        try {
-          xmlAssinado = await assinarCom(false);
-        } catch {
-          return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
-        }
-        avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES): falha no TSA — ' + (e?.message ?? String(e)) + '. Configure/teste em Assinatura Digital → Carimbo do Tempo e assine novamente.';
-      } else {
-        auditar(diplomaId, `assinatura_${artefato}`, 'erro', { err: e?.message });
-        return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
-      }
-    }
 
     // MODO BRy HUB (v1.4.9): o carimbo é aplicado DEPOIS da assinatura
     // local (BES), pelo Completador da BRy — nunca durante. Falha no HUB
     // NÃO perde a assinatura: persiste BES com aviso claro (mesma
-    // semântica de falha do TSA clássico).
-    if (cfgBryHub) {
+    // semântica de falha do TSA clássico). Na DA é chamado EM DUAS
+    // ETAPAS — antes de cada assinatura da raiz (ver assinarFluxo).
+    const carimboBry = async (): Promise<void> => {
+      if (!cfgBryHub) return;
       try {
         const { upgradeCarimboBry } = await import('../diploma-digital/bry-hub-cliente');
         const r = await upgradeCarimboBry(cfgBryHub, xmlAssinado, 60000);
@@ -1266,6 +1226,75 @@ function assinarHandler(
           'Assinado SEM carimbo do tempo (XAdES-BES): falha no BRy HUB — ' +
           (e?.message ?? String(e)) +
           '. Confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar) e assine novamente.';
+      }
+    };
+
+    // ---- Sequência de assinatura ----
+    // ORDEM CRÍTICA na DA: as assinaturas internas de DadosDiploma devem
+    // ser FINALIZADAS (carimbo BRy/TSA + LTV) ANTES da assinatura de
+    // ARQUIVAMENTO da raiz — o digest da raiz (menos-self, semântica do
+    // validador) COBRE as assinaturas internas; modificá-las DEPOIS
+    // (LTV/carimbo pós-assinatura) invalidaria o digest e o gate final
+    // rejeitaria ("digests/RSA não conferem" — regressão real da v1.4.14
+    // com TSA/LTV configurados).
+    const assinarFluxo = async (comCarimbo: boolean): Promise<void> => {
+      const carimb = comCarimbo && carimbador ? { carimbador } : {};
+      if (ehDa && credResp) {
+        // FASE 1 — as 2 assinaturas de DadosDiploma (e-CNPJ IES + e-CPF
+        // do responsável), cada uma com seu carimbo (modo TSA clássico)
+        xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
+          ...carimb,
+          quantidade: 2,
+          posicoes: [
+            { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica },
+            { certPem: credResp.certPem, chavePem: credResp.chavePem, thumbprintA3: credResp.thumbprintA3, politica },
+          ],
+        });
+        // FASE 2 — FINALIZA as internas: carimbo BRy (se modo hub) + LTV
+        // por signatário (a raiz ainda não existe — só as DDs são tocadas)
+        await carimboBry();
+        await aplicarLtvSePossivel([credIes, credResp]);
+        // FASE 3 — assinatura de ARQUIVAMENTO na raiz (AD-RA) sobre o
+        // conteúdo FINAL das internas + seu próprio carimbo
+        xmlAssinado = await assinarTodosEsqueletos(xmlAssinado, {
+          ...carimb,
+          posicoes: [
+            { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica: POLITICA_ARQUIVAMENTO },
+          ],
+        });
+        // FASE 4 — FINALIZA a raiz: BRy carimba só quem falta carimbo;
+        // LTV pula as assinaturas que já têm SigAndRefsTimeStamp
+        await carimboBry();
+        await aplicarLtvSePossivel([credIes]);
+      } else {
+        // Histórico (1 assinatura) e fallback da DA sem 2º certificado
+        xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
+          certPem: credIes.certPem,
+          chavePem: credIes.chavePem,
+          thumbprintA3: credIes.thumbprintA3,
+          politica,
+          ...carimb,
+        });
+        await carimboBry();
+        await aplicarLtvSePossivel([credIes]);
+      }
+    };
+
+    try {
+      await assinarFluxo(true);
+    } catch (e: any) {
+      if ((e as any)?.erroTsa) {
+        // TSA fora do ar: assina XAdES-BES (sem carimbo) + aviso claro
+        carimbos.length = 0;
+        try {
+          await assinarFluxo(false);
+        } catch {
+          return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
+        }
+        avisoCarimbo = 'Assinado SEM carimbo do tempo (XAdES-BES): falha no TSA — ' + (e?.message ?? String(e)) + '. Configure/teste em Assinatura Digital → Carimbo do Tempo e assine novamente.';
+      } else {
+        auditar(diplomaId, `assinatura_${artefato}`, 'erro', { err: e?.message });
+        return { ok: false, error: 'Falha ao assinar: ' + (e?.message ?? String(e)) };
       }
     }
 

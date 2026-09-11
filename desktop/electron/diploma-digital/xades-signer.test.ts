@@ -344,4 +344,95 @@ describe('M6: leiaute de assinaturas do validador MEC (DA com 3 assinaturas)', (
     if (!r.valido) console.error('ERROS XSD:', r.erros);
     expect(r.valido).toBe(true);
   }, 60000);
+
+  // ---- Regressão v1.4.14: LTV/carimbo pós-assinatura nas DDs -----
+  // Na v1.4.14 a raiz (arquivamento, digest menos-self que COBRE as
+  // assinaturas internas) era assinada ANTES do LTV/BRy tocar as DDs —
+  // o digest da raiz divergia e o gate final rejeitava
+  // ("digests/RSA não conferem"). O fluxo agora é por FASES: as DDs são
+  // finalizadas (carimbo+LTV) ANTES da raiz ser criada.
+
+  /** TSA fake determinístico (mesmo padrão do carimbo-tempo.test.ts). */
+  function tsaFakeLocal(prefixo = 'TST') {
+    let n = 0;
+    return async (digest: Buffer) => {
+      expect(digest.length).toBe(32);
+      n++;
+      return { token: Buffer.from(`${prefixo}-TOKEN-${n}-${digest[0]}`), genTime: `2026-09-11T10:0${n}:00Z` };
+    };
+  }
+
+  it('FLUXO POR FASES (produção): LTV nas DDs antes da raiz → as 3 assinaturas verificam', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const da = gerarDaComPdf();
+
+    // FASE 1: assina as 2 DD (e-CNPJ + e-CPF) com carimbo — só 2 esqueletos
+    let xml = await assinarTodosEsqueletos(da, {
+      chavePem, certPem, carimbador: tsaFakeLocal(),
+      quantidade: 2,
+      posicoes: [{ chavePem, certPem }, { chavePem, certPem }],
+    });
+    expect(contarEsqueletos(xml)).toBe(1); // só a raiz resta
+
+    // FASE 2: aplicarLtv insere blocos DENTRO das DDs (após o carimbo) —
+    // a mutação exata que invalidava a raiz na v1.4.14
+    xml = xml
+      .split('</xades:SignatureTimeStamp>')
+      .join('</xades:SignatureTimeStamp><xades:CompleteCertificateRefs><xades:LTV-SIMULADO/></xades:CompleteCertificateRefs>');
+
+    // FASE 3: assinatura de ARQUIVAMENTO (AD-RA) sobre o conteúdo FINAL
+    xml = await assinarTodosEsqueletos(xml, {
+      chavePem, certPem, carimbador: tsaFakeLocal(),
+      posicoes: [{ chavePem, certPem, politica: POLITICA_ARQUIVAMENTO }],
+    });
+    expect(contarEsqueletos(xml)).toBe(0);
+    expect(xml).toContain(POLITICA_ARQUIVAMENTO.identificador);
+
+    // As 3 verificam (motor local independente)
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    const sigs = doc.getElementsByTagNameNS('*', 'Signature');
+    expect(sigs.length).toBe(3);
+    for (let i = 0; i < sigs.length; i++) {
+      const sig = novoVerificador(certPem, sigs[i]);
+      const ok = sig.checkSignature(xml);
+      if (!ok) for (const r of sig.getReferences()) console.error(`FASES SIG${i} REF`, r.uri, '→', r.validationError);
+      expect(ok).toBe(true);
+    }
+  }, 60000);
+
+  it('CONTRATO: modificar as DDs DEPOIS da raiz assinada invalida a raiz (documenta por que a ordem importa)', async () => {
+    const { certPem, chavePem } = gerarCertTeste();
+    const da = gerarDaComPdf();
+
+    // Ordem ERRADA (v1.4.14): assina TUDO primeiro…
+    let xml = await assinarTodosEsqueletos(da, {
+      chavePem, certPem, carimbador: tsaFakeLocal(),
+      posicoes: [
+        { chavePem, certPem },
+        { chavePem, certPem },
+        { chavePem, certPem, politica: POLITICA_ARQUIVAMENTO },
+      ],
+    });
+
+    // …e SÓ DEPOIS "aplica LTV" nas DDs (mutação pós-assinatura)
+    const raizAntes = xml;
+    xml = xml
+      .split('</xades:SignatureTimeStamp>')
+      .join('</xades:SignatureTimeStamp><xades:CompleteCertificateRefs><xades:LTV-SIMULADO/></xades:CompleteCertificateRefs>');
+
+    // DDs continuam válidas (digest delas exclui TODAS as assinaturas)…
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const docAntes = new DOMParser().parseFromString(raizAntes, 'text/xml');
+    const sigsOrdem = docAntes.getElementsByTagNameNS('*', 'Signature');
+    const docDepois = new DOMParser().parseFromString(xml, 'text/xml');
+    const sigs = docDepois.getElementsByTagNameNS('*', 'Signature');
+    expect(sigs.length).toBe(3);
+    expect(novoVerificador(certPem, sigs[0]).checkSignature(xml)).toBe(true);
+    expect(novoVerificador(certPem, sigs[1]).checkSignature(xml)).toBe(true);
+    // …mas a RAIZ (menos-self, cobre as internas) fica INVÁLIDA — é por
+    // isso que o handler finaliza as DDs antes de criar a raiz.
+    void sigsOrdem;
+    expect(novoVerificador(certPem, sigs[2]).checkSignature(xml)).toBe(false);
+  }, 60000);
 });
