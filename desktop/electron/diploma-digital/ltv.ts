@@ -204,11 +204,15 @@ function infoCert(pem: string): { der: Buffer; b64: string; issuerName: string; 
  * Aplica LTV (perfil XL da política) a TODAS as assinaturas reais do
  * artefato: refs + valores + SigAndRefsTimeStamp (2º carimbo via ACT).
  * @obterCarimbo recebe o digest e devolve o token RFC 3161.
+ * @opcoes.apenasRaiz restringe à assinatura de ARQUIVAMENTO (filha direta
+ *  da raiz — FASE 4 do fluxo DA). As internas têm conteúdo coberto pelo
+ *  digest da raiz URI="" e nunca podem ser tocadas depois dela.
  */
 export async function aplicarLtv(
   xml: string,
   certPemLeaf: string,
-  obterCarimbo: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>
+  obterCarimbo: (digest: Buffer) => Promise<{ token: Buffer; genTime?: string }>,
+  opcoes: { apenasRaiz?: boolean } = {}
 ): Promise<{ xml: string; avisos: string[] }> {
   const { cadeiaPems, crls } = await coletarDadosLtv(certPemLeaf);
   const avisos: string[] = [];
@@ -294,10 +298,26 @@ export async function aplicarLtv(
   // X509Certificate do KeyInfo é o leaf informado (mesmo certificado =
   // comportamento anterior: todas as assinaturas dele).
   const leafB64 = certPemLeaf.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  // Ids das assinaturas de ARQUIVAMENTO (filhas diretas da raiz) quando o
+  // escopo é apenasRaiz — as demais ficam intocadas (digest da raiz as cobre)
+  let idsRaiz: Set<string> | null = null;
+  if (opcoes.apenasRaiz) {
+    idsRaiz = new Set();
+    const docRaiz = new DOMParser().parseFromString(xml, 'text/xml');
+    const raiz = docRaiz.documentElement;
+    for (let i = 0; i < raiz.childNodes.length; i++) {
+      const c = raiz.childNodes[i] as any;
+      if (c.nodeType === 1 && c.localName === 'Signature') idsRaiz.add(c.getAttribute('Id') ?? '');
+    }
+  }
   // ordem REVERSA (offsets)
   for (const trecho of [...trechosAssinatura(xml)].reverse()) {
     if (trecho.esqueleto) continue;
     if (trecho.texto.includes('<xades:SigAndRefsTimeStamp')) continue; // já aplicado
+    if (idsRaiz) {
+      const mIdTrecho = /<(?:ds:)?Signature(?:\s[^>]*)?\sId="([^"]+)"/.exec(trecho.texto);
+      if (!mIdTrecho || !idsRaiz.has(mIdTrecho[1])) continue;
+    }
     const mCert = /<(?:ds:)?X509Certificate>([^<]+)<\/(?:ds:)?X509Certificate>/.exec(trecho.texto);
     if (mCert && mCert[1].trim() !== leafB64) continue; // outro signatário
     const mFim = trecho.texto.indexOf('</SignatureTimeStamp>');

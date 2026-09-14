@@ -27,6 +27,7 @@ import { gerarListaDiplomasAnuladosXml } from '../diploma-digital/gerar-lista-an
 import { gerarArquivoFiscalizacaoXml, type DiplomaFiscalizadoEntrada } from '../diploma-digital/gerar-arquivo-fiscalizacao';
 import { gerarRvddPdf } from '../diploma-digital/gerar-rvdd';
 import { assinarTodosEsqueletos, contarEsqueletos, POLITICA_ARQUIVAMENTO } from '../diploma-digital/xades-signer';
+import type { EscopoCarimbo } from '../diploma-digital/bry-hub-cliente';
 import { obterCertificadosDiploma, type CertificadosDiploma } from './assinatura';
 import { validarArtefatoDiploma, type ResultadoValidacaoArtefato } from '../diploma-digital/validar-artefato';
 import { validarXmlContraXsd, type ArtefatoXsd, type ResultadoValidacao } from '../diploma-digital/xsd-validator';
@@ -1187,19 +1188,22 @@ function assinarHandler(
     // LTV (perfil XL): cadeia + CRLs reais + SigAndRefs (2º carimbo),
     // POR SIGNATÁRIO (blocos XL apenas nas assinaturas de cada
     // certificado). Best-effort: falha (offline/AIA) → segue sem LTV com
-    // aviso — nunca valores fictícios.
-    const aplicarLtvSePossivel = async (creds: Credencial[]): Promise<void> => {
+    // aviso — nunca valores fictícios. `apenasRaiz` (FASE 4): nunca toca
+    // as internas — conteúdo delas já está coberto pelo digest da raiz.
+    const aplicarLtvSePossivel = async (creds: Credencial[], apenasRaiz = false): Promise<void> => {
       if (!carimbador) return;
       try {
         const { aplicarLtv } = await import('../diploma-digital/ltv');
         for (const cred of creds) {
-          const rLtv = await aplicarLtv(xmlAssinado, cred.certPem, async (d) => carimbador(d));
+          const rLtv = await aplicarLtv(xmlAssinado, cred.certPem, async (d) => carimbador(d), { apenasRaiz });
           xmlAssinado = rLtv.xml;
           if (rLtv.avisos.length) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + rLtv.avisos.join(' ');
         }
       } catch (e: any) {
+        const err = e?.message ?? String(e);
+        auditar(diplomaId, 'assinatura_ltv', 'falhou', { fase: apenasRaiz ? 'raiz' : 'internas', err });
         avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
-          'Sem LTV (CompleteCertificateRefs/RevocationValues): ' + (e?.message ?? String(e)) + ' — assinatura válida, perfil reduzido.';
+          'Sem LTV (CompleteCertificateRefs/RevocationValues): ' + err + ' — assinatura válida, perfil reduzido.';
       }
     };
 
@@ -1213,11 +1217,17 @@ function assinarHandler(
     // SignatureTimeStamp adicionados enxertados (cirurgia de string),
     // preservando os bytes cobertos pelos digests (a re-serialização
     // da BRy quebrava o DigestValue da raiz URI="").
-    const carimboBry = async (): Promise<void> => {
+    // CONTRATO (v1.4.18): a chamada é ESCOPADA por fase. FASE 2 envia à
+    // BRy o documento SEM o esqueleto da raiz (a BRy não completa
+    // ds:Signature vazio e a falha silenciosa adiava o carimbo das
+    // internas); FASE 4 restringe o enxerto à assinatura de
+    // ARQUIVAMENTO (`apenasRaiz`) — internas NUNCA são tocadas depois
+    // do digest da raiz (causa raiz do gate "digests/RSA não conferem").
+    const carimboBry = async (escopo: EscopoCarimbo = {}): Promise<void> => {
       if (!cfgBryHub) return;
       try {
         const { upgradeCarimboBry } = await import('../diploma-digital/bry-hub-cliente');
-        const r = await upgradeCarimboBry(cfgBryHub, xmlAssinado, 60000);
+        const r = await upgradeCarimboBry(cfgBryHub, xmlAssinado, 60000, escopo);
         if (r.carimbosAdicionados > 0) {
           carimbos.push(`BRy HUB (${new Date().toISOString()})`);
         }
@@ -1225,11 +1235,18 @@ function assinarHandler(
         avisoCarimbo =
           (avisoCarimbo ? avisoCarimbo + ' ' : '') +
           `Carimbo do tempo aplicado via BRy HUB (${r.carimbosAdicionados} SignatureTimeStamp adicionado(s)) — XAdES-T.`;
+        if (!escopo.apenasRaiz && r.carimbosAdicionados === 0) {
+          avisoCarimbo =
+            (avisoCarimbo ? avisoCarimbo + ' ' : '') +
+            'BRy HUB não adicionou carimbo nas assinaturas internas (0 SignatureTimeStamp) — a DA seguirá sem carimbo nelas; confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar).';
+        }
       } catch (e: any) {
+        const err = e?.message ?? String(e);
+        auditar(diplomaId, 'assinatura_carimbo_bry', 'falhou', { fase: escopo.apenasRaiz ? 'raiz' : 'internas', err });
         avisoCarimbo =
           (avisoCarimbo ? avisoCarimbo + ' ' : '') +
           'Assinado SEM carimbo do tempo (XAdES-BES): falha no BRy HUB — ' +
-          (e?.message ?? String(e)) +
+          err +
           '. Confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar) e assine novamente.';
       }
     };
@@ -1255,9 +1272,10 @@ function assinarHandler(
             { certPem: credResp.certPem, chavePem: credResp.chavePem, thumbprintA3: credResp.thumbprintA3, politica },
           ],
         });
-        // FASE 2 — FINALIZA as internas: carimbo BRy (se modo hub) + LTV
-        // por signatário (a raiz ainda não existe — só as DDs são tocadas)
-        await carimboBry();
+        // FASE 2 — FINALIZA as internas: carimbo BRy (se modo hub; SEM o
+        // esqueleto da raiz no envio) + LTV por signatário (a raiz ainda
+        // não existe — só as DDs são tocadas)
+        await carimboBry({ semEsqueletos: true });
         await aplicarLtvSePossivel([credIes, credResp]);
         // FASE 3 — assinatura de ARQUIVAMENTO na raiz (AD-RA) sobre o
         // conteúdo FINAL das internas + seu próprio carimbo
@@ -1267,10 +1285,11 @@ function assinarHandler(
             { certPem: credIes.certPem, chavePem: credIes.chavePem, thumbprintA3: credIes.thumbprintA3, politica: POLITICA_ARQUIVAMENTO },
           ],
         });
-        // FASE 4 — FINALIZA a raiz: BRy carimba só quem falta carimbo;
-        // LTV pula as assinaturas que já têm SigAndRefsTimeStamp
-        await carimboBry();
-        await aplicarLtvSePossivel([credIes]);
+        // FASE 4 — FINALIZA a raiz: BRy carimba/carimbos APENAS na raiz
+        // (escopo apenasRaiz — tocar internas aqui INVALIDARIA o digest
+        // da raiz, que as cobre); LTV idem, pula quem já tem SigAndRefs
+        await carimboBry({ apenasRaiz: true });
+        await aplicarLtvSePossivel([credIes], true);
       } else {
         // Histórico (1 assinatura) e fallback da DA sem 2º certificado
         xmlAssinado = await assinarTodosEsqueletos(lido.xml, {
@@ -1280,7 +1299,7 @@ function assinarHandler(
           politica,
           ...carimb,
         });
-        await carimboBry();
+        await carimboBry({ semEsqueletos: true });
         await aplicarLtvSePossivel([credIes]);
       }
     };
@@ -1327,11 +1346,14 @@ function assinarHandler(
       db.prepare("UPDATE diplomas_digitais SET status = 'xml_invalido', updated_at = datetime('now') WHERE id = ?").run(diplomaId);
       auditar(diplomaId, `assinatura_${artefato}`, 'verificacao_cripto_falhou', {
         problemas: assinaturasInvalidas.map((a) => ({ id: a.id, erros: a.errosCripto })),
+        avisoCarimbo: avisoCarimbo || null,
       });
       return {
         ok: false,
-        error: 'Assinatura verificada e REJEITADA (digests/RSA não conferem):\n' +
-          assinaturasInvalidas.map((a) => `• ${a.id}: ${a.errosCripto.join('; ')}`).join('\n'),
+        error:
+          'Assinatura verificada e REJEITADA (digests/RSA não conferem):\n' +
+          assinaturasInvalidas.map((a) => `• ${a.id}: ${a.errosCripto.join('; ')}`).join('\n') +
+          (avisoCarimbo ? '\n' + avisoCarimbo : ''),
       };
     }
     if (diagnostico.assinaturas.some((a) => !a.carimbo?.tokenOk) && !avisoCarimbo) {

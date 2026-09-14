@@ -21,9 +21,25 @@
 //
 import { Buffer } from 'node:buffer';
 import { DOMParser } from '@xmldom/xmldom';
+import { trechosAssinatura } from './xades-signer';
 
 const NS_DS_ENXERTO = 'http://www.w3.org/2000/09/xmldsig#';
 const ALGO_C14N_EXC_PADRAO = 'http://www.w3.org/2001/10/xml-exc-c14n#';
+
+/** Escopo do carimbo BRy no fluxo em fases da DA (assinarHandler):
+ *  • FASE 2 (internas): `semEsqueletos` envia à BRy apenas assinaturas
+ *    REAIS — a BRy não completa documentos com ds:Signature vazio
+ *    (esqueleto da raiz). A falha silenciosa da FASE 2 deixava as
+ *    internas sem carimbo até a FASE 4, DEPOIS do digest da raiz —
+ *    mutação pós-assinatura → gate "digests/RSA não conferem" (URI="").
+ *  • FASE 4 (raiz): `apenasRaiz` restringe o enxerto à assinatura de
+ *    ARQUIVAMENTO (filha direta da raiz do documento). As internas têm
+ *    conteúdo coberto pelo digest da raiz URI="" e NUNCA podem ser
+ *    tocadas depois que ela existe. */
+export interface EscopoCarimbo {
+  apenasRaiz?: boolean;
+  semEsqueletos?: boolean;
+}
 
 export interface ConfigBryHub {
   /** OAuth2 (POST, form-urlencoded). */
@@ -181,14 +197,20 @@ function contarOcorrencias(xml: string, marcador: string): number {
 export async function upgradeCarimboBry(
   cfg: ConfigBryHub,
   xmlAssinado: string,
-  timeoutMs = 60000
+  timeoutMs = 60000,
+  escopo: EscopoCarimbo = {}
 ): Promise<ResultadoUpgrade> {
   const token = await obterTokenBry(cfg);
   const hub = cfg.urlHub.trim().replace(/\/+$/, '');
+  // semEsqueletos: a BRy não carimba (e costuma RECUSAR) documentos com
+  // ds:Signature vazio — o esqueleto da raiz sai do envio e volta intacto.
+  const { corpo: xmlEnvio, contexto } = escopo.semEsqueletos
+    ? separarEsqueletos(xmlAssinado)
+    : { corpo: xmlAssinado, contexto: [] as { antes: string; texto: string }[] };
   const fd = new FormData();
   fd.append(
     'signature[0]',
-    new Blob([Buffer.from(xmlAssinado, 'utf8')], { type: 'application/xml' }),
+    new Blob([Buffer.from(xmlEnvio, 'utf8')], { type: 'application/xml' }),
     'assinado.xml'
   );
   fd.append('profile', 'TIMESTAMP');
@@ -217,7 +239,7 @@ export async function upgradeCarimboBry(
       const fd2 = new FormData();
       fd2.append(
         'signature[0]',
-        new Blob([Buffer.from(xmlAssinado, 'utf8')], { type: 'application/xml' }),
+        new Blob([Buffer.from(xmlEnvio, 'utf8')], { type: 'application/xml' }),
         'assinado.xml'
       );
       fd2.append('profile', 'TIMESTAMP');
@@ -249,15 +271,51 @@ export async function upgradeCarimboBry(
   // Enxerto cirúrgico: o documento da BRy é re-serializado por ela e só
   // serve de FONTE dos carimbos adicionados — nunca como documento final.
   const xmlNovo = Buffer.from(String(item.document), 'base64').toString('utf8');
-  const enxerto = enxertarCarimbosBry(xmlAssinado, xmlNovo);
+  const enxerto = enxertarCarimbosBry(xmlEnvio, xmlNovo, escopo);
   return {
-    xml: enxerto.xml,
+    xml: contexto.length > 0 ? reinserirEsqueletos(enxerto.xml, contexto) : enxerto.xml,
     carimbosAdicionados: enxerto.carimbosAdicionados,
     genTimes: genTimesDoXml(enxerto.xml),
   };
 }
 
 // ---------- enxerto cirúrgico dos carimbos (sem re-serialização) ----------
+
+/** Separa os esqueletos (posições não assinadas) do corpo enviado à BRy.
+ *  A reinserção é por ÂNCORA de contexto (texto imediatamente anterior),
+ *  não por índice: o enxerto insere carimbos em assinaturas que vem
+ *  ANTES do esqueleto e deslocaria índices absolutos. */
+function separarEsqueletos(xml: string): { corpo: string; contexto: { antes: string; texto: string }[] } {
+  const esqueletos = trechosAssinatura(xml).filter((t) => t.esqueleto);
+  let corpo = xml;
+  for (let i = esqueletos.length - 1; i >= 0; i--) {
+    corpo = corpo.slice(0, esqueletos[i].inicio) + corpo.slice(esqueletos[i].inicio + esqueletos[i].texto.length);
+  }
+  return {
+    corpo,
+    contexto: esqueletos.map((e) => ({
+      antes: xml.slice(Math.max(0, e.inicio - 64), e.inicio),
+      texto: e.texto,
+    })),
+  };
+}
+
+/** Reinserção por âncora (ordem crescente; falha explícita se a âncora
+ *  desaparecer — o XML local permanece íntegro no chamador). */
+function reinserirEsqueletos(corpo: string, contexto: { antes: string; texto: string }[]): string {
+  let out = corpo;
+  let aPartir = 0;
+  for (const e of contexto) {
+    const idx = out.indexOf(e.antes, aPartir);
+    if (idx < 0) {
+      throw new Error('Ponto de reinserção do esqueleto não localizado após o carimbo — XML local preservado sem alteração.');
+    }
+    const pos = idx + e.antes.length;
+    out = out.slice(0, pos) + e.texto + out.slice(pos);
+    aPartir = pos + e.texto.length;
+  }
+  return out;
+}
 
 interface InfoAssinatura {
   id: string;
@@ -341,7 +399,8 @@ function escaparAtributo(v: string): string {
  */
 export function enxertarCarimbosBry(
   xmlOriginal: string,
-  xmlBry: string
+  xmlBry: string,
+  escopo: EscopoCarimbo = {}
 ): { xml: string; carimbosAdicionados: number } {
   let docOriginal: any;
   let docBry: any;
@@ -388,6 +447,9 @@ export function enxertarCarimbosBry(
       for (let j = 0; j < sigs.length; j++) if ((sigs[j].getAttribute('Id') ?? '') === id) return sigs[j];
       return null;
     })();
+    // apenasRaiz (FASE 4): internas têm conteúdo coberto pelo digest da
+    // raiz URI="" — tocar depois da assinatura da raiz quebra o gate.
+    if (escopo.apenasRaiz && originalSig && originalSig.parentNode !== docOriginal.documentElement) continue;
     const jaTemCarimbo = originalSig ? descendentesPorLocalName(originalSig, 'SignatureTimeStamp').length > 0 : false;
     if (jaTemCarimbo) continue; // regra: copiar somente o que NÃO existia
     const timestamps = descendentesPorLocalName(sigBry, 'SignatureTimeStamp');

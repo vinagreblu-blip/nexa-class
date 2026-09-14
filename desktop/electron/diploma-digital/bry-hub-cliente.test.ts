@@ -202,8 +202,9 @@ describe('upgradeCarimboBry (POST /xml/v1/upgrade/signature)', () => {
 // documento devolvido quebrava o DigestValue → gate "digests/RSA não
 // conferem". O enxerto copia SOMENTE os SignatureTimeStamp adicionados,
 // por cirurgia de string, preservando todo o restante do XML original.
-describe('enxertarCarimbosBry — cirurgia sem re-serialização', () => {
-  const ALUNO = {
+
+// ---------- fixtures/helpers compartilhados (DA + BRy-like) ----------
+const ALUNO = {
     id: 7, matricula: '202012345', nome: 'MARIA DA SILVA', nome_social: null, sexo: 'F',
     nacionalidade: 'Brasileira', naturalidade: 'Salvador', naturalidade_codigo_ibge: '2927408',
     naturalidade_uf: 'BA', naturalidade_estrangeira: null, cpf: '123.456.789-00', rg: '1.234.567',
@@ -298,6 +299,7 @@ describe('enxertarCarimbosBry — cirurgia sem re-serialização', () => {
     return out;
   }
 
+describe('enxertarCarimbosBry — cirurgia sem re-serialização', () => {
   it('FLUXO BRy COMPLETO (FASE 1→4): enxerto preserva TODAS as verificações — incluindo a Reference URI="" da raiz', async () => {
     const { da, certPem, chavePem } = await daBase();
     const { DOMParser } = await import('@xmldom/xmldom');
@@ -398,4 +400,136 @@ describe('enxertarCarimbosBry — cirurgia sem re-serialização', () => {
     expect(r.xml).toBe(comCarimbo);
     expect(r.carimbosAdicionados).toBe(0);
   });
+});
+
+// ============================================================
+// ESCOPO POR FASE (v1.4.18) — reproduz a produção real: a BRy NÃO
+// completa documentos com ds:Signature vazio (esqueleto da raiz).
+// Sem `semEsqueletos`, a FASE 2 falhava silenciosamente e o carimbo
+// das internas só acontecia na FASE 4, DEPOIS do digest da raiz
+// URI="" → gate "digests/RSA não conferem" (audit procs 16/21).
+// ============================================================
+describe('escopo por fase — BRy que recusa esqueleto (cenario de produção)', () => {
+  /** fetch mockado: token OK; upgrade RECUSA (erro real do audit) se o
+   *  documento enviado contiver SignatureValue vazio; senão carimba
+   *  TODAS as assinaturas reais (bryLike — re-serialização xades141). */
+  function stubBryProducao(pedidos: string[]): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init?: any) => {
+        if (String(url).includes('token-service')) {
+          return respostaJson({ access_token: 'TOK', expires_in: 3600 });
+        }
+        const blob = (init?.body as FormData)?.get('signature[0]') as Blob;
+        const conteudo = blob ? await blob.text() : '';
+        pedidos.push(conteudo);
+        const temEsqueleto = /<(?:ds:)?SignatureValue\s*\/>|<(?:ds:)?SignatureValue><\/(?:ds:)?SignatureValue>/.test(conteudo);
+        if (temEsqueleto) {
+          return respostaJson([
+            { status: 400, message: '[excecao.signer.xml.completar]: Não foi possível completar a assinatura.' },
+          ]);
+        }
+        return respostaJson([
+          { status: 200, document: Buffer.from(bryLike(conteudo), 'utf8').toString('base64') },
+        ]);
+      })
+    );
+  }
+
+  it(
+    'FLUXO COMPLETO com escopos: FASE 2 semEsqueletos carimba as internas, FASE 4 apenasRaiz NUNCA quebra a raiz',
+    async () => {
+      const { da, certPem, chavePem } = await daBase();
+      const { DOMParser } = await import('@xmldom/xmldom');
+      const { novoVerificador } = await import('./verificador-xades');
+      const { assinarTodosEsqueletos, contarEsqueletos, POLITICA_ARQUIVAMENTO } = await import('./xades-signer');
+      const { validarXmlContraXsd } = await import('./xsd-validator');
+      const pedidos: string[] = [];
+      stubBryProducao(pedidos);
+
+      // FASE 1 — as 2 internas (BES)
+      const fase1 = await assinarTodosEsqueletos(da, {
+        chavePem, certPem, quantidade: 2,
+        posicoes: [{ chavePem, certPem }, { chavePem, certPem }],
+      });
+      // FASE 2 — semEsqueletos: a BRy (que recusa esqueleto) recebe só
+      // assinaturas reais e carimba as internas ANTES da raiz existir
+      const fase2 = await upgradeCarimboBry(CFG, fase1, 5000, { semEsqueletos: true });
+      expect(fase2.carimbosAdicionados).toBe(2);
+      expect(pedidos[0]).not.toMatch(/SignatureValue\s*\/>|SignatureValue><\/ds:SignatureValue>/);
+      expect(contarEsqueletos(fase2.xml)).toBe(1); // esqueleto da raiz reintactado
+      // FASE 3 — raiz AD-RA sobre o conteúdo FINAL (carimbado) das internas
+      const fase3 = await assinarTodosEsqueletos(fase2.xml, {
+        chavePem, certPem,
+        posicoes: [{ chavePem, certPem, politica: POLITICA_ARQUIVAMENTO }],
+      });
+      // FASE 4 — apenasRaiz: a resposta da BRy carimba até duplicidades,
+      // mas o enxerto só toca a assinatura de ARQUIVAMENTO
+      const fase4 = await upgradeCarimboBry(CFG, fase3, 5000, { apenasRaiz: true });
+      expect(fase4.carimbosAdicionados).toBe(1);
+      expect((fase4.xml.match(/<xades:EncapsulatedTimeStamp>/g) ?? []).length).toBe(3); // 2 internas + raiz
+      // TODAS verificam — raiz URI="" incluída (o gate passa)
+      const doc = new DOMParser().parseFromString(fase4.xml, 'text/xml');
+      const sigs = doc.getElementsByTagNameNS('*', 'Signature');
+      expect(sigs.length).toBe(3);
+      for (let i = 0; i < sigs.length; i++) {
+        const sig = novoVerificador(certPem, sigs[i]);
+        const ok = sig.checkSignature(fase4.xml);
+        if (!ok) for (const rf of sig.getReferences()) console.error(`ESC SIG${i} REF`, rf.uri, '→', rf.validationError);
+        expect(ok).toBe(true);
+      }
+      const vx = await validarXmlContraXsd(fase4.xml, 'documentacaoAcademica');
+      if (!vx.valido) console.error('ERROS XSD:', vx.erros);
+      expect(vx.valido).toBe(true);
+    },
+    60000
+  );
+
+  it(
+    'REGRESSÃO (causa raiz): FASE 2 falha + FASE 4 sem escopo carimba internas pós-raiz → raiz QUEBRA; com apenasRaiz NÃO quebra',
+    async () => {
+      const { da, certPem, chavePem } = await daBase();
+      const { DOMParser } = await import('@xmldom/xmldom');
+      const { novoVerificador } = await import('./verificador-xades');
+      const { assinarTodosEsqueletos, POLITICA_ARQUIVAMENTO } = await import('./xades-signer');
+      const pedidos: string[] = [];
+      stubBryProducao(pedidos);
+
+      // FASE 1 — internas BES
+      const fase1 = await assinarTodosEsqueletos(da, {
+        chavePem, certPem, quantidade: 2,
+        posicoes: [{ chavePem, certPem }, { chavePem, certPem }],
+      });
+      // FASE 2 — SEM o escopo novo (comportamento antigo): envia COM o
+      // esqueleto → a BRy recusa com o erro real do audit
+      await expect(upgradeCarimboBry(CFG, fase1, 5000)).rejects.toThrow(/Não foi possível completar a assinatura/);
+      // FASE 3 — raiz assinada sobre internas AINDA sem carimbo
+      const fase3 = await assinarTodosEsqueletos(fase1, {
+        chavePem, certPem,
+        posicoes: [{ chavePem, certPem, politica: POLITICA_ARQUIVAMENTO }],
+      });
+      const sigsDe = (xml: string) => {
+        const d = new DOMParser().parseFromString(xml, 'text/xml');
+        return Array.from(d.getElementsByTagNameNS('*', 'Signature')) as any[];
+      };
+      // FASE 4 SEM escopo (antigo): BRy carimba internas+raiz DEPOIS do
+      // digest da raiz → o gate rejeitaria exatamente com URI=""
+      const antigo = await upgradeCarimboBry(CFG, fase3, 5000);
+      expect((antigo.xml.match(/<xades:EncapsulatedTimeStamp>/g) ?? []).length).toBe(3);
+      const raizAntiga = sigsDe(antigo.xml)[2];
+      expect(novoVerificador(certPem, raizAntiga).checkSignature(antigo.xml)).toBe(false);
+      // FASE 4 COM apenasRaiz (novo): só a raiz é tocada — internas
+      // permanecem BES (degradação honesta com aviso) e TUDO verifica
+      const novo = await upgradeCarimboBry(CFG, fase3, 5000, { apenasRaiz: true });
+      expect((novo.xml.match(/<xades:EncapsulatedTimeStamp>/g) ?? []).length).toBe(1); // só a raiz
+      const sigsNovo = sigsDe(novo.xml);
+      for (let i = 0; i < sigsNovo.length; i++) {
+        const sig = novoVerificador(certPem, sigsNovo[i]);
+        const ok = sig.checkSignature(novo.xml);
+        if (!ok) for (const rf of sig.getReferences()) console.error(`REG SIG${i} REF`, rf.uri, '→', rf.validationError);
+        expect(ok).toBe(true);
+      }
+    },
+    60000
+  );
 });
