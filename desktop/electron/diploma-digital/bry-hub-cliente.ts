@@ -21,7 +21,7 @@
 //
 import { Buffer } from 'node:buffer';
 import { DOMParser } from '@xmldom/xmldom';
-import { trechosAssinatura } from './xades-signer';
+import { trechosAssinatura, assinaturasSemCarimbo } from './xades-signer';
 
 const NS_DS_ENXERTO = 'http://www.w3.org/2000/09/xmldsig#';
 const ALGO_C14N_EXC_PADRAO = 'http://www.w3.org/2001/10/xml-exc-c14n#';
@@ -277,6 +277,55 @@ export async function upgradeCarimboBry(
     carimbosAdicionados: enxerto.carimbosAdicionados,
     genTimes: genTimesDoXml(enxerto.xml),
   };
+}
+
+export interface OpcoesRetriesBry {
+  /** Total de tentativas (padrão 3 — falhas transientes do HUB: timeout,
+   *  JWT expirado no meio, 5xx e resposta sem carimbar). */
+  tentativas?: number;
+  /** Pausa entre tentativas em ms (padrão 3000). */
+  intervaloMs?: number;
+}
+
+/**
+ * `upgradeCarimboBry` com retries E invariante "BRy em todas": cada
+ * tentativa exige que, ao final, NENHUMA assinatura real do documento
+ * esteja sem SignatureTimeStamp (detecta inclusive a BRy respondendo
+ * sucesso sem carimbar nada). Política "tudo-ou-nada" do fluxo de
+ * assinatura: falha de vez relança com o nº de tentativas — o chamador
+ * aborta a operação (nunca documento com carimbo pela metade).
+ */
+export async function finalizarCarimbosBry(
+  cfg: ConfigBryHub,
+  xmlAssinado: string,
+  timeoutMs = 60000,
+  escopo: EscopoCarimbo = {},
+  opcoes: OpcoesRetriesBry = {}
+): Promise<ResultadoUpgrade> {
+  const tentativas = Math.max(1, opcoes.tentativas ?? 3);
+  const intervaloMs = Math.max(0, opcoes.intervaloMs ?? 3000);
+  let ultimoErro: unknown;
+  for (let tentativa = 1; tentativa <= tentativas; tentativa++) {
+    try {
+      const r = await upgradeCarimboBry(cfg, xmlAssinado, timeoutMs, escopo);
+      const semCarimbo = assinaturasSemCarimbo(r.xml);
+      if (semCarimbo > 0) {
+        throw new Error(
+          `BRy HUB respondeu sem carimbar: ${semCarimbo} assinatura(s) real(is) sem SignatureTimeStamp ` +
+            `(${r.carimbosAdicionados} adicionado(s) nesta tentativa)`
+        );
+      }
+      return r;
+    } catch (e: any) {
+      ultimoErro = e;
+      if (tentativa < tentativas && intervaloMs > 0) {
+        await new Promise((resolver) => setTimeout(resolver, intervaloMs));
+      }
+    }
+  }
+  throw new Error(
+    `BRy HUB falhou em ${tentativas} tentativa(s): ${ultimoErro instanceof Error ? ultimoErro.message : String(ultimoErro)}`
+  );
 }
 
 // ---------- enxerto cirúrgico dos carimbos (sem re-serialização) ----------

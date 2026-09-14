@@ -9,7 +9,7 @@
 // RFC2253) e o caminho A3 (assinarHashA3 mockado com node:crypto —
 // mesma semântica do SignHash do token: PKCS#1 v1.5 sobre o digest).
 import { describe, expect, it, vi } from 'vitest';
-import { assinarProximoEsqueleto, assinarTodosEsqueletos, contarEsqueletos, POLITICA_ASSINATURA, POLITICA_ARQUIVAMENTO } from './xades-signer';
+import { assinarProximoEsqueleto, assinarTodosEsqueletos, contarEsqueletos, assinaturasSemCarimbo, tipoPessoaCertPem, avisoCertificadosSemOu, POLITICA_ASSINATURA, POLITICA_ARQUIVAMENTO } from './xades-signer';
 import { gerarHistoricoXml } from './gerar-historico-xml';
 import { gerarDocumentacaoAcademicaXml } from './gerar-documentacao-academica';
 import { validarXmlContraXsd } from './xsd-validator';
@@ -430,9 +430,96 @@ describe('M6: leiaute de assinaturas do validador MEC (DA com 3 assinaturas)', (
     expect(sigs.length).toBe(3);
     expect(novoVerificador(certPem, sigs[0]).checkSignature(xml)).toBe(true);
     expect(novoVerificador(certPem, sigs[1]).checkSignature(xml)).toBe(true);
-    // …mas a RAIZ (menos-self, cobre as internas) fica INVÁLIDA — é por
+    // — mas a RAIZ (menos-self, cobre as internas) fica INVÁLIDA — é por
     // isso que o handler finaliza as DDs antes de criar a raiz.
     void sigsOrdem;
     expect(novoVerificador(certPem, sigs[2]).checkSignature(xml)).toBe(false);
   }, 60000);
+});
+
+// ============================================================
+// v1.4.19 — helpers da política "BRy em todas" + aviso OU nominativo
+// ============================================================
+describe('assinaturasSemCarimbo (invariante de finalização)', () => {
+  const ESQUELETO =
+    '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">' +
+    '<ds:SignedInfo><ds:Reference URI=""><ds:DigestValue></ds:DigestValue></ds:Reference></ds:SignedInfo>' +
+    '<ds:SignatureValue></ds:SignatureValue></ds:Signature>';
+  const REAL_SEM_CARIMBO =
+    '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S1">' +
+    '<ds:SignedInfo><ds:Reference URI=""><ds:DigestValue>QUJD</ds:DigestValue></ds:Reference></ds:SignedInfo>' +
+    '<ds:SignatureValue>UVdG</ds:SignatureValue></ds:Signature>';
+  const REAL_COM_CARIMBO =
+    '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S2">' +
+    '<ds:SignedInfo><ds:Reference URI=""><ds:DigestValue>QUJD</ds:DigestValue></ds:Reference></ds:SignedInfo>' +
+    '<ds:SignatureValue>UVdG</ds:SignatureValue>' +
+    '<ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#">' +
+    '<xades:UnsignedProperties><xades:UnsignedSignatureProperties>' +
+    '<xades:SignatureTimeStamp><xades:EncapsulatedTimeStamp>VE9LRU4=</xades:EncapsulatedTimeStamp></xades:SignatureTimeStamp>' +
+    '</xades:UnsignedSignatureProperties></xades:UnsignedProperties>' +
+    '</xades:QualifyingProperties></ds:Object></ds:Signature>';
+
+  it('esqueleto não conta; real sem SignatureTimeStamp conta', () => {
+    expect(assinaturasSemCarimbo(`<r>${ESQUELETO}</r>`)).toBe(0);
+    expect(assinaturasSemCarimbo(`<r>${REAL_SEM_CARIMBO}</r>`)).toBe(1);
+  });
+
+  it('real com carimbo zera a pendência (invariante satisfeita)', () => {
+    expect(assinaturasSemCarimbo(`<r>${REAL_COM_CARIMBO}${ESQUELETO}</r>`)).toBe(0);
+    expect(assinaturasSemCarimbo(`<r>${REAL_COM_CARIMBO}${REAL_COM_CARIMBO}${REAL_SEM_CARIMBO}</r>`)).toBe(1);
+  });
+});
+
+describe('tipoPessoaCertPem / avisoCertificadosSemOu (aviso nominativo v1.4.19)', () => {
+  function gerarCertComOu(ous: string[], cn: string): string {
+    const forge = require('node-forge');
+    const pair = forge.pki.rsa.generateKeyPair(2048);
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = pair.publicKey;
+    cert.serialNumber = '01' + String(Date.now()) + Math.floor(Math.random() * 1000);
+    cert.validity.notBefore = new Date(Date.now() - 86400e3);
+    cert.validity.notAfter = new Date(Date.now() + 86400e3);
+    cert.setSubject([
+      { name: 'commonName', value: cn },
+      ...ous.map((ou) => ({ name: 'organizationalUnitName', value: ou })),
+      { name: 'countryName', value: 'BR' },
+    ]);
+    cert.setIssuer([
+      { name: 'commonName', value: cn },
+      ...ous.map((ou) => ({ name: 'organizationalUnitName', value: ou })),
+      { name: 'countryName', value: 'BR' },
+    ]);
+    cert.sign(pair.privateKey, forge.md.sha256.create());
+    return forge.pki.certificateToPem(cert);
+  }
+
+  it('identifica e-CNPJ (CNPJ tem precedência) e e-CPF pelo OU ICP-Brasil', () => {
+    expect(tipoPessoaCertPem(gerarCertComOu(['CNPJ: 03.466.601/0001-82', 'CPF: 11122233344'], 'IES LTDA'))).toBe('ecnpj');
+    expect(tipoPessoaCertPem(gerarCertComOu(['CPF: 11122233344'], 'RESPONSAVEL'))).toBe('ecpf');
+    expect(tipoPessoaCertPem(gerarCertComOu(['TI'], 'SEM OU ICP'))).toBe('desconhecido');
+    expect(tipoPessoaCertPem(gerarCertComOu([], 'SEM OU'))).toBe('desconhecido');
+  });
+
+  it('avisoCertificadosSemOu: null quando todos identificados; NOMINATIVO (rótulo + CN) quando falta', () => {
+    const certIes = gerarCertComOu(['CNPJ: 03.466.601/0001-82'], 'IES LTDA');
+    const certResp = gerarCertComOu(['CPF: 11122233344'], 'RESPONSAVEL');
+    const certTeste = gerarCertComOu([], 'CERTIFICADO DE TESTE');
+    expect(avisoCertificadosSemOu([
+      { rotulo: 'da IES (e-CNPJ)', certPem: certIes },
+      { rotulo: 'do responsável (e-CPF)', certPem: certResp },
+    ])).toBeNull();
+    const aviso = avisoCertificadosSemOu([
+      { rotulo: 'da IES (e-CNPJ)', certPem: certIes },
+      { rotulo: 'do responsável (e-CPF)', certPem: certTeste },
+    ])!;
+    expect(aviso).toContain('do responsável (e-CPF) (CN=CERTIFICADO DE TESTE)');
+    expect(aviso).not.toContain('da IES');
+    expect(aviso).toContain('não traz identificação ICP-Brasil');
+    const avisoAmbos = avisoCertificadosSemOu([
+      { rotulo: 'da IES (e-CNPJ)', certPem: certTeste },
+      { rotulo: 'do responsável (e-CPF)', certPem: certTeste },
+    ])!;
+    expect(avisoAmbos).toContain(' e ');
+    expect(avisoAmbos).toContain('não trazem');
+  });
 });

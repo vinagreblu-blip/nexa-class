@@ -26,7 +26,7 @@ import { gerarDiplomaFinalXml, type DadosRegistroRetorno } from '../diploma-digi
 import { gerarListaDiplomasAnuladosXml } from '../diploma-digital/gerar-lista-anulados';
 import { gerarArquivoFiscalizacaoXml, type DiplomaFiscalizadoEntrada } from '../diploma-digital/gerar-arquivo-fiscalizacao';
 import { gerarRvddPdf } from '../diploma-digital/gerar-rvdd';
-import { assinarTodosEsqueletos, contarEsqueletos, POLITICA_ARQUIVAMENTO } from '../diploma-digital/xades-signer';
+import { assinarTodosEsqueletos, contarEsqueletos, tipoPessoaCertPem, avisoCertificadosSemOu, POLITICA_ARQUIVAMENTO } from '../diploma-digital/xades-signer';
 import type { EscopoCarimbo } from '../diploma-digital/bry-hub-cliente';
 import { obterCertificadosDiploma, type CertificadosDiploma } from './assinatura';
 import { validarArtefatoDiploma, type ResultadoValidacaoArtefato } from '../diploma-digital/validar-artefato';
@@ -1149,20 +1149,9 @@ function assinarHandler(
     // Tipo de pessoa do certificado (ICP-Brasil declara no OU do subject:
     // "CNPJ: …" / "CPF: …"). e-CNPJ contém AMBOS (o CPF do representante
     // vem num 2º OU) — CNPJ tem precedência no teste.
-    const tipoPessoaCert = (certPem: string): 'ecnpj' | 'ecpf' | 'desconhecido' => {
-      const forge = require('node-forge');
-      const cert = forge.pki.certificateFromPem(certPem);
-      const ous = ((cert.subject as any).attributes ?? [])
-        .filter((a: any) => a.name === 'organizationalUnitName' || a.shortName === 'OU')
-        .map((a: any) => String(a.value).toUpperCase())
-        .join(' | ');
-      if (/CNPJ\s*:/.test(ous)) return 'ecnpj';
-      if (/CPF\s*:/.test(ous)) return 'ecpf';
-      return 'desconhecido';
-    };
     if (ehDa && credResp) {
-      const tipoIes = tipoPessoaCert(credIes.certPem);
-      const tipoResp = tipoPessoaCert(credResp.certPem);
+      const tipoIes = tipoPessoaCertPem(credIes.certPem);
+      const tipoResp = tipoPessoaCertPem(credResp.certPem);
       if (tipoIes === 'ecpf') {
         return {
           ok: false,
@@ -1179,10 +1168,13 @@ function assinarHandler(
             'A 2ª assinatura de DadosDiploma exige certificado e-CPF (validador MEC) — corrija em Assinatura Digital → Certificados do Diploma Digital.',
         };
       }
-      if (tipoIes === 'desconhecido' || tipoResp === 'desconhecido') {
-        avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') +
-          'Aviso: certificado sem identificação ICP-Brasil de e-CPF/e-CNPJ no subject (OU) — o validador do MEC pode rejeitar por não ser e-CPF/e-CNPJ.';
-      }
+      // v1.4.19: aviso NOMINATIVO — diz QUAL credencial (e o CN) está sem
+      // identificação ICP-Brasil no OU, para o operador localizar o cert.
+      const avisoOu = avisoCertificadosSemOu([
+        { rotulo: 'da IES (e-CNPJ)', certPem: credIes.certPem },
+        { rotulo: 'do responsável (e-CPF)', certPem: credResp.certPem },
+      ]);
+      if (avisoOu) avisoCarimbo = (avisoCarimbo ? avisoCarimbo + ' ' : '') + avisoOu;
     }
 
     // LTV (perfil XL): cadeia + CRLs reais + SigAndRefs (2º carimbo),
@@ -1208,10 +1200,7 @@ function assinarHandler(
     };
 
     // MODO BRy HUB (v1.4.9): o carimbo é aplicado DEPOIS da assinatura
-    // local (BES), pelo Completador da BRy — nunca durante. Falha no HUB
-    // NÃO perde a assinatura: persiste BES com aviso claro (mesma
-    // semântica de falha do TSA clássico). Na DA é chamado EM DUAS
-    // ETAPAS — antes de cada assinatura da raiz (ver assinarFluxo).
+    // local (BES), pelo Completador da BRy — nunca durante.
     // CONTRATO (v1.4.17): upgradeCarimboBry NUNCA devolve o XML
     // re-serializado da BRy — retorna o documento local com apenas os
     // SignatureTimeStamp adicionados enxertados (cirurgia de string),
@@ -1222,12 +1211,19 @@ function assinarHandler(
     // ds:Signature vazio e a falha silenciosa adiava o carimbo das
     // internas); FASE 4 restringe o enxerto à assinatura de
     // ARQUIVAMENTO (`apenasRaiz`) — internas NUNCA são tocadas depois
-    // do digest da raiz (causa raiz do gate "digests/RSA não conferem").
+    // do digest da raiz.
+    // CONTRATO (v1.4.19 — "BRy em todas"): finalizarCarimbosBry faz até
+    // 3 tentativas (falhas transientes E resposta sem carimbar) e exige
+    // a invariante de NENHUMA assinatura real sem SignatureTimeStamp.
+    // Falha de vez = ABORTO FATAL da operação (nada persistido como
+    // assinado) — nunca documento com carimbo pela metade. Vale para DA
+    // e Histórico. BRy não CONFIGURADO continua BES com aviso/confirmação
+    // (política de configuração, não de falha).
     const carimboBry = async (escopo: EscopoCarimbo = {}): Promise<void> => {
       if (!cfgBryHub) return;
       try {
-        const { upgradeCarimboBry } = await import('../diploma-digital/bry-hub-cliente');
-        const r = await upgradeCarimboBry(cfgBryHub, xmlAssinado, 60000, escopo);
+        const { finalizarCarimbosBry } = await import('../diploma-digital/bry-hub-cliente');
+        const r = await finalizarCarimbosBry(cfgBryHub, xmlAssinado, 60000, escopo);
         if (r.carimbosAdicionados > 0) {
           carimbos.push(`BRy HUB (${new Date().toISOString()})`);
         }
@@ -1235,19 +1231,15 @@ function assinarHandler(
         avisoCarimbo =
           (avisoCarimbo ? avisoCarimbo + ' ' : '') +
           `Carimbo do tempo aplicado via BRy HUB (${r.carimbosAdicionados} SignatureTimeStamp adicionado(s)) — XAdES-T.`;
-        if (!escopo.apenasRaiz && r.carimbosAdicionados === 0) {
-          avisoCarimbo =
-            (avisoCarimbo ? avisoCarimbo + ' ' : '') +
-            'BRy HUB não adicionou carimbo nas assinaturas internas (0 SignatureTimeStamp) — a DA seguirá sem carimbo nelas; confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar).';
-        }
       } catch (e: any) {
+        // Tudo-ou-nada: relança SEM flag erroTsa — o catch de assinarFluxo
+        // audita e ABORTA (não cai no fallback BES, reservado a falha TSA).
         const err = e?.message ?? String(e);
-        auditar(diplomaId, 'assinatura_carimbo_bry', 'falhou', { fase: escopo.apenasRaiz ? 'raiz' : 'internas', err });
-        avisoCarimbo =
-          (avisoCarimbo ? avisoCarimbo + ' ' : '') +
-          'Assinado SEM carimbo do tempo (XAdES-BES): falha no BRy HUB — ' +
-          err +
-          '. Confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar) e assine novamente.';
+        auditar(diplomaId, 'assinatura_carimbo_bry', 'abortado', { fase: escopo.apenasRaiz ? 'raiz' : 'internas', err });
+        throw new Error(
+          'Falha no carimbo do tempo (BRy HUB) — ' + err +
+          '. NENHUMA assinatura foi finalizada (política tudo-ou-nada); confira o modo BRy HUB em Assinatura Digital → Carimbo do Tempo (Testar) e tente novamente.'
+        );
       }
     };
 

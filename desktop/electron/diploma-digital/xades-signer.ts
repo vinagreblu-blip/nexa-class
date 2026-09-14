@@ -137,6 +137,53 @@ export function trechosAssinatura(xml: string): { inicio: number; texto: string;
   return out;
 }
 
+/** Assinaturas REAIS (não esqueleto) que ainda não têm SignatureTimeStamp
+ *  — invariante "BRy em todas": deve ser 0 ao final de cada fase de
+ *  finalização (detecta inclusive a BRy respondendo sem carimbar). */
+export function assinaturasSemCarimbo(xml: string): number {
+  return trechosAssinatura(xml).filter((t) => !t.esqueleto && !t.texto.includes('<xades:SignatureTimeStamp')).length;
+}
+
+/** Tipo de pessoa do certificado (ICP-Brasil declara no OU do subject:
+ *  "CNPJ: …" / "CPF: …"). e-CNPJ contém AMBOS (o CPF do representante
+ *  vem num 2º OU) — CNPJ tem precedência no teste. RDN multivalorado é
+ *  achatado antes do match. */
+export function tipoPessoaCertPem(certPem: string): 'ecnpj' | 'ecpf' | 'desconhecido' {
+  const forge = require('node-forge');
+  const cert = forge.pki.certificateFromPem(certPem);
+  const ous = ((cert.subject as any).attributes ?? [])
+    .filter((a: any) => a.name === 'organizationalUnitName' || a.shortName === 'OU')
+    .map((a: any) => String(Array.isArray(a.value) ? a.value.join(' | ') : a.value).toUpperCase())
+    .join(' | ');
+  if (/CNPJ\s*:/.test(ous)) return 'ecnpj';
+  if (/CPF\s*:/.test(ous)) return 'ecpf';
+  return 'desconhecido';
+}
+
+/** Aviso NOMINATIVO: quais credenciais não trazem identificação
+ *  ICP-Brasil de e-CPF/e-CNPJ no OU do subject (com o CN para o operador
+ *  localizar o certificado no Windows Store / token). null = todas OK. */
+export function avisoCertificadosSemOu(entradas: { rotulo: string; certPem: string }[]): string | null {
+  const semOu = entradas.filter((e) => tipoPessoaCertPem(e.certPem) === 'desconhecido');
+  if (semOu.length === 0) return null;
+  const forge = require('node-forge');
+  const partes = semOu.map((e) => {
+    let cn = '';
+    try {
+      const cert = forge.pki.certificateFromPem(e.certPem);
+      const attrCn = ((cert.subject as any).attributes ?? []).find(
+        (a: any) => a.shortName === 'CN' || a.name === 'commonName'
+      );
+      cn = attrCn ? String(attrCn.value) : '';
+    } catch { /* CN ilegível — aviso sem ele */ }
+    return `o certificado ${e.rotulo}${cn ? ` (CN=${cn})` : ''}`;
+  });
+  return (
+    `Aviso: ${partes.join(' e ')} não ${semOu.length > 1 ? 'trazem' : 'traz'} identificação ICP-Brasil de ` +
+    'e-CPF/e-CNPJ no subject (OU) — o validador do MEC pode rejeitar por não ser e-CPF/e-CNPJ.'
+  );
+}
+
 function acharNoSkeleton(doc: any): any {
   const assinaturas = doc.getElementsByTagNameNS('*', 'Signature');
   for (let i = 0; i < assinaturas.length; i++) {

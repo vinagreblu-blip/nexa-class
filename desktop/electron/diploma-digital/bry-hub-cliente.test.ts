@@ -4,6 +4,7 @@ import {
   obterTokenBry,
   testarConexaoBry,
   upgradeCarimboBry,
+  finalizarCarimbosBry,
   enxertarCarimbosBry,
   URL_AUTH_BRY_PADRAO,
   URL_HUB_BRY_PRODUCAO,
@@ -532,4 +533,91 @@ describe('escopo por fase — BRy que recusa esqueleto (cenario de produção)',
     },
     60000
   );
+});
+
+// ============================================================
+// v1.4.19 — finalizarCarimbosBry: retries + invariante "BRy em todas"
+// (falha transiente recupera; falha de vez ABORTA com tentativas na
+// mensagem; resposta sem carimbar também é falha).
+// ============================================================
+describe('finalizarCarimbosBry — política tudo-ou-nada', () => {
+  const XML_1SIG =
+    '<raiz xmlns="urn:teste">' +
+    '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="xmldsig-t1">' +
+    '<ds:SignedInfo>' +
+    '<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>' +
+    '<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>' +
+    '<ds:Reference URI="">' +
+    '<ds:Transforms><ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/></ds:Transforms>' +
+    '<ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>' +
+    '<ds:DigestValue>QUJD</ds:DigestValue>' +
+    '</ds:Reference>' +
+    '</ds:SignedInfo>' +
+    '<ds:SignatureValue>UVdG</ds:SignatureValue>' +
+    '<ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Target="#xmldsig-t1">' +
+    '<xades:SignedProperties Id="xmldsig-t1-signed-properties"/>' +
+    '</xades:QualifyingProperties></ds:Object>' +
+    '</ds:Signature></raiz>';
+
+  /** fetch mockado: token OK; upgrade delega em `responderUpgrade(i)`
+   *  (i = nº da tentativa). Conta as chamadas de upgrade em `chamadas`. */
+  function stubUpgrade(chamadas: string[], responderUpgrade: (tentativa: number, conteudo: string) => Promise<Response>): void {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: any, init?: any) => {
+        if (String(url).includes('token-service')) {
+          return respostaJson({ access_token: 'TOK', expires_in: 3600 });
+        }
+        const blob = (init?.body as FormData)?.get('signature[0]') as Blob;
+        const conteudo = blob ? await blob.text() : '';
+        chamadas.push(conteudo);
+        return responderUpgrade(chamadas.length, conteudo);
+      })
+    );
+  }
+
+  it('falha transiente 2× e RECUPERA na 3ª tentativa (mesma política do handler)', async () => {
+    const chamadas: string[] = [];
+    stubUpgrade(chamadas, async (tentativa, conteudo) => {
+      if (tentativa < 3) throw new Error('Falha de rede com o BRy HUB: ECONNRESET');
+      return respostaJson([{ status: 200, document: Buffer.from(bryLike(conteudo), 'utf8').toString('base64') }]);
+    });
+    const r = await finalizarCarimbosBry(CFG, XML_1SIG, 5000, {}, { tentativas: 3, intervaloMs: 5 });
+    expect(chamadas).toHaveLength(3);
+    expect(r.carimbosAdicionados).toBe(1);
+    expect(r.xml).toContain('<xades:EncapsulatedTimeStamp>');
+  });
+
+  it('sucesso na 1ª tentativa não refaz chamadas', async () => {
+    const chamadas: string[] = [];
+    stubUpgrade(chamadas, async (_t, conteudo) =>
+      respostaJson([{ status: 200, document: Buffer.from(bryLike(conteudo), 'utf8').toString('base64') }])
+    );
+    const r = await finalizarCarimbosBry(CFG, XML_1SIG, 5000, {}, { tentativas: 3, intervaloMs: 5 });
+    expect(chamadas).toHaveLength(1);
+    expect(r.carimbosAdicionados).toBe(1);
+  });
+
+  it('falha de vez ABORTA com o nº de tentativas na mensagem', async () => {
+    const chamadas: string[] = [];
+    stubUpgrade(chamadas, async () => {
+      throw new Error('Falha de rede com o BRy HUB: ECONNRESET');
+    });
+    await expect(
+      finalizarCarimbosBry(CFG, XML_1SIG, 5000, {}, { tentativas: 3, intervaloMs: 5 })
+    ).rejects.toThrow(/BRy HUB falhou em 3 tentativa\(s\).*ECONNRESET/);
+    expect(chamadas).toHaveLength(3);
+  });
+
+  it('responde sucesso SEM carimbar (0 stamps) → invariante falha e aborta', async () => {
+    const chamadas: string[] = [];
+    // BRy "ok" mas devolve o documento IGUAL (nenhum carimbo adicionado)
+    stubUpgrade(chamadas, async (_t, conteudo) =>
+      respostaJson([{ status: 200, document: Buffer.from(conteudo, 'utf8').toString('base64') }])
+    );
+    await expect(
+      finalizarCarimbosBry(CFG, XML_1SIG, 5000, {}, { tentativas: 2, intervaloMs: 5 })
+    ).rejects.toThrow(/falhou em 2 tentativa\(s\).*sem carimbar.*1 assinatura\(s\)/s);
+    expect(chamadas).toHaveLength(2);
+  });
 });
