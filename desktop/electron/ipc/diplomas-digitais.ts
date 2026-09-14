@@ -1208,6 +1208,11 @@ function assinarHandler(
     // NÃO perde a assinatura: persiste BES com aviso claro (mesma
     // semântica de falha do TSA clássico). Na DA é chamado EM DUAS
     // ETAPAS — antes de cada assinatura da raiz (ver assinarFluxo).
+    // CONTRATO (v1.4.17): upgradeCarimboBry NUNCA devolve o XML
+    // re-serializado da BRy — retorna o documento local com apenas os
+    // SignatureTimeStamp adicionados enxertados (cirurgia de string),
+    // preservando os bytes cobertos pelos digests (a re-serialização
+    // da BRy quebrava o DigestValue da raiz URI="").
     const carimboBry = async (): Promise<void> => {
       if (!cfgBryHub) return;
       try {

@@ -20,6 +20,10 @@
 // Módulo PURO (fetch global) — testável sem Electron.
 //
 import { Buffer } from 'node:buffer';
+import { DOMParser } from '@xmldom/xmldom';
+
+const NS_DS_ENXERTO = 'http://www.w3.org/2000/09/xmldsig#';
+const ALGO_C14N_EXC_PADRAO = 'http://www.w3.org/2001/10/xml-exc-c14n#';
 
 export interface ConfigBryHub {
   /** OAuth2 (POST, form-urlencoded). */
@@ -158,8 +162,21 @@ function contarOcorrencias(xml: string, marcador: string): number {
 /**
  * Envia o XML assinado (XAdES-BES da emissora) ao Completador do HUB e
  * devolve o XML com o carimbo do tempo (XAdES-T). profile=TIMESTAMP:
- * SOMENTE adiciona SignatureTimeStamp — não reescreve o resto da
- * assinatura (preserva a política MEC PA-AD-RC montada localmente).
+ * adiciona SignatureTimeStamp — mas o documento que a BRy devolve é
+ * RE-SERIALIZADO pelo motor dela (renomeação de prefixos — ex.: o
+ * próprio código contava carimbos como `xades141:` — normalização de
+ * atributos etc.).
+ *
+ * NUNCA substituímos o documento local pelo retorno da BRy: qualquer
+ * byte alterado em conteúdo coberto por um digest já calculado invalida
+ * a assinatura (regressão real: o DigestValue da assinatura raiz
+ * URI="" — que cobre as assinaturas internas — divergia e o gate
+ * final rejeitava com "digests/RSA não conferem").
+ *
+ * O retorno é SEMPRE o XML ORIGINAL do chamador, apenas com os blocos
+ * SignatureTimeStamp que a BRy efetivamente ADICIONOU enxertados por
+ * cirurgia de string (dentro das assinaturas — conteúdo não coberto
+ * pelas References existentes).
  */
 export async function upgradeCarimboBry(
   cfg: ConfigBryHub,
@@ -168,7 +185,6 @@ export async function upgradeCarimboBry(
 ): Promise<ResultadoUpgrade> {
   const token = await obterTokenBry(cfg);
   const hub = cfg.urlHub.trim().replace(/\/+$/, '');
-  const antes = contarOcorrencias(xmlAssinado, '<xades141:EncapsulatedTimeStamp');
   const fd = new FormData();
   fd.append(
     'signature[0]',
@@ -230,11 +246,200 @@ export async function upgradeCarimboBry(
     const chave = item?.chave ? ` [${item.chave}]` : '';
     throw new Error(`BRy HUB não carimbou o XML${chave}: ${msg}`);
   }
+  // Enxerto cirúrgico: o documento da BRy é re-serializado por ela e só
+  // serve de FONTE dos carimbos adicionados — nunca como documento final.
   const xmlNovo = Buffer.from(String(item.document), 'base64').toString('utf8');
-  const depois = contarOcorrencias(xmlNovo, '<xades141:EncapsulatedTimeStamp');
+  const enxerto = enxertarCarimbosBry(xmlAssinado, xmlNovo);
   return {
-    xml: xmlNovo,
-    carimbosAdicionados: Math.max(depois - antes, 0),
-    genTimes: genTimesDoXml(xmlNovo),
+    xml: enxerto.xml,
+    carimbosAdicionados: enxerto.carimbosAdicionados,
+    genTimes: genTimesDoXml(enxerto.xml),
   };
+}
+
+// ---------- enxerto cirúrgico dos carimbos (sem re-serialização) ----------
+
+interface InfoAssinatura {
+  id: string;
+  signatureValue: string;
+  references: { uri: string; digest: string }[];
+}
+
+/** Descendentes (qualquer prefixo/ns) com o localName dado. */
+function descendentesPorLocalName(no: any, nome: string): any[] {
+  const out: any[] = [];
+  const visitar = (n: any) => {
+    for (let i = 0; i < (n?.childNodes?.length ?? 0); i++) {
+      const c = n.childNodes[i];
+      if (c.localName === nome) out.push(c);
+      visitar(c);
+    }
+  };
+  visitar(no);
+  return out;
+}
+
+/** Esqueleto (posição ainda não assinada — SignatureValue vazio, sem Id):
+ *  não é conteúdo assinado, não participa do casamento/enxerto. */
+function ehSkeleton(sig: any): boolean {
+  for (let i = 0; i < (sig?.childNodes?.length ?? 0); i++) {
+    const c = sig.childNodes[i];
+    if (c.localName === 'SignatureValue') return (c.textContent ?? '').trim() === '';
+  }
+  return false;
+}
+
+/** Fingerprint assinado de cada ds:Signature REAL (Id + SignatureValue +
+ *  References) para o portão de integridade. Base64 normalizado sem
+ *  whitespace (a BRy pode requebrar linhas ao re-serializar). */
+function fingerprintAssinaturas(doc: any): InfoAssinatura[] {
+  const sigs = doc.getElementsByTagNameNS('*', 'Signature');
+  const out: InfoAssinatura[] = [];
+  for (let i = 0; i < sigs.length; i++) {
+    const sig = sigs[i];
+    if (ehSkeleton(sig)) continue;
+    const info: InfoAssinatura = { id: sig.getAttribute('Id') ?? '', signatureValue: '', references: [] };
+    for (let j = 0; j < sig.childNodes.length; j++) {
+      const c = sig.childNodes[j];
+      if (c.localName === 'SignatureValue') {
+        info.signatureValue = (c.textContent ?? '').replace(/\s+/g, '');
+      } else if (c.localName === 'SignedInfo') {
+        for (let k = 0; k < c.childNodes.length; k++) {
+          const r = c.childNodes[k];
+          if (r.localName !== 'Reference') continue;
+          const ref = { uri: r.getAttribute('URI') ?? '', digest: '' };
+          for (let m = 0; m < r.childNodes.length; m++) {
+            if (r.childNodes[m].localName === 'DigestValue') {
+              ref.digest = (r.childNodes[m].textContent ?? '').replace(/\s+/g, '');
+            }
+          }
+          info.references.push(ref);
+        }
+      }
+    }
+    out.push(info);
+  }
+  return out;
+}
+
+function escaparAtributo(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+/**
+ * Enxerta no `xmlOriginal` APENAS os blocos SignatureTimeStamp que a BRy
+ * ADICIONOU (presentes no `xmlBry` e ausentes no original), localizando
+ * cada assinatura pelo Id da ds:Signature. O documento devolvido pela BRy
+ * é re-serializado pelo motor dela — NUNCA é adotado: apenas os tokens
+ * CMS (base64) e o algoritmo de canonicalização do carimbo são copiados,
+ * reemitidos com os prefixos JÁ EM ESCOPO no original (xades:/ds:, sem
+ * namespace novo) e inseridos por cirurgia de string. Nenhum byte
+ * coberto pelas References existentes é alterado — DigestValue nunca é
+ * recalculado. Se algo não casar (conteúdo assinado alterado, Id
+ * ausente, carimbo sem token), lança erro EXPLÍCITO preservando o XML
+ * local intacto (sem fallback para o documento da BRy).
+ */
+export function enxertarCarimbosBry(
+  xmlOriginal: string,
+  xmlBry: string
+): { xml: string; carimbosAdicionados: number } {
+  let docOriginal: any;
+  let docBry: any;
+  try {
+    docOriginal = new DOMParser().parseFromString(xmlOriginal, 'text/xml');
+    docBry = new DOMParser().parseFromString(xmlBry, 'text/xml');
+  } catch (e: any) {
+    throw new Error('BRy devolveu XML ilegível — XML local preservado sem alteração: ' + (e?.message ?? String(e)));
+  }
+
+  // ---- Portão de integridade: a BRy não pode alterar conteúdo assinado
+  const fpsOriginal = fingerprintAssinaturas(docOriginal);
+  const fpsBry = fingerprintAssinaturas(docBry);
+  if (fpsOriginal.length !== fpsBry.length) {
+    throw new Error(
+      `BRy devolveu documento com quantidade de assinaturas divergente (enviadas ${fpsOriginal.length}, devolvidas ${fpsBry.length}) — XML local preservado sem alteração.`
+    );
+  }
+  for (let i = 0; i < fpsOriginal.length; i++) {
+    const a = fpsOriginal[i];
+    const b = fpsBry[i];
+    if (!a.id || a.id !== b.id) {
+      throw new Error(
+        `BRy devolveu documento sem casar os Ids das assinaturas (esperado "${a.id || '(sem Id)'}", veio "${b.id || '(sem Id)'}") — XML local preservado sem alteração.`
+      );
+    }
+    if (a.signatureValue !== b.signatureValue) {
+      throw new Error(`BRy devolveu SignatureValue alterado na assinatura Id="${a.id}" — XML local preservado sem alteração.`);
+    }
+    if (JSON.stringify(a.references) !== JSON.stringify(b.references)) {
+      throw new Error(`BRy devolveu References/DigestValues alterados na assinatura Id="${a.id}" — XML local preservado sem alteração.`);
+    }
+  }
+
+  // ---- Extração: o que a BRy ADICIONOU (original não tinha)
+  const sigsBry = docBry.getElementsByTagNameNS('*', 'Signature');
+  const carimbosPorId = new Map<string, string>();
+  for (let i = 0; i < sigsBry.length; i++) {
+    const sigBry = sigsBry[i];
+    if (ehSkeleton(sigBry)) continue; // posição não assinada — BRy não carimba
+    const id = sigBry.getAttribute('Id') ?? '';
+    const originalSig = (() => {
+      const sigs = docOriginal.getElementsByTagNameNS('*', 'Signature');
+      for (let j = 0; j < sigs.length; j++) if ((sigs[j].getAttribute('Id') ?? '') === id) return sigs[j];
+      return null;
+    })();
+    const jaTemCarimbo = originalSig ? descendentesPorLocalName(originalSig, 'SignatureTimeStamp').length > 0 : false;
+    if (jaTemCarimbo) continue; // regra: copiar somente o que NÃO existia
+    const timestamps = descendentesPorLocalName(sigBry, 'SignatureTimeStamp');
+    if (timestamps.length === 0) continue;
+    const blocos: string[] = [];
+    for (const ts of timestamps) {
+      const tsId = ts.getAttribute('Id');
+      let algo = ALGO_C14N_EXC_PADRAO;
+      const tokens: string[] = [];
+      for (let j = 0; j < ts.childNodes.length; j++) {
+        const c = ts.childNodes[j];
+        if (c.localName === 'CanonicalizationMethod') {
+          algo = c.getAttribute('Algorithm') || ALGO_C14N_EXC_PADRAO;
+        } else if (c.localName === 'EncapsulatedTimeStamp') {
+          const tok = (c.textContent ?? '').replace(/\s+/g, '');
+          if (tok) tokens.push(tok);
+        }
+      }
+      if (tokens.length === 0) {
+        throw new Error(`BRy devolveu SignatureTimeStamp sem EncapsulatedTimeStamp (assinatura Id="${id}") — XML local preservado sem alteração.`);
+      }
+      blocos.push(
+        `<xades:SignatureTimeStamp${tsId ? ` Id="${escaparAtributo(tsId)}"` : ''}>` +
+        `<CanonicalizationMethod Algorithm="${escaparAtributo(algo)}" xmlns="${NS_DS_ENXERTO}" />` +
+        tokens.map((tok) => `<xades:EncapsulatedTimeStamp>${tok}</xades:EncapsulatedTimeStamp>`).join('') +
+        `</xades:SignatureTimeStamp>`
+      );
+    }
+    carimbosPorId.set(id, blocos.join(''));
+  }
+
+  // ---- Cirurgia de string no ORIGINAL (sem reparse/re-serialização)
+  let out = xmlOriginal;
+  for (const [id, bloco] of carimbosPorId) {
+    const trecho = out.match(new RegExp(`<(?:[A-Za-z0-9_-]+:)?Signature(?:\\s[^>]*)?>[\\s\\S]*?</(?:[A-Za-z0-9_-]+:)?Signature>`, 'g'))
+      ?.find((t) => t.includes(`Id="${id}"`));
+    if (!trecho) {
+      throw new Error(`Assinatura Id="${id}" não localizada no XML original para o enxerto — XML local preservado sem alteração.`);
+    }
+    const novoTrecho = trecho.includes('</xades:UnsignedSignatureProperties>')
+      ? trecho.replace('</xades:UnsignedSignatureProperties>', bloco + '</xades:UnsignedSignatureProperties>')
+      : trecho.replace(
+          '</xades:QualifyingProperties>',
+          '<xades:UnsignedProperties><xades:UnsignedSignatureProperties>' + bloco + '</xades:UnsignedSignatureProperties></xades:UnsignedProperties></xades:QualifyingProperties>'
+        );
+    if (novoTrecho === trecho) {
+      throw new Error(`Ponto de inserção do carimbo não encontrado na assinatura Id="${id}" — XML local preservado sem alteração.`);
+    }
+    out = out.replace(trecho, novoTrecho);
+  }
+
+  const antes = contarOcorrencias(xmlOriginal, '<xades:EncapsulatedTimeStamp');
+  const depois = contarOcorrencias(out, '<xades:EncapsulatedTimeStamp');
+  return { xml: out, carimbosAdicionados: Math.max(depois - antes, 0) };
 }

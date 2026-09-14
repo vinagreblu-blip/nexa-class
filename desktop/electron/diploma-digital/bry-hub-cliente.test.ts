@@ -4,6 +4,7 @@ import {
   obterTokenBry,
   testarConexaoBry,
   upgradeCarimboBry,
+  enxertarCarimbosBry,
   URL_AUTH_BRY_PADRAO,
   URL_HUB_BRY_PRODUCAO,
   type ConfigBryHub,
@@ -92,8 +93,37 @@ describe('testarConexaoBry (GET /infos — não consome créditos)', () => {
 });
 
 describe('upgradeCarimboBry (POST /xml/v1/upgrade/signature)', () => {
-  const XML_BES = '<doc>sem carimbo</doc>';
-  const XML_T = '<doc>com <xades141:EncapsulatedTimeStamp>TOKEN</xades141:EncapsulatedTimeStamp></doc>';
+  // Fixture com UMA assinatura real (Id + SignedInfo + QualifyingProperties).
+  const XML_BES =
+    '<raiz xmlns="urn:teste">' +
+    '<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="xmldsig-1">' +
+    '<ds:SignedInfo>' +
+    '<ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>' +
+    '<ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>' +
+    '<ds:Reference URI=""><ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/><ds:DigestValue>ZEhBQQ==</ds:DigestValue></ds:Reference>' +
+    '</ds:SignedInfo>' +
+    '<ds:SignatureValue>QUJD</ds:SignatureValue>' +
+    '<ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#" Target="#xmldsig-1">' +
+    '<xades:SignedProperties Id="xmldsig-1-signed-properties"></xades:SignedProperties>' +
+    '</xades:QualifyingProperties></ds:Object>' +
+    '</ds:Signature></raiz>';
+
+  /** Simula a resposta da BRy: re-serialização com prefixos renomeados
+   *  (ds141:/xades141: — como o motor deles faz) + carimbo adicionado. */
+  function respostaBryLike(xml: string): string {
+    return xml
+      .replaceAll('xmlns:ds="', 'xmlns:ds141="').replaceAll('<ds:', '<ds141:').replaceAll('</ds:', '</ds141:')
+      .replaceAll('xmlns:xades="', 'xmlns:xades141="').replaceAll('<xades:', '<xades141:').replaceAll('</xades:', '</xades141:')
+      .replace(
+        '</xades141:QualifyingProperties>',
+        '<xades141:UnsignedProperties><xades141:UnsignedSignatureProperties>' +
+        '<xades141:SignatureTimeStamp Id="ts-1">' +
+        '<ds141:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>' +
+        '<xades141:EncapsulatedTimeStamp>TOKEN</xades141:EncapsulatedTimeStamp>' +
+        '</xades141:SignatureTimeStamp>' +
+        '</xades141:UnsignedSignatureProperties></xades141:UnsignedProperties></xades141:QualifyingProperties>'
+      );
+  }
 
   function mockComToken(respostaUpgrade: () => Promise<Response>) {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -104,18 +134,22 @@ describe('upgradeCarimboBry (POST /xml/v1/upgrade/signature)', () => {
     }));
   }
 
-  it('status 200 + document base64 → XML carimbado e contagem de carimbos', async () => {
+  it('status 200 + document base64 → ORIGINAL preservado com o carimbo ENXERTADO (nunca o XML da BRy)', async () => {
     mockComToken(async () =>
-      respostaJson([{ status: 200, timestamp: Date.now(), document: Buffer.from(XML_T).toString('base64') }])
+      respostaJson([{ status: 200, timestamp: Date.now(), document: Buffer.from(respostaBryLike(XML_BES)).toString('base64') }])
     );
     const r = await upgradeCarimboBry(CFG, XML_BES);
-    expect(r.xml).toBe(XML_T);
+    // Original + bloco com NOSSOS prefixos; nada de re-serialização BRy
+    expect(r.xml.startsWith('<raiz xmlns="urn:teste"><ds:Signature ')).toBe(true);
+    expect(r.xml).toContain('<xades:EncapsulatedTimeStamp>TOKEN</xades:EncapsulatedTimeStamp>');
+    expect(r.xml).not.toContain('xades141');
+    expect(r.xml).toContain('<ds:SignatureValue>QUJD</ds:SignatureValue>');
     expect(r.carimbosAdicionados).toBe(1);
   });
 
   it('usa profile=TIMESTAMP e returnType=BASE64 no multipart', async () => {
     mockComToken(async () =>
-      respostaJson([{ status: 200, document: Buffer.from(XML_T).toString('base64') }])
+      respostaJson([{ status: 200, document: Buffer.from(respostaBryLike(XML_BES)).toString('base64') }])
     );
     const espiao = fetch as any;
     await upgradeCarimboBry(CFG, XML_BES);
@@ -144,10 +178,11 @@ describe('upgradeCarimboBry (POST /xml/v1/upgrade/signature)', () => {
       }
       tentativas++;
       if (tentativas === 1) return respostaJson({ message: 'jwt expired' }, 401);
-      return respostaJson([{ status: 200, document: Buffer.from(XML_T).toString('base64') }]);
+      return respostaJson([{ status: 200, document: Buffer.from(respostaBryLike(XML_BES)).toString('base64') }]);
     }));
     const r = await upgradeCarimboBry(CFG, XML_BES);
-    expect(r.xml).toBe(XML_T);
+    expect(r.xml).toContain('<xades:EncapsulatedTimeStamp>TOKEN</xades:EncapsulatedTimeStamp>');
+    expect(r.xml).not.toContain('xades141');
     expect(tentativas).toBe(2);
   });
 
@@ -156,5 +191,211 @@ describe('upgradeCarimboBry (POST /xml/v1/upgrade/signature)', () => {
       throw Object.assign(new Error('timed out'), { name: 'AbortError' });
     }));
     await expect(upgradeCarimboBry(CFG, XML_BES, 10)).rejects.toThrow(/timeout|rede/i);
+  });
+});
+
+// ============================================================
+// ENXERTO CIRÚRGICO — regressão real do validador XMLDSig
+// ============================================================
+// A BRy re-serializa o documento inteiro (prefixos renomeados). O digest
+// da assinatura raiz (URI="") COBRE as assinaturas internas: adotar o
+// documento devolvido quebrava o DigestValue → gate "digests/RSA não
+// conferem". O enxerto copia SOMENTE os SignatureTimeStamp adicionados,
+// por cirurgia de string, preservando todo o restante do XML original.
+describe('enxertarCarimbosBry — cirurgia sem re-serialização', () => {
+  const ALUNO = {
+    id: 7, matricula: '202012345', nome: 'MARIA DA SILVA', nome_social: null, sexo: 'F',
+    nacionalidade: 'Brasileira', naturalidade: 'Salvador', naturalidade_codigo_ibge: '2927408',
+    naturalidade_uf: 'BA', naturalidade_estrangeira: null, cpf: '123.456.789-00', rg: '1.234.567',
+    rg_uf: 'BA', orgao_emissor: 'SSP-BA', data_nascimento: '10/05/2000', curso: 'ADMINISTRAÇÃO',
+    ano_conclusao: '2024', ano_ingresso: '2020', data_vestibular: '15/01/2020', data_colacao: '20/12/2024',
+    forma_ingresso: 'Vestibular', mae_nome: 'JOANA SILVA', mae_sexo: 'F', pai_nome: 'JOAO SILVA', pai_sexo: 'M',
+  };
+  const CURSO = {
+    id: 3, nome: 'ADMINISTRAÇÃO', codigo_emec: 106513, modalidade: 'Presencial', titulo_conferido: 'Bacharel',
+    outro_titulo: null, grau_conferido: 'Bacharelado', endereco_json: null, carga_horaria: '3000',
+    autorizacao_json: '{"tipo":"Portaria","numero":"10","data":"2010-03-01"}',
+    reconhecimento_json: '{"tipo":"Portaria","numero":"20","data":"2015-06-15"}',
+  };
+  const IES = {
+    id: 1, nome: 'INSTITUTO ERICH FROMM', codigo_emec: 1234, cnpj: '03.466.601/0001-82', logradouro: 'AV PRINCIPAL',
+    numero: '100', complemento: null, bairro: 'CENTRO', codigo_municipio: '2927408', nome_municipio: 'Salvador',
+    uf: 'BA', cep: '40000000', credenciamento_json: '{"tipo":"Portaria","numero":"999","data":"2008-01-15"}',
+  };
+  const DISCIPLINAS = [{ periodo: '1.2020', disciplina: 'ADMINISTRAÇÃO GERAL', docente: 'CARLOS SOUZA', titulacao: 'Doutor', ch: '80H', nota: '9,5', status: 'AP' }];
+  const PROCESSO = { id: 42, aluno_id: 7, ies_emissora_id: 1, chave_acesso: 'Dip' + '1'.repeat(44), chave_req: 'ReqDip' + '2'.repeat(44) };
+
+  function gerarCertTeste(): { certPem: string; chavePem: string } {
+    const forge = require('node-forge');
+    const pair = forge.pki.rsa.generateKeyPair(2048);
+    const cert = forge.pki.createCertificate();
+    cert.publicKey = pair.publicKey;
+    cert.serialNumber = '01' + String(Date.now());
+    cert.validity.notBefore = new Date(Date.now() - 86400e3);
+    cert.validity.notAfter = new Date(Date.now() + 86400e3 * 365);
+    const attrs = [
+      { name: 'commonName', value: 'NEXA CLASS TESTE' },
+      { name: 'organizationName', value: 'Teste' },
+      { name: 'countryName', value: 'BR' },
+    ];
+    cert.setSubject(attrs); cert.setIssuer(attrs);
+    cert.sign(pair.privateKey, forge.md.sha256.create());
+    return { certPem: forge.pki.certificateToPem(cert), chavePem: forge.pki.privateKeyToPem(pair.privateKey) };
+  }
+
+  /** DA recém-gerada (3 esqueletos) + credencial de teste. */
+  async function daBase(): Promise<{ da: string; certPem: string; chavePem: string }> {
+    const { gerarDocumentacaoAcademicaXml } = await import('./gerar-documentacao-academica');
+    const { certPem, chavePem } = gerarCertTeste();
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nexa-bry-'));
+    const pdf = path.join(tmp, 'rg.pdf');
+    fs.writeFileSync(pdf, '%PDF-1.4 fixture');
+    try {
+      const da = gerarDocumentacaoAcademicaXml(
+        { processo: PROCESSO, aluno: ALUNO, curso: CURSO, ies: IES, disciplinas: DISCIPLINAS } as any,
+        [{ caminho: pdf, tipo: 'DocumentoIdentidadeDoAluno' }]
+      )!;
+      return { da, certPem, chavePem };
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  /** Simula a resposta REAL da BRy: o conteúdo existente é preservado
+   *  (por isso os digests #Dip/#SignedProperties das internas seguem
+   *  válidos) e os nós ADICIONADOS vêm com prefixos próprios do
+   *  serializer dela (xades141/ds141, com xmlns declarado localmente —
+   *  é exatamente esse padrão que o código de produção já esperava).
+   *  Isso quebra APENAS o digest da raiz URI="" (que cobre as internas
+   *  — bytes novos dentro delas). Carimba todas, ou só as `soInternas`
+   *  primeiras (FASE 2). */
+  function bryLike(xml: string, token = 'Q01TLVRPS0VO', soInternas = false): string {
+    const carimbo =
+      '<xades141:UnsignedProperties xmlns:xades141="http://uri.etsi.org/01903/v1.3.2#">' +
+      '<xades141:UnsignedSignatureProperties>' +
+      '<xades141:SignatureTimeStamp>' +
+      '<ds141:CanonicalizationMethod xmlns:ds141="http://www.w3.org/2000/09/xmldsig#" Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>' +
+      `<xades141:EncapsulatedTimeStamp>${token}</xades141:EncapsulatedTimeStamp>` +
+      '</xades141:SignatureTimeStamp>' +
+      '</xades141:UnsignedSignatureProperties></xades141:UnsignedProperties>';
+    const blocosQP = xml.match(/<xades:QualifyingProperties[\s\S]*?<\/xades:QualifyingProperties>/g) ?? [];
+    let out = xml;
+    let processadas = 0;
+    for (const qp of blocosQP) {
+      processadas++;
+      if (soInternas && processadas > 2) break; // FASE 2: só as internas
+      const novoQp = qp.includes('</xades:UnsignedSignatureProperties>')
+        ? qp.replace('</xades:UnsignedSignatureProperties>',
+            carimbo.replace('<xades141:UnsignedProperties xmlns:xades141="http://uri.etsi.org/01903/v1.3.2#">', '')
+                   .replace('</xades141:UnsignedProperties>', '') +
+            '</xades:UnsignedSignatureProperties>')
+        : qp.replace('</xades:QualifyingProperties>', carimbo + '</xades:QualifyingProperties>');
+      out = out.replace(qp, novoQp);
+    }
+    return out;
+  }
+
+  it('FLUXO BRy COMPLETO (FASE 1→4): enxerto preserva TODAS as verificações — incluindo a Reference URI="" da raiz', async () => {
+    const { da, certPem, chavePem } = await daBase();
+    const { DOMParser } = await import('@xmldom/xmldom');
+    const { novoVerificador } = await import('./verificador-xades');
+    const { assinarTodosEsqueletos, POLITICA_ARQUIVAMENTO } = await import('./xades-signer');
+    const { validarXmlContraXsd } = await import('./xsd-validator');
+
+    // FASE 1: as 2 assinaturas internas, SEM carimbo (modo BRy puro)
+    const fase1 = await assinarTodosEsqueletos(da, {
+      chavePem, certPem, quantidade: 2,
+      posicoes: [{ chavePem, certPem }, { chavePem, certPem }],
+    });
+    // FASE 2: BRy carimba as internas (resposta re-serializada) → ENXERTO
+    const fase2 = enxertarCarimbosBry(fase1, bryLike(fase1, 'RklSU1Q=', true)).xml;
+    // FASE 3: raiz (AD-RA) assinada sobre o conteúdo FINAL das internas
+    const fase3 = await assinarTodosEsqueletos(fase2, {
+      chavePem, certPem,
+      posicoes: [{ chavePem, certPem, politica: POLITICA_ARQUIVAMENTO }],
+    });
+    // FASE 4: BRy re-serializa TUDO de novo (e " adicionaria" carimbo até
+    // nas internas) → o enxerto copia SOMENTE da raiz (as internas já têm)
+    const bry4 = bryLike(fase3, 'U0VDT05E');
+    const final = enxertarCarimbosBry(fase3, bry4);
+
+    // 1) Documento final = ORIGINAL enxertado — nada da serialização BRy
+    expect(final.xml).not.toBe(bry4);
+    expect(final.xml).not.toContain('xades141');
+    // 2) 3 carimbos no total (2 FASE 2 + 1 FASE 4 — internas não duplicadas)
+    expect((final.xml.match(/<xades:EncapsulatedTimeStamp>/g) ?? []).length).toBe(3);
+    expect(final.carimbosAdicionados).toBe(1);
+    expect(final.xml).toContain('RklSU1Q=');
+    expect(final.xml).toContain('U0VDT05E');
+    // 3) TODAS as assinaturas verificáveis — incluindo URI="" da raiz
+    const doc = new DOMParser().parseFromString(final.xml, 'text/xml');
+    const sigs = doc.getElementsByTagNameNS('*', 'Signature');
+    expect(sigs.length).toBe(3);
+    for (let i = 0; i < sigs.length; i++) {
+      const sig = novoVerificador(certPem, sigs[i]);
+      const ok = sig.checkSignature(final.xml);
+      if (!ok) for (const rf of sig.getReferences()) console.error(`BRY SIG${i} REF`, rf.uri, '→', rf.validationError);
+      expect(ok).toBe(true);
+    }
+    // 4) XSD oficial continua válido
+    const vx = await validarXmlContraXsd(final.xml, 'documentacaoAcademica');
+    if (!vx.valido) console.error('ERROS XSD:', vx.erros);
+    expect(vx.valido).toBe(true);
+
+    // 5) CONTRA-TESTE (documenta a causa raiz): adotar o XML da BRy
+    //    (como era até v1.4.16) quebra exatamente a raiz URI=""
+    const docBry = new DOMParser().parseFromString(bry4, 'text/xml');
+    const sigsBry = docBry.getElementsByTagNameNS('*', 'Signature');
+    expect(novoVerificador(certPem, sigsBry[0]).checkSignature(bry4)).toBe(true); // #Dip ok
+    expect(novoVerificador(certPem, sigsBry[1]).checkSignature(bry4)).toBe(true); // #Dip ok
+    expect(novoVerificador(certPem, sigsBry[2]).checkSignature(bry4)).toBe(false); // raiz QUEBRA
+  }, 60000);
+
+  it('portão de integridade: DigestValue alterado pela BRy → erro EXPLÍCITO e XML intacto', () => {
+    const base =
+      '<r><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S1">' +
+      '<ds:SignedInfo><ds:Reference URI="#a"><ds:DigestValue>QUJD</ds:DigestValue></ds:Reference></ds:SignedInfo>' +
+      '<ds:SignatureValue>WFla</ds:SignatureValue>' +
+      '<ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"></xades:QualifyingProperties></ds:Object>' +
+      '</ds:Signature></r>';
+    const bryOk = base
+      .replaceAll('<ds:', '<ds141:').replaceAll('</ds:', '</ds141:').replaceAll('xmlns:ds="', 'xmlns:ds141="')
+      .replace('</xades:QualifyingProperties>', '</xades:QualifyingProperties>'); // sem carimbo
+    const bryAlterado = bryOk.replace('QUJD', 'TEROU');
+    expect(() => enxertarCarimbosBry(base, bryOk)).not.toThrow();
+    expect(() => enxertarCarimbosBry(base, bryAlterado)).toThrow(/DigestValues alterados.*preservado/i);
+  });
+
+  it('portão de integridade: quantidade/Ids divergentes → erro EXPLÍCITO', () => {
+    const base =
+      '<r><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S1">' +
+      '<ds:SignedInfo><ds:Reference URI=""><ds:DigestValue>QUJD</ds:DigestValue></ds:Reference></ds:SignedInfo>' +
+      '<ds:SignatureValue>WFla</ds:SignatureValue>' +
+      '<ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#"></xades:QualifyingProperties></ds:Object>' +
+      '</ds:Signature></r>';
+    const duplo = base.replace('</r>', base.slice(3) + '</r>'); // 2 assinaturas
+    expect(() => enxertarCarimbosBry(base, duplo)).toThrow(/quantidade de assinaturas divergente/i);
+  });
+
+  it('não duplica: assinatura que JÁ tem carimbo não recebe outro', () => {
+    const comCarimbo =
+      '<r><ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="S1">' +
+      '<ds:SignedInfo><ds:Reference URI=""><ds:DigestValue>QUJD</ds:DigestValue></ds:Reference></ds:SignedInfo>' +
+      '<ds:SignatureValue>WFla</ds:SignatureValue>' +
+      '<ds:Object><xades:QualifyingProperties xmlns:xades="http://uri.etsi.org/01903/v1.3.2#">' +
+      '<xades:UnsignedProperties><xades:UnsignedSignatureProperties>' +
+      '<xades:SignatureTimeStamp><xades:EncapsulatedTimeStamp>VE9LRU4=</xades:EncapsulatedTimeStamp></xades:SignatureTimeStamp>' +
+      '</xades:UnsignedSignatureProperties></xades:UnsignedProperties>' +
+      '</xades:QualifyingProperties></ds:Object>' +
+      '</ds:Signature></r>';
+    const bry = comCarimbo
+      .replaceAll('<ds:', '<ds141:').replaceAll('</ds:', '</ds141:').replaceAll('xmlns:ds="', 'xmlns:ds141="')
+      .replaceAll('<xades:', '<xades141:').replaceAll('</xades:', '</xades141:').replaceAll('xmlns:xades="', 'xmlns:xades141="');
+    const r = enxertarCarimbosBry(comCarimbo, bry);
+    expect(r.xml).toBe(comCarimbo);
+    expect(r.carimbosAdicionados).toBe(0);
   });
 });
