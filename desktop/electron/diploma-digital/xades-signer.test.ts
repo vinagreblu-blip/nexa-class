@@ -500,6 +500,17 @@ describe('tipoPessoaCertPem / avisoCertificadosSemOu (aviso nominativo v1.4.19)'
     expect(tipoPessoaCertPem(gerarCertComOu([], 'SEM OU'))).toBe('desconhecido');
   });
 
+  it('v1.4.20 — identifica pelo SUFIXO DO CN (template DOC-ICP-09): casos REAIS de produção', () => {
+    // Certificados reais do operador (CN com CNPJ/CPF puro, sem rótulo)
+    expect(tipoPessoaCertPem(gerarCertComOu([], 'SOCIEDADE INTEGRAL DE ENSINO SOCIEDADE SIMPLES LT:03466601000182'))).toBe('ecnpj');
+    expect(tipoPessoaCertPem(gerarCertComOu([], 'JOSE AUGUSTO MACIEL TORRES:24487287553'))).toBe('ecpf');
+    // Rotulados (:CNPJ:/:CPF:) e com pontuação — variação entre ACs
+    expect(tipoPessoaCertPem(gerarCertComOu([], 'EMPRESA LTDA:CNPJ:03.466.601/0001-82'))).toBe('ecnpj');
+    expect(tipoPessoaCertPem(gerarCertComOu([], 'FULANO DE TAL:CPF:111.222.333-44'))).toBe('ecpf');
+    // CN sem identificador numérico → desconhecido
+    expect(tipoPessoaCertPem(gerarCertComOu([], 'CERTIFICADO DE TESTE'))).toBe('desconhecido');
+  });
+
   it('avisoCertificadosSemOu: null quando todos identificados; NOMINATIVO (rótulo + CN) quando falta', () => {
     const certIes = gerarCertComOu(['CNPJ: 03.466.601/0001-82'], 'IES LTDA');
     const certResp = gerarCertComOu(['CPF: 11122233344'], 'RESPONSAVEL');
@@ -507,6 +518,12 @@ describe('tipoPessoaCertPem / avisoCertificadosSemOu (aviso nominativo v1.4.19)'
     expect(avisoCertificadosSemOu([
       { rotulo: 'da IES (e-CNPJ)', certPem: certIes },
       { rotulo: 'do responsável (e-CPF)', certPem: certResp },
+    ])).toBeNull();
+    // v1.4.20: certificados identificados pelo CN (produção) TAMBÉM não
+    // geram aviso — o falso positivo da v1.4.19 não volta
+    expect(avisoCertificadosSemOu([
+      { rotulo: 'da IES (e-CNPJ)', certPem: gerarCertComOu([], 'SOCIEDADE INTEGRAL DE ENSINO SOCIEDADE SIMPLES LT:03466601000182') },
+      { rotulo: 'do responsável (e-CPF)', certPem: gerarCertComOu([], 'JOSE AUGUSTO MACIEL TORRES:24487287553') },
     ])).toBeNull();
     const aviso = avisoCertificadosSemOu([
       { rotulo: 'da IES (e-CNPJ)', certPem: certIes },

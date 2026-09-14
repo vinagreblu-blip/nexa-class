@@ -144,25 +144,38 @@ export function assinaturasSemCarimbo(xml: string): number {
   return trechosAssinatura(xml).filter((t) => !t.esqueleto && !t.texto.includes('<xades:SignatureTimeStamp')).length;
 }
 
-/** Tipo de pessoa do certificado (ICP-Brasil declara no OU do subject:
- *  "CNPJ: …" / "CPF: …"). e-CNPJ contém AMBOS (o CPF do representante
- *  vem num 2º OU) — CNPJ tem precedência no teste. RDN multivalorado é
- *  achatado antes do match. */
+/** Tipo de pessoa do certificado. Detecta as duas formas de identificação
+ *  ICP-Brasil do subject:
+ *  • OU: "OU=CNPJ: 03.466.601/0001-82" (algumas ACs; e-CNPJ contém AMBOS
+ *    — o CPF do representante vem num 2º OU — CNPJ tem precedência);
+ *  • CN: template DOC-ICP-09 — sufixo "Razão Social:CNPJ" /
+ *    "Nome Completo:CPF", com ou sem rótulo (:CNPJ:/:CPF:) e com ou sem
+ *    pontuação (Serasa/ACT/Certisign variam). RDN multivalorado é
+ *    achatado antes do match. */
 export function tipoPessoaCertPem(certPem: string): 'ecnpj' | 'ecpf' | 'desconhecido' {
   const forge = require('node-forge');
   const cert = forge.pki.certificateFromPem(certPem);
-  const ous = ((cert.subject as any).attributes ?? [])
+  const attrs = (cert.subject as any).attributes ?? [];
+  const ous = attrs
     .filter((a: any) => a.name === 'organizationalUnitName' || a.shortName === 'OU')
     .map((a: any) => String(Array.isArray(a.value) ? a.value.join(' | ') : a.value).toUpperCase())
     .join(' | ');
   if (/CNPJ\s*:/.test(ous)) return 'ecnpj';
   if (/CPF\s*:/.test(ous)) return 'ecpf';
+  const cnAttr = attrs.find((a: any) => a.shortName === 'CN' || a.name === 'commonName');
+  const cn = String(Array.isArray(cnAttr?.value) ? cnAttr.value[0] : cnAttr?.value ?? '').toUpperCase();
+  const rotulado = /:(CNPJ|CPF)\s*[:0-9]/.exec(cn);
+  if (rotulado) return rotulado[1] === 'CNPJ' ? 'ecnpj' : 'ecpf';
+  const sufixo = cn.slice(cn.lastIndexOf(':') + 1).replace(/[^0-9]/g, '');
+  if (sufixo.length === 14) return 'ecnpj';
+  if (sufixo.length === 11) return 'ecpf';
   return 'desconhecido';
 }
 
 /** Aviso NOMINATIVO: quais credenciais não trazem identificação
- *  ICP-Brasil de e-CPF/e-CNPJ no OU do subject (com o CN para o operador
- *  localizar o certificado no Windows Store / token). null = todas OK. */
+ *  ICP-Brasil de e-CPF/e-CNPJ no subject (OU/CN), com o CN para o
+ *  operador localizar o certificado no Windows Store / token.
+ *  null = todas OK. */
 export function avisoCertificadosSemOu(entradas: { rotulo: string; certPem: string }[]): string | null {
   const semOu = entradas.filter((e) => tipoPessoaCertPem(e.certPem) === 'desconhecido');
   if (semOu.length === 0) return null;
@@ -180,7 +193,7 @@ export function avisoCertificadosSemOu(entradas: { rotulo: string; certPem: stri
   });
   return (
     `Aviso: ${partes.join(' e ')} não ${semOu.length > 1 ? 'trazem' : 'traz'} identificação ICP-Brasil de ` +
-    'e-CPF/e-CNPJ no subject (OU) — o validador do MEC pode rejeitar por não ser e-CPF/e-CNPJ.'
+    'e-CPF/e-CNPJ no subject (OU/CN) — o validador do MEC pode rejeitar por não ser e-CPF/e-CNPJ.'
   );
 }
 
